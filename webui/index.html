@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Toron - A Simple Reverse Proxy</title>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;400&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Montserrat', Arial, sans-serif;
+            background: linear-gradient(135deg, #e0eafc 0%, #cfdef3 100%);
+            color: #222;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: #fff;
+            border-radius: 18px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+            padding: 2.5rem 2rem 2rem 2rem;
+            max-width: 420px;
+            width: 90vw;
+            text-align: center;
+        }
+        h1 {
+            color: #2c3e50;
+            font-size: 2.5rem;
+            margin-bottom: 0.5rem;
+            letter-spacing: 1px;
+        }
+        .tagline {
+            color: #2980b9;
+            font-size: 1.1rem;
+            margin-bottom: 1.5rem;
+            font-weight: 700;
+        }
+        p {
+            font-size: 1.1rem;
+            margin-bottom: 2rem;
+        }
+        .cta-btn {
+            display: inline-block;
+            background: linear-gradient(90deg, #2980b9 0%, #6dd5fa 100%);
+            color: #fff;
+            font-weight: bold;
+            padding: 0.8rem 2.2rem;
+            border: none;
+            border-radius: 30px;
+            font-size: 1.1rem;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(41, 128, 185, 0.12);
+            transition: background 0.2s, transform 0.2s;
+            text-decoration: none;
+        }
+        .cta-btn:hover {
+            background: linear-gradient(90deg, #6dd5fa 0%, #2980b9 100%);
+            transform: translateY(-2px) scale(1.03);
+        }
+        .footer {
+            margin-top: 2.5rem;
+            font-size: 0.95rem;
+            color: #888;
+        }
+        @media (max-width: 600px) {
+            .container {
+                padding: 1.2rem 0.5rem 1.5rem 0.5rem;
+                max-width: 98vw;
+            }
+            h1 {
+                font-size: 2rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Toron</h1>
+        <div class="tagline">Simple. Fast. Flexible. Reverse Proxy for Modern Apps.</div>
+        <p>
+            Toron is a blazing fast, lightweight reverse proxy server written in Go.<br>
+            Effortlessly route requests to different backends with YAML-based configuration.<br>
+            Perfect for microservices, APIs, and rapid prototyping.
+        </p>
+        <a class="cta-btn" href="https://github.com/SayantanSaha/toron" target="_blank" rel="noopener">View on GitHub</a>
+        <div class="footer">
+            &copy; 2025 Toron Project &mdash; Built with Go
+        </div>
+    </div>
+</body>
+</html>

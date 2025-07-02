@@ -1,0 +1,16 @@
+server:
+  address: :8080
+  use_tls: false
+  cert_file: 
+  key_file: 
+
+routes:
+  - path: /api
+    backend: http://localhost:9000
+    strip_prefix: false
+    match_type: prefix_match
+  - path: /git
+    backend: https://github.com/SayantanSaha/toron
+    strip_prefix: true
+  - path: /ui
+    backend: ./webui

@@ -1,0 +1,32 @@
+toron/
+├── cmd/
+│   └── toron/                  # Main application entry point
+│       └── main.go
+├── internal/
+│   ├── listener/               # HTTP/3, TCP/UDP, gRPC, WebSocket listeners
+│   ├── router/                 # L4/L7 routing logic
+│   ├── middleware/             # Internal middleware implementations
+│   ├── loadbalancer/           # Load balancing strategies
+│   ├── config/                 # Configuration loader and schema
+│   ├── discovery/              # Service discovery implementations
+│   └── core/                   # Shared utilities, context helpers
+├── pkg/
+│   ├── api/                    # Public-facing Admin APIs
+│   ├── plugin/                 # Plugin system, interfaces
+│   └── observability/          # Metrics, logs, tracing
+├── plugins/
+│   ├── wasm/                   # WASM runtime and built-in plugins
+│   └── examples/               # Sample plugin implementations
+├── scripts/
+│   └── devtools/               # Scripts for local dev and automation
+├── test/
+│   ├── integration/            # Integration tests
+│   └── benchmark/              # Performance tests
+├── webui/                      # (Optional) Admin dashboard frontend
+├── go.mod
+├── go.sum
+├── Dockerfile
+├── .golangci.yml
+├── .github/
+│   └── workflows/             # GitHub Actions CI/CD
+└── README.md

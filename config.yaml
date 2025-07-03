@@ -1,8 +1,10 @@
 server:
   address: :8080
-  use_tls: false
-  cert_file: 
-  key_file: 
+  use_tls: true
+  cert_file: "certs/server.crt"
+  key_file: "certs/server.key"
+  redirect_http: true
+  http_redirect_port: ":80"
 
 routes:
   - path: /api

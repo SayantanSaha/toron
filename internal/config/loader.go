@@ -13,6 +13,8 @@ type ServerConfig struct {
 	UseTLS   bool   `yaml:"use_tls"`
 	CertFile string `yaml:"cert_file"`
 	KeyFile  string `yaml:"key_file"`
+	RedirectHTTP     bool   `yaml:"redirect_http"`
+	HTTPRedirectPort string `yaml:"http_redirect_port"`
 }
 
 type Route struct {

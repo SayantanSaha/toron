@@ -2,22 +2,30 @@ package config
 
 import (
 	"errors"
+	"net"
 	"os"
 	"strings"
-
 	"gopkg.in/yaml.v3"
 )
 
+type MTLSConfig struct {
+	CACertFile     string `yaml:"ca_cert_file"`
+	ClientAuthType string `yaml:"client_auth_type"` // "require", "requireandverify", "optional"
+}
 type ServerConfig struct {
-	Address  string `yaml:"address"`
-	UseTLS   bool   `yaml:"use_tls"`
-	CertFile string `yaml:"cert_file"`
-	KeyFile  string `yaml:"key_file"`
-	RedirectHTTP     bool   `yaml:"redirect_http"`
-	HTTPRedirectPort string `yaml:"http_redirect_port"`
+	Address          string     `yaml:"address"`
+	UseTLS           bool       `yaml:"use_tls"`
+	TLSMode          string     `yaml:"tls_mode"`         // "autocert", "manual", "mtls"
+	AutocertDomains  []string   `yaml:"autocert_domains"` // for Let's Encrypt
+	CertFile         string     `yaml:"cert_file"`
+	KeyFile          string     `yaml:"key_file"`
+	RedirectHTTP     bool       `yaml:"redirect_http"`
+	HTTPRedirectPort string     `yaml:"http_redirect_port"`
+	MTLS             MTLSConfig `yaml:"mtls"`
 }
 
 type Route struct {
+	Host        string `yaml:"host"`
 	Path        string `yaml:"path"`
 	Backend     string `yaml:"backend"`
 	StripPrefix bool   `yaml:"strip_prefix"`
@@ -53,8 +61,18 @@ func validateConfig(cfg Config) error {
 		return errors.New("server.address is required")
 	}
 	for _, r := range cfg.Routes {
-		if r.Path == "" || r.Backend == "" {
-			return errors.New("each route must have both path and backend defined")
+		if (r.Host == "" && r.Path == "") || r.Backend == "" {
+			return errors.New("each route must have a backend and either a host or a path defined")
+		}
+		if r.Host != "" {
+			if _, _, err := net.SplitHostPort(r.Host); err != nil {
+				if _, err := net.LookupHost(r.Host); err != nil {
+					// a host without a port is also valid
+					if !strings.Contains(err.Error(), "missing port in address") {
+						return errors.New("invalid host specified: " + r.Host)
+					}
+				}
+			}
 		}
 		if r.MatchType != "" && r.MatchType != "exact_match" && r.MatchType != "prefix_match" {
 			return errors.New("route.match_type must be either 'exact_match' or 'prefix_match'")

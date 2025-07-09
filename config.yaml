@@ -1,12 +1,21 @@
 server:
   address: :8080
   use_tls: true
+  tls_mode: "manual"  # options: autocert, manual, mtls
+  autocert_domains:
+    - example.com
+    - www.example.com
   cert_file: "certs/server.crt"
   key_file: "certs/server.key"
   redirect_http: true
   http_redirect_port: ":80"
+  mtls:
+    ca_cert_file: "certs/ca.crt"
+    client_auth_type: "requireandverify"  # options: require, requireandverify, optional
 
 routes:
+  - host: api.example.com
+    backend: http://localhost:9001
   - path: /api
     backend: http://localhost:9000
     strip_prefix: false

@@ -28,16 +28,19 @@ func main() {
 	r.Use(router.LoggerMiddleware())
 	r.Use(router.RecoveryMiddleware())
 
-	// Register Routes
-	r.GET("/", func(req *httpparser.Request, res *httpparser.Response) {
-		res.Header.Set("Content-Type", "application/json")
-		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","status":"running"}`)
-	})
-
+	// Register API Routes
 	r.GET("/health", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 		_, _ = res.WriteString(`{"status":"ok"}`)
 	})
+
+	r.GET("/api/status", func(req *httpparser.Request, res *httpparser.Response) {
+		res.Header.Set("Content-Type", "application/json")
+		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
+	})
+
+	// Serve Static Site files from ./public directory
+	r.Static("/", "./public")
 
 	srv := server.New(cfg, r)
 
@@ -46,7 +49,8 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("[TORON] Server listening on %s...", cfg.Addr)
+		log.Printf("[TORON] Server listening on http://localhost%s...", cfg.Addr)
+		log.Printf("[TORON] Serving static site from ./public...")
 		if err := srv.ListenAndServe(); err != nil && err != server.ErrServerClosed {
 			log.Fatalf("[TORON] Server fatal error: %v", err)
 		}

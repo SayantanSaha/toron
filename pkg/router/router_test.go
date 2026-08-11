@@ -2,6 +2,8 @@ package router_test
 
 import (
 	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"toron/pkg/httpparser"
@@ -77,5 +79,55 @@ func TestRouter_RecoveryMiddleware(t *testing.T) {
 
 	if res.StatusCode != http.StatusInternalServerError {
 		t.Errorf("expected 500 Internal Server Error, got %d", res.StatusCode)
+	}
+}
+
+func TestRouter_StaticFileServing(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Write index.html and style.css in tmpDir
+	htmlContent := "<html><body>Hello Static Website</body></html>"
+	cssContent := "body { color: red; }"
+
+	_ = os.WriteFile(filepath.Join(tmpDir, "index.html"), []byte(htmlContent), 0644)
+	_ = os.WriteFile(filepath.Join(tmpDir, "style.css"), []byte(cssContent), 0644)
+
+	r := router.New()
+	r.Static("/static", tmpDir)
+
+	// Test 1: GET /static/ (should serve index.html)
+	req1, _ := httpparser.NewRequest("GET", "/static/", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if res1.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200 OK for /static/, got %d", res1.StatusCode)
+	}
+	if res1.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("expected text/html content type, got %q", res1.Header.Get("Content-Type"))
+	}
+	if res1.Body.String() != htmlContent {
+		t.Errorf("expected body %q, got %q", htmlContent, res1.Body.String())
+	}
+
+	// Test 2: GET /static/style.css
+	req2, _ := httpparser.NewRequest("GET", "/static/style.css", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if res2.StatusCode != http.StatusOK {
+		t.Errorf("expected status 200 OK for style.css, got %d", res2.StatusCode)
+	}
+	if res2.Body.String() != cssContent {
+		t.Errorf("expected css body, got %q", res2.Body.String())
+	}
+
+	// Test 3: Path Traversal Attempt
+	req3, _ := httpparser.NewRequest("GET", "/static/../../etc/passwd", "HTTP/1.1")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+
+	if res3.StatusCode != http.StatusForbidden && res3.StatusCode != http.StatusNotFound {
+		t.Errorf("expected status 403 Forbidden or 404 for traversal, got %d", res3.StatusCode)
 	}
 }

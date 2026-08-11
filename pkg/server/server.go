@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 
 	"toron/pkg/httpparser"
@@ -75,9 +76,14 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		MaxBodyBytes:   s.config.MaxBodyBytes,
 	}
 
+	firstRequest := true
 	for {
-		if s.config.ReadTimeout > 0 {
-			_ = conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
+		timeout := s.config.ReadTimeout
+		if !firstRequest && s.config.IdleTimeout > 0 {
+			timeout = s.config.IdleTimeout
+		}
+		if timeout > 0 {
+			_ = conn.SetReadDeadline(time.Now().Add(timeout))
 		}
 
 		req, err := httpparser.ParseRequest(conn, opts)
@@ -86,8 +92,15 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 				return nil
 			}
 
+			// If idle timeout occurred on persistent connection, exit loop silently
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() && !firstRequest {
+				return nil
+			}
+
 			// Send appropriate error response
 			res := httpparser.NewResponse()
+			res.Header.Set("Connection", "close")
 			switch {
 			case errors.Is(err, httpparser.ErrHeaderTooLarge):
 				res.SetStatus(http.StatusRequestHeaderFieldsTooLarge)
@@ -110,8 +123,19 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			return err
 		}
 
+		firstRequest = false
+
 		// Process request through router
 		res := httpparser.NewResponse()
+		
+		// Set default Connection header
+		connHeader := strings.ToLower(req.Header.Get("Connection"))
+		if connHeader == "close" {
+			res.Header.Set("Connection", "close")
+		} else {
+			res.Header.Set("Connection", "keep-alive")
+		}
+
 		s.router.ServeHTTP(req, res)
 
 		if s.config.WriteTimeout > 0 {
@@ -122,9 +146,8 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			return fmt.Errorf("server: failed to write response: %w", err)
 		}
 
-		if req.Header.Get("Connection") == "close" {
+		if connHeader == "close" {
 			return nil
 		}
-		return nil
 	}
 }

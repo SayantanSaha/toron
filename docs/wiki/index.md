@@ -14,11 +14,13 @@ depends_on:
   - REQ-005
   - REQ-006
   - REQ-007
+  - REQ-008
 
 derived_from:
   - PRD.md
   - ADR-001
   - ADR-002
+  - ADR-003
 
 documents:
   - TORON-DOCUMENTATION-INDEX
@@ -42,6 +44,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### ⚙️ Features & Architecture
 - [Event Reactor Core](./features/event-reactor.md) – Event-driven concurrency, non-blocking I/O, and worker pool.
 - [Static File Serving](./features/static-file-serving.md) – Hosting web applications, MIME type resolution, and security.
+- [Native Go Benchmarking](./features/benchmarking.md) – Performance benchmarks and allocation metrics.
 
 ### 📖 References
 - [CLI Reference](./reference/cli.md) – Command-line interface options and usage flags.

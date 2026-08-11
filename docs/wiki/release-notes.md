@@ -1,6 +1,6 @@
 # Release Notes
 
-## 2026-08-11 - Prototype 1, 2 & 3 Release
+## 2026-08-11 - Prototype 1, 2, 3 & 4 Release
 
 ### Added
 
@@ -11,6 +11,7 @@
 - **Server Orchestration**: Command line entry point `cmd/toron/main.go` with `/health` and `/` endpoints and graceful shutdown handling (`TASK-005`, `REQ-001`).
 - **Static File Serving**: Built-in static website hosting with MIME type detection, `index.html` resolution, and path traversal security guards (`TASK-006`, `REQ-006`).
 - **Extensible Configuration System**: External configuration file support (`config.yaml`), CLI argument `-config` flag, and extensible `pkg/config` loader architecture (`TASK-007`, `REQ-007`).
+- **Native Go Benchmarking Suite**: Standard Go `testing.B` benchmarks across `pkg/reactor`, `pkg/httpparser`, `pkg/router`, and `pkg/server` with memory allocation tracking (`TASK-008`, `REQ-008`).
 
 ### Related Tasks
 
@@ -21,3 +22,4 @@
 - `TASK-005`: Toron Server Orchestration & Main Application Entry
 - `TASK-006`: Static File Handler & Path Traversal Guard Implementation
 - `TASK-007`: Extensible Config Loader Package & CLI Flag Integration
+- `TASK-008`: Benchmark Suite Implementation for Core Server Packages

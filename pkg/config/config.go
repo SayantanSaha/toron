@@ -10,6 +10,7 @@ import (
 type AppConfig struct {
 	Server  ServerConfig  `yaml:"server" json:"server"`
 	Static  StaticConfig  `yaml:"static" json:"static"`
+	Proxy   ProxyConfig   `yaml:"proxy" json:"proxy"`
 	Logging LoggingConfig `yaml:"logging" json:"logging"`
 }
 
@@ -30,6 +31,18 @@ type StaticConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Prefix  string `yaml:"prefix" json:"prefix"`
 	Dir     string `yaml:"dir" json:"dir"`
+}
+
+// ProxyConfig captures reverse proxy routes settings.
+type ProxyConfig struct {
+	Enabled bool               `yaml:"enabled" json:"enabled"`
+	Routes  []ProxyRouteConfig `yaml:"routes" json:"routes"`
+}
+
+// ProxyRouteConfig describes an individual prefix to upstream target URL mapping.
+type ProxyRouteConfig struct {
+	Prefix string `yaml:"prefix" json:"prefix"`
+	Target string `yaml:"target" json:"target"`
 }
 
 // LoggingConfig captures logging settings.
@@ -55,6 +68,10 @@ func DefaultAppConfig() *AppConfig {
 			Enabled: true,
 			Prefix:  "/",
 			Dir:     "./public",
+		},
+		Proxy: ProxyConfig{
+			Enabled: false,
+			Routes:  []ProxyRouteConfig{},
 		},
 		Logging: LoggingConfig{
 			Level:  "info",

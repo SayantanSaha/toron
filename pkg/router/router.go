@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/proxy"
 )
 
 // HandlerFunc describes an HTTP request handler function in Toron.
@@ -25,7 +26,7 @@ type prefixRoute struct {
 	handler HandlerFunc
 }
 
-// Router handles URL routing, method dispatching, static file serving, and middleware execution.
+// Router handles URL routing, method dispatching, static file serving, reverse proxying, and middleware execution.
 type Router struct {
 	mu               sync.RWMutex
 	routes           map[string]map[string]HandlerFunc // path -> method -> handler
@@ -84,6 +85,31 @@ func (r *Router) POST(path string, handler HandlerFunc) {
 	r.Handle("POST", path, handler)
 }
 
+// Proxy registers a URL prefix to reverse proxy incoming requests to an upstream target URL string.
+func (r *Router) Proxy(prefix, targetURLStr string) error {
+	px, err := proxy.NewReverseProxy(targetURLStr, 10*time.Second)
+	if err != nil {
+		return err
+	}
+
+	cleanPrefix := "/" + strings.Trim(prefix, "/")
+	if cleanPrefix == "/" {
+		cleanPrefix = ""
+	}
+
+	proxyHandler := func(req *httpparser.Request, res *httpparser.Response) {
+		px.ServeHTTPWithPrefix(req, res, cleanPrefix)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
+		prefix:  cleanPrefix,
+		handler: proxyHandler,
+	})
+	return nil
+}
+
 // Static registers a URL prefix to serve static files from a local directory path.
 func (r *Router) Static(prefix, dirPath string) {
 	cleanPrefix := "/" + strings.Trim(prefix, "/")
@@ -111,7 +137,7 @@ func (r *Router) Static(prefix, dirPath string) {
 		}
 
 		// Security: Prevent path traversal
-		cleanRel := filepath.Clean(filepath.FromSlash(relPath))
+		cleanRel := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(relPath, "/")))
 		targetPath := filepath.Join(absDir, cleanRel)
 
 		relFromDir, err := filepath.Rel(absDir, targetPath)
@@ -200,7 +226,7 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 			targetHandler = r.MethodNotAllowed
 		}
 	} else {
-		// Check prefix routes (e.g. static file routes)
+		// Check prefix routes (e.g. static file or proxy routes)
 		for _, pr := range r.prefixRoutes {
 			if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
 				targetHandler = pr.handler

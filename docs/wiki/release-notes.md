@@ -1,6 +1,6 @@
 # Release Notes
 
-## 2026-08-11 - Prototype 1, 2, 3 & 4 Release
+## 2026-08-11 - Prototype 1, 2, 3, 4 & 5 Release
 
 ### Added
 
@@ -12,6 +12,7 @@
 - **Static File Serving**: Built-in static website hosting with MIME type detection, `index.html` resolution, and path traversal security guards (`TASK-006`, `REQ-006`).
 - **Extensible Configuration System**: External configuration file support (`config.yaml`), CLI argument `-config` flag, and extensible `pkg/config` loader architecture (`TASK-007`, `REQ-007`).
 - **Native Go Benchmarking Suite**: Standard Go `testing.B` benchmarks across `pkg/reactor`, `pkg/httpparser`, `pkg/router`, and `pkg/server` with memory allocation tracking (`TASK-008`, `REQ-008`).
+- **Reverse Proxy & Upstream Gateway**: Built-in HTTP reverse proxy engine (`pkg/proxy`, `router.Proxy(prefix, target)`), forwarding requests, injecting `X-Forwarded-*` headers, and supporting YAML proxy routes (`TASK-009`, `REQ-009`).
 
 ### Related Tasks
 
@@ -23,3 +24,4 @@
 - `TASK-006`: Static File Handler & Path Traversal Guard Implementation
 - `TASK-007`: Extensible Config Loader Package & CLI Flag Integration
 - `TASK-008`: Benchmark Suite Implementation for Core Server Packages
+- `TASK-009`: Reverse Proxy Handler & Upstream Transport Implementation

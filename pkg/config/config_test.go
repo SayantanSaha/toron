@@ -1,0 +1,81 @@
+package config_test
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"toron/pkg/config"
+)
+
+func TestConfig_DefaultValues(t *testing.T) {
+	cfg, err := config.LoadFromFile("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if cfg.Server.Port != 8080 {
+		t.Errorf("expected default port 8080, got %d", cfg.Server.Port)
+	}
+	if cfg.Static.Dir != "./public" {
+		t.Errorf("expected default static dir './public', got %q", cfg.Static.Dir)
+	}
+}
+
+func TestConfig_YAMLFileLoading(t *testing.T) {
+	tmpDir := t.TempDir()
+	yamlPath := filepath.Join(tmpDir, "config.yaml")
+
+	yamlData := `
+server:
+  host: "127.0.0.1"
+  port: 9090
+  worker_pool_size: 256
+  read_timeout: 10s
+  write_timeout: 10s
+
+static:
+  enabled: true
+  prefix: "/assets"
+  dir: "./custom-assets"
+
+logging:
+  level: "debug"
+`
+	if err := os.WriteFile(yamlPath, []byte(yamlData), 0644); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(yamlPath)
+	if err != nil {
+		t.Fatalf("failed to load yaml config: %v", err)
+	}
+
+	if cfg.Server.Port != 9090 {
+		t.Errorf("expected port 9090, got %d", cfg.Server.Port)
+	}
+	if cfg.Server.WorkerPoolSize != 256 {
+		t.Errorf("expected worker pool 256, got %d", cfg.Server.WorkerPoolSize)
+	}
+	if cfg.Server.ReadTimeout != 10*time.Second {
+		t.Errorf("expected read timeout 10s, got %v", cfg.Server.ReadTimeout)
+	}
+	if cfg.Static.Prefix != "/assets" {
+		t.Errorf("expected static prefix '/assets', got %q", cfg.Static.Prefix)
+	}
+	if cfg.Static.Dir != "./custom-assets" {
+		t.Errorf("expected static dir './custom-assets', got %q", cfg.Static.Dir)
+	}
+}
+
+func TestConfig_UnsupportedExtension(t *testing.T) {
+	tmpDir := t.TempDir()
+	invalidPath := filepath.Join(tmpDir, "config.unknown")
+	_ = os.WriteFile(invalidPath, []byte("data"), 0644)
+
+	_, err := config.LoadFromFile(invalidPath)
+	if err == nil {
+		t.Error("expected error for unsupported extension, got nil")
+	}
+}

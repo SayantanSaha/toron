@@ -83,9 +83,11 @@ flowchart TD
     API --> Service["Domain Service"]
     Service --> DB[("Database")]
 ```
+
 Document Format
 Each architecture document must follow this structure:
----
+------------------------------------------------------
+
 id: ADR-XXX
 type: architecture
 title: Architecture Decision Title
@@ -99,21 +101,24 @@ created: YYYY-MM-DD
 updated: YYYY-MM-DD
 
 depends_on:
-  - TASK-XXX
+
+- TASK-XXX
 
 derived_from:
-  - REQ-XXX
-  - TASK-XXX
+
+- REQ-XXX
+- TASK-XXX
 
 implements:
-  - REQ-XXX
+
+- REQ-XXX
 
 verified_by: []
 
 decided_by: []
 
 related_to: []
----
+--------------
 
 # ADR-XXX - Architecture Decision Title
 
@@ -131,6 +136,7 @@ The system will...
 flowchart TD
     A["Source"] --> B["Target"]
 ```
+
 Alternatives Considered
 Option 1: ...
 Option 2: ...
@@ -143,6 +149,7 @@ Consequences
 Open Questions
 ...
 ---
+
 ## Operating Instructions
 
 1. Read the relevant requirement and task documents.

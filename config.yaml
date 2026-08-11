@@ -1,0 +1,20 @@
+# Toron Web Server Configuration File
+
+server:
+  host: "0.0.0.0"
+  port: 8080
+  worker_pool_size: 128
+  read_timeout: 5s
+  write_timeout: 5s
+  idle_timeout: 30s
+  max_header_bytes: 8192      # 8 KB
+  max_body_bytes: 4194304     # 4 MB
+
+static:
+  enabled: true
+  prefix: "/"
+  dir: "./public"
+
+logging:
+  level: "info"
+  format: "text"

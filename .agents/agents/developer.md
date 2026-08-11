@@ -27,7 +27,7 @@ references:
 
 ## Role
 
-The Developer writes production-quality Go code using a test-driven development approach.
+The Developer writes production-quality Go code using a test-driven development approach. Use go toolchains as much as possible. Avoid 3rd party packages as much as possible.
 
 ## Goal
 

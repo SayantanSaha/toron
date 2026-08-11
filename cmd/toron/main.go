@@ -2,26 +2,44 @@ package main
 
 import (
 	"context"
+	"flag"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"toron/pkg/config"
 	"toron/pkg/httpparser"
 	"toron/pkg/router"
 	"toron/pkg/server"
 )
 
 func main() {
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
+	var configPath string
+	flag.StringVar(&configPath, "config", "", "Path to YAML configuration file (e.g. -config config.yaml)")
+	flag.StringVar(&configPath, "c", "", "Path to YAML configuration file (short alias)")
+	flag.Parse()
+
+	// If no flag provided, check if config.yaml exists in current working directory
+	if configPath == "" {
+		if _, err := os.Stat("config.yaml"); err == nil {
+			configPath = "config.yaml"
+		}
 	}
 
-	cfg := server.DefaultConfig()
-	cfg.Addr = ":" + port
+	appCfg, err := config.LoadFromFile(configPath)
+	if err != nil {
+		log.Fatalf("[TORON] Configuration error: %v", err)
+	}
 
+	if configPath != "" {
+		log.Printf("[TORON] Loaded configuration from %s", configPath)
+	} else {
+		log.Println("[TORON] No configuration file specified. Using built-in defaults.")
+	}
+
+	srvCfg := appCfg.ToServerConfig()
 	r := router.New()
 
 	// Attach Middlewares
@@ -39,18 +57,20 @@ func main() {
 		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
 	})
 
-	// Serve Static Site files from ./public directory
-	r.Static("/", "./public")
+	// Serve Static Site files if enabled in config
+	if appCfg.Static.Enabled {
+		log.Printf("[TORON] Serving static assets from %s under prefix %q...", appCfg.Static.Dir, appCfg.Static.Prefix)
+		r.Static(appCfg.Static.Prefix, appCfg.Static.Dir)
+	}
 
-	srv := server.New(cfg, r)
+	srv := server.New(srvCfg, r)
 
 	// Graceful shutdown context listener
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	go func() {
-		log.Printf("[TORON] Server listening on http://localhost%s...", cfg.Addr)
-		log.Printf("[TORON] Serving static site from ./public...")
+		log.Printf("[TORON] Server listening on http://localhost%s...", srvCfg.Addr)
 		if err := srv.ListenAndServe(); err != nil && err != server.ErrServerClosed {
 			log.Fatalf("[TORON] Server fatal error: %v", err)
 		}

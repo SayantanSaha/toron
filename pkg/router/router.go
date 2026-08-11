@@ -21,15 +21,21 @@ type HandlerFunc func(req *httpparser.Request, res *httpparser.Response)
 // MiddlewareFunc describes middleware wrapping a HandlerFunc.
 type MiddlewareFunc func(next HandlerFunc) HandlerFunc
 
-type prefixRoute struct {
-	prefix  string
+type routeEntry struct {
+	headers map[string]string
 	handler HandlerFunc
 }
 
-// Router handles URL routing, method dispatching, static file serving, reverse proxying, and middleware execution.
+type prefixRoute struct {
+	prefix  string
+	headers map[string]string
+	handler HandlerFunc
+}
+
+// Router handles URL routing, method dispatching, header-based routing, static file serving, reverse proxying, and middleware execution.
 type Router struct {
 	mu               sync.RWMutex
-	routes           map[string]map[string]HandlerFunc // path -> method -> handler
+	routes           map[string]map[string][]routeEntry // path -> method -> []routeEntry
 	prefixRoutes     []prefixRoute
 	middlewares      []MiddlewareFunc
 	NotFound         HandlerFunc
@@ -39,7 +45,7 @@ type Router struct {
 // New creates a new Router instance with default 404/405 handlers.
 func New() *Router {
 	r := &Router{
-		routes: make(map[string]map[string]HandlerFunc),
+		routes: make(map[string]map[string][]routeEntry),
 	}
 
 	r.NotFound = func(req *httpparser.Request, res *httpparser.Response) {
@@ -66,13 +72,21 @@ func (r *Router) Use(mw ...MiddlewareFunc) {
 
 // Handle registers a handler for a specific HTTP method and exact path.
 func (r *Router) Handle(method, path string, handler HandlerFunc) {
+	r.HandleHeader(method, path, nil, handler)
+}
+
+// HandleHeader registers a handler conditional on matching specific HTTP header key/value pairs.
+func (r *Router) HandleHeader(method, path string, headers map[string]string, handler HandlerFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
 	if _, exists := r.routes[path]; !exists {
-		r.routes[path] = make(map[string]HandlerFunc)
+		r.routes[path] = make(map[string][]routeEntry)
 	}
-	r.routes[path][method] = handler
+	r.routes[path][method] = append(r.routes[path][method], routeEntry{
+		headers: headers,
+		handler: handler,
+	})
 }
 
 // GET convenience helper.
@@ -80,13 +94,33 @@ func (r *Router) GET(path string, handler HandlerFunc) {
 	r.Handle("GET", path, handler)
 }
 
+// GETHeader registers a GET route conditional on matching an HTTP header.
+func (r *Router) GETHeader(path, headerKey, headerVal string, handler HandlerFunc) {
+	r.HandleHeader("GET", path, map[string]string{headerKey: headerVal}, handler)
+}
+
 // POST convenience helper.
 func (r *Router) POST(path string, handler HandlerFunc) {
 	r.Handle("POST", path, handler)
 }
 
+// POSTHeader registers a POST route conditional on matching an HTTP header.
+func (r *Router) POSTHeader(path, headerKey, headerVal string, handler HandlerFunc) {
+	r.HandleHeader("POST", path, map[string]string{headerKey: headerVal}, handler)
+}
+
 // Proxy registers a URL prefix to reverse proxy incoming requests to an upstream target URL string.
 func (r *Router) Proxy(prefix, targetURLStr string) error {
+	return r.ProxyHeaders(prefix, nil, targetURLStr)
+}
+
+// ProxyHeader registers a prefix reverse proxy route conditional on matching an HTTP header.
+func (r *Router) ProxyHeader(prefix, headerKey, headerVal, targetURLStr string) error {
+	return r.ProxyHeaders(prefix, map[string]string{headerKey: headerVal}, targetURLStr)
+}
+
+// ProxyHeaders registers a prefix reverse proxy route conditional on matching multiple HTTP headers.
+func (r *Router) ProxyHeaders(prefix string, headers map[string]string, targetURLStr string) error {
 	px, err := proxy.NewReverseProxy(targetURLStr, 10*time.Second)
 	if err != nil {
 		return err
@@ -105,6 +139,7 @@ func (r *Router) Proxy(prefix, targetURLStr string) error {
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
 		prefix:  cleanPrefix,
+		headers: headers,
 		handler: proxyHandler,
 	})
 	return nil
@@ -208,6 +243,7 @@ func (r *Router) Static(prefix, dirPath string) {
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
 		prefix:  cleanPrefix,
+		headers: nil,
 		handler: staticHandler,
 	})
 }
@@ -219,19 +255,47 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 
 	methodsMap, pathExists := r.routes[req.Path]
 	if pathExists {
-		h, methodExists := methodsMap[req.Method]
+		entries, methodExists := methodsMap[req.Method]
 		if methodExists {
-			targetHandler = h
+			// First pass: Find route entry with matching header conditions
+			var fallbackEntry *routeEntry
+			for i := range entries {
+				if len(entries[i].headers) > 0 && headersMatch(req, entries[i].headers) {
+					targetHandler = entries[i].handler
+					break
+				}
+				if len(entries[i].headers) == 0 {
+					fallbackEntry = &entries[i]
+				}
+			}
+			if targetHandler == nil && fallbackEntry != nil {
+				targetHandler = fallbackEntry.handler
+			}
+			if targetHandler == nil && len(entries) > 0 {
+				targetHandler = entries[0].handler
+			}
 		} else {
 			targetHandler = r.MethodNotAllowed
 		}
-	} else {
+	}
+
+	if targetHandler == nil {
 		// Check prefix routes (e.g. static file or proxy routes)
-		for _, pr := range r.prefixRoutes {
+		var fallbackPrefix *prefixRoute
+		for i := range r.prefixRoutes {
+			pr := &r.prefixRoutes[i]
 			if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
-				targetHandler = pr.handler
-				break
+				if len(pr.headers) > 0 && headersMatch(req, pr.headers) {
+					targetHandler = pr.handler
+					break
+				}
+				if len(pr.headers) == 0 && fallbackPrefix == nil {
+					fallbackPrefix = pr
+				}
 			}
+		}
+		if targetHandler == nil && fallbackPrefix != nil {
+			targetHandler = fallbackPrefix.handler
 		}
 		if targetHandler == nil {
 			targetHandler = r.NotFound
@@ -248,6 +312,16 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	}
 
 	finalChain(req, res)
+}
+
+func headersMatch(req *httpparser.Request, expectedHeaders map[string]string) bool {
+	for k, expectedVal := range expectedHeaders {
+		actualVal := req.Header.Get(k)
+		if actualVal != expectedVal {
+			return false
+		}
+	}
+	return true
 }
 
 // LoggerMiddleware logs incoming requests and processing duration.

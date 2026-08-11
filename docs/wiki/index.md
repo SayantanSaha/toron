@@ -16,6 +16,7 @@ depends_on:
   - REQ-007
   - REQ-008
   - REQ-009
+  - REQ-010
 
 derived_from:
   - PRD.md
@@ -23,6 +24,7 @@ derived_from:
   - ADR-002
   - ADR-003
   - ADR-004
+  - ADR-005
 
 documents:
   - TORON-DOCUMENTATION-INDEX
@@ -47,6 +49,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Event Reactor Core](./features/event-reactor.md) – Event-driven concurrency, non-blocking I/O, and worker pool.
 - [Static File Serving](./features/static-file-serving.md) – Hosting web applications, MIME type resolution, and security.
 - [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding and proxy header injection.
+- [Header-Based HTTP Routing](./features/header-routing.md) – API versioning, canary routing, and header-conditional dispatching.
 - [Native Go Benchmarking](./features/benchmarking.md) – Performance benchmarks and allocation metrics.
 
 ### 📖 References

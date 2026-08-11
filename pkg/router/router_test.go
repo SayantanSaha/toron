@@ -64,6 +64,43 @@ func TestRouter_MatchingAndMiddleware(t *testing.T) {
 	}
 }
 
+func TestRouter_HeaderBasedRouting(t *testing.T) {
+	r := router.New()
+
+	// Register header-conditional route (API v2)
+	r.GETHeader("/api/data", "X-Version", "v2", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("v2 API")
+	})
+
+	// Register default path route (API v1)
+	r.GET("/api/data", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("v1 API")
+	})
+
+	// Test 1: Request with X-Version: v2
+	reqV2, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+	reqV2.Header.Set("X-Version", "v2")
+	resV2 := httpparser.NewResponse()
+
+	r.ServeHTTP(reqV2, resV2)
+
+	if resV2.Body.String() != "v2 API" {
+		t.Errorf("expected 'v2 API', got %q", resV2.Body.String())
+	}
+
+	// Test 2: Request without header -> falls back to default v1 API
+	reqV1, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+	resV1 := httpparser.NewResponse()
+
+	r.ServeHTTP(reqV1, resV1)
+
+	if resV1.Body.String() != "v1 API" {
+		t.Errorf("expected 'v1 API', got %q", resV1.Body.String())
+	}
+}
+
 func TestRouter_RecoveryMiddleware(t *testing.T) {
 	r := router.New()
 	r.Use(router.RecoveryMiddleware())

@@ -39,10 +39,11 @@ type ProxyConfig struct {
 	Routes  []ProxyRouteConfig `yaml:"routes" json:"routes"`
 }
 
-// ProxyRouteConfig describes an individual prefix to upstream target URL mapping.
+// ProxyRouteConfig describes an individual prefix and optional header condition to upstream target URL mapping.
 type ProxyRouteConfig struct {
-	Prefix string `yaml:"prefix" json:"prefix"`
-	Target string `yaml:"target" json:"target"`
+	Prefix  string            `yaml:"prefix" json:"prefix"`
+	Headers map[string]string `yaml:"headers" json:"headers"`
+	Target  string            `yaml:"target" json:"target"`
 }
 
 // LoggingConfig captures logging settings.

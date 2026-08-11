@@ -1,6 +1,6 @@
 # Release Notes
 
-## 2026-08-11 - Prototype 1, 2, 3, 4 & 5 Release
+## 2026-08-11 - Prototype 1, 2, 3, 4, 5 & 6 Release
 
 ### Added
 
@@ -13,6 +13,7 @@
 - **Extensible Configuration System**: External configuration file support (`config.yaml`), CLI argument `-config` flag, and extensible `pkg/config` loader architecture (`TASK-007`, `REQ-007`).
 - **Native Go Benchmarking Suite**: Standard Go `testing.B` benchmarks across `pkg/reactor`, `pkg/httpparser`, `pkg/router`, and `pkg/server` with memory allocation tracking (`TASK-008`, `REQ-008`).
 - **Reverse Proxy & Upstream Gateway**: Built-in HTTP reverse proxy engine (`pkg/proxy`, `router.Proxy(prefix, target)`), forwarding requests, injecting `X-Forwarded-*` headers, and supporting YAML proxy routes (`TASK-009`, `REQ-009`).
+- **Header-Based HTTP Routing**: Conditional route matching and proxy forwarding based on HTTP header key/value conditions (`r.GETHeader`, `r.ProxyHeader`, `proxy.routes[].headers`), supporting API versioning (`X-Version: v2`) and canary routing (`TASK-010`, `REQ-010`).
 
 ### Related Tasks
 
@@ -25,3 +26,4 @@
 - `TASK-007`: Extensible Config Loader Package & CLI Flag Integration
 - `TASK-008`: Benchmark Suite Implementation for Core Server Packages
 - `TASK-009`: Reverse Proxy Handler & Upstream Transport Implementation
+- `TASK-010`: Header-Based Route Matching & Config Integration

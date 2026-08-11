@@ -57,11 +57,11 @@ func main() {
 		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
 	})
 
-	// Register Reverse Proxy routes if enabled
+	// Register Reverse Proxy routes (with header routing support) if enabled
 	if appCfg.Proxy.Enabled {
 		for _, pr := range appCfg.Proxy.Routes {
-			log.Printf("[TORON] Configuring Reverse Proxy: prefix %q -> upstream %q", pr.Prefix, pr.Target)
-			if err := r.Proxy(pr.Prefix, pr.Target); err != nil {
+			log.Printf("[TORON] Configuring Reverse Proxy: prefix %q (headers: %v) -> upstream %q", pr.Prefix, pr.Headers, pr.Target)
+			if err := r.ProxyHeaders(pr.Prefix, pr.Headers, pr.Target); err != nil {
 				log.Fatalf("[TORON] Invalid proxy configuration for target %q: %v", pr.Target, err)
 			}
 		}

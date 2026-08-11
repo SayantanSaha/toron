@@ -18,8 +18,14 @@ static:
 proxy:
   enabled: false
   routes:
-    - prefix: "/api/v2"
-      target: "http://localhost:9090"
+    - prefix: "/api"
+      headers:
+        X-Version: "v2"
+      target: "http://localhost:9092"
+    - prefix: "/api"
+      headers:
+        X-Version: "v1"
+      target: "http://localhost:9091"
 
 logging:
   level: "info"

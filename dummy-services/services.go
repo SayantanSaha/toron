@@ -45,6 +45,24 @@ func NewDummyServer(serviceName string, port int) *DummyServer {
 	}
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, HEAD")
+		w.Header().Set("Access-Control-Allow-Headers", "*")
+
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("X-Dummy-Server", cfg.Name)
+
+		if r.URL.Path == "/error" || r.URL.Path == "/500" || r.Header.Get("X-Simulate-Error") != "" || r.URL.Query().Get("fail") == "true" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"error":"500 Internal Server Error","service":%q,"port":%d}`, cfg.Name, cfg.Port)))
+			return
+		}
+
 		payload := ResponsePayload{
 			Service: cfg.Name,
 			Port:    cfg.Port,
@@ -53,8 +71,6 @@ func NewDummyServer(serviceName string, port int) *DummyServer {
 			Headers: r.Header,
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.Header().Set("X-Dummy-Server", cfg.Name)
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(payload)
 	})

@@ -1,5 +1,18 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 8 Release (Mobile-First Control Center & Dashboard)
+
+### Added
+
+- **Mobile-First Control Center & Proxy Dashboard**: Transformed `/public` frontend into a responsive Web Control Center and Proxy Dashboard built with HTML5, Vanilla JavaScript, and Tailwind CSS (`TASK-016`, `REQ-016`).
+- **Real-Time Upstream Health Probing**: Dynamic client-side health check execution querying upstream service ports 9001-9010 and accurately flagging status 200 (Healthy `CLOSED`), status 500 (`OPEN (500 ERR)`), or connection failure (`UNREACHABLE`).
+- **Interactive Live API & Proxy Route Tester**: Interactive request composer with header presets, custom header inputs, execution time calculation (in ms), status badges, and formatted JSON response preview.
+- **CORS & Error Simulation in Dummy Services**: Added CORS headers (`Access-Control-Allow-Origin: *`) and 500 error route handling (`/500`, `/error`, `?fail=true`) in `dummy-services/services.go`.
+
+### Related Tasks
+
+- `TASK-016`: Implement Mobile-First Control Center and Proxy Dashboard UI
+
 ## 2026-08-12 - Prototype 7 Release (Load Balancing)
 
 ### Added

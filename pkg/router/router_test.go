@@ -169,6 +169,18 @@ func TestRouter_StaticFileServing(t *testing.T) {
 	if res3.StatusCode != http.StatusForbidden && res3.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 403 Forbidden or 404 for traversal, got %d", res3.StatusCode)
 	}
+
+	// Test 4: Trailing slash redirect for GET /static
+	req4, _ := httpparser.NewRequest("GET", "/static", "HTTP/1.1")
+	res4 := httpparser.NewResponse()
+	r.ServeHTTP(req4, res4)
+
+	if res4.StatusCode != http.StatusFound {
+		t.Errorf("expected status 302 Found for /static, got %d", res4.StatusCode)
+	}
+	if res4.Header.Get("Location") != "/static/" {
+		t.Errorf("expected Location /static/, got %q", res4.Header.Get("Location"))
+	}
 }
 
 func TestRouter_ProxyBalancer(t *testing.T) {

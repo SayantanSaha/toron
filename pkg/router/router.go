@@ -184,6 +184,11 @@ func (r *Router) Static(prefix, dirPath string) {
 
 		relPath := req.Path
 		if cleanPrefix != "" {
+			if req.Path == cleanPrefix {
+				res.SetStatus(http.StatusFound)
+				res.Header.Set("Location", cleanPrefix+"/")
+				return
+			}
 			relPath = strings.TrimPrefix(req.Path, cleanPrefix)
 		}
 		if relPath == "" || relPath == "/" {

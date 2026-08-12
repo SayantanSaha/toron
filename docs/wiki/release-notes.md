@@ -1,5 +1,17 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 10 Release (Configurable Static Prefix & Relative Asset Resolution)
+
+### Added
+
+- **Relative Asset Resolution**: Updated `public/index.html` to reference `./style.css` and `./app.js` using relative URL paths (`TASK-018`, `REQ-018`).
+- **Subpath Prefix Trailing Slash Redirect**: Updated `pkg/router/router.go` static file handler to automatically emit a `302 Found` redirect when a request matches a configured static prefix (e.g. `/internal/dashboard`) without trailing slash, establishing correct browser base URL resolution.
+- **Config Integration**: Tested and verified static prefix configuration (`prefix: "/internal/dashboard"`) in `config.yaml`.
+
+### Related Tasks
+
+- `TASK-018`: Implement Configurable Static Prefix Trailing Slash Redirect and Relative Asset Loading
+
 ## 2026-08-12 - Prototype 9 Release (Internal Management API Endpoints)
 
 ### Added

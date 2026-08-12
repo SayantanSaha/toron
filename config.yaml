@@ -12,7 +12,7 @@ server:
 
 static:
   enabled: true
-  prefix: "/"
+  prefix: "/internal/dashboard"
   dir: "./public"
 
 proxy:

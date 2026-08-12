@@ -131,7 +131,16 @@ func (r *Router) ProxyBalancer(prefix string, targets []string, algo proxy.Algor
 
 // ProxyBalancerHeaders registers a prefix reverse proxy route load balancing across multiple upstream targets with header matching.
 func (r *Router) ProxyBalancerHeaders(prefix string, headers map[string]string, targets []string, algo proxy.Algorithm) error {
-	px, err := proxy.NewLoadBalancerProxy(targets, algo, 10*time.Second)
+	return r.ProxyWithOptions(prefix, headers, proxy.ProxyOptions{
+		Targets:   targets,
+		Algorithm: algo,
+		Timeout:   10 * time.Second,
+	})
+}
+
+// ProxyWithOptions registers a prefix reverse proxy route using full ProxyOptions (health check, circuit breaker).
+func (r *Router) ProxyWithOptions(prefix string, headers map[string]string, opts proxy.ProxyOptions) error {
+	px, err := proxy.NewProxyWithOptions(opts)
 	if err != nil {
 		return err
 	}

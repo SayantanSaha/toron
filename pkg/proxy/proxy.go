@@ -26,58 +26,76 @@ var (
 	ErrNoTargetsAvailable = errors.New("proxy: no upstream targets available")
 )
 
-// LoadBalancer interface abstracts selecting an upstream target URL for a request.
+// LoadBalancer interface abstracts selecting an upstream target node for a request.
 type LoadBalancer interface {
-	Next(req *httpparser.Request) (*url.URL, error)
+	Next(req *httpparser.Request) (*UpstreamTarget, error)
 	Algorithm() Algorithm
-	Targets() []*url.URL
+	Targets() []*UpstreamTarget
+	Stop()
 }
 
-// RoundRobinBalancer selects upstream targets sequentially in a thread-safe circular order.
+// RoundRobinBalancer selects healthy upstream targets sequentially in a thread-safe circular order.
 type RoundRobinBalancer struct {
-	targets []*url.URL
+	targets []*UpstreamTarget
 	counter uint64
 }
 
-// NewRoundRobinBalancer creates a round-robin load balancer for target URLs.
-func NewRoundRobinBalancer(targets []*url.URL) (*RoundRobinBalancer, error) {
+// NewRoundRobinBalancer creates a round-robin load balancer for target nodes.
+func NewRoundRobinBalancer(targets []*UpstreamTarget) (*RoundRobinBalancer, error) {
 	if len(targets) == 0 {
 		return nil, ErrNoTargetsAvailable
 	}
-	copied := make([]*url.URL, len(targets))
+	copied := make([]*UpstreamTarget, len(targets))
 	copy(copied, targets)
 	return &RoundRobinBalancer{
 		targets: copied,
 	}, nil
 }
 
-func (b *RoundRobinBalancer) Next(req *httpparser.Request) (*url.URL, error) {
+func (b *RoundRobinBalancer) Next(req *httpparser.Request) (*UpstreamTarget, error) {
 	if len(b.targets) == 0 {
 		return nil, ErrNoTargetsAvailable
 	}
-	idx := atomic.AddUint64(&b.counter, 1) - 1
-	return b.targets[idx%uint64(len(b.targets))], nil
+
+	n := len(b.targets)
+	startIdx := int(atomic.AddUint64(&b.counter, 1) - 1)
+
+	// Round-robin search for healthy (Closed or HalfOpen) target
+	for i := 0; i < n; i++ {
+		target := b.targets[(startIdx+i)%n]
+		state := target.GetState()
+		if state == StateClosed || state == StateHalfOpen {
+			return target, nil
+		}
+	}
+
+	return nil, ErrNoHealthyUpstreamAvailable
 }
 
 func (b *RoundRobinBalancer) Algorithm() Algorithm {
 	return AlgorithmRoundRobin
 }
 
-func (b *RoundRobinBalancer) Targets() []*url.URL {
+func (b *RoundRobinBalancer) Targets() []*UpstreamTarget {
 	return b.targets
 }
 
+func (b *RoundRobinBalancer) Stop() {
+	for _, t := range b.targets {
+		t.StopActiveHealthCheck()
+	}
+}
+
 // NewLoadBalancer constructs a LoadBalancer for given targets and algorithm.
-// Defaults to AlgorithmRoundRobin if algo is empty or "round_robin".
-func NewLoadBalancer(algo Algorithm, targetURLs []*url.URL) (LoadBalancer, error) {
-	if len(targetURLs) == 0 {
+func NewLoadBalancer(algo Algorithm, targets []*UpstreamTarget) (LoadBalancer, error) {
+	if len(targets) == 0 {
 		return nil, ErrNoTargetsAvailable
 	}
 
 	normAlgo := Algorithm(strings.ToLower(strings.TrimSpace(string(algo))))
 	switch normAlgo {
 	case "", AlgorithmRoundRobin:
-		return NewRoundRobinBalancer(targetURLs)
+		return NewRoundRobinBalancer(targets)
 	default:
 		return nil, fmt.Errorf("proxy: unsupported load balancing algorithm %q", algo)
 	}
@@ -95,42 +113,74 @@ func NewReverseProxy(targetURLStr string, timeout time.Duration) (*ReverseProxy,
 	return NewLoadBalancerProxy([]string{targetURLStr}, AlgorithmRoundRobin, timeout)
 }
 
+// ProxyOptions configures advanced proxy, health check, and circuit breaker settings.
+type ProxyOptions struct {
+	Targets             []string
+	Algorithm           Algorithm
+	Timeout             time.Duration
+	HealthCheckPath     string
+	HealthCheckInterval time.Duration
+	MaxFailures         int
+	CooldownPeriod      time.Duration
+}
+
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.
 func NewLoadBalancerProxy(targetURLStrs []string, algo Algorithm, timeout time.Duration) (*ReverseProxy, error) {
-	if len(targetURLStrs) == 0 {
+	return NewProxyWithOptions(ProxyOptions{
+		Targets:   targetURLStrs,
+		Algorithm: algo,
+		Timeout:   timeout,
+	})
+}
+
+// NewProxyWithOptions creates a ReverseProxy using ProxyOptions.
+func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
+	if len(opts.Targets) == 0 {
 		return nil, ErrNoTargetsAvailable
 	}
 
-	parsedURLs := make([]*url.URL, 0, len(targetURLStrs))
-	for _, targetStr := range targetURLStrs {
-		targetURL, err := url.Parse(targetStr)
+	if opts.Timeout <= 0 {
+		opts.Timeout = 10 * time.Second
+	}
+
+	client := &http.Client{
+		Timeout: opts.Timeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+
+	upstreamTargets := make([]*UpstreamTarget, 0, len(opts.Targets))
+	for _, targetStr := range opts.Targets {
+		parsedURL, err := url.Parse(targetStr)
 		if err != nil {
 			return nil, fmt.Errorf("proxy: invalid target URL %q: %w", targetStr, err)
 		}
-		parsedURLs = append(parsedURLs, targetURL)
+
+		targetNode := NewUpstreamTarget(parsedURL, opts.HealthCheckPath, opts.MaxFailures, opts.CooldownPeriod)
+		if opts.HealthCheckPath != "" {
+			targetNode.StartActiveHealthCheck(client, opts.HealthCheckInterval)
+		}
+		upstreamTargets = append(upstreamTargets, targetNode)
 	}
 
-	lb, err := NewLoadBalancer(algo, parsedURLs)
+	lb, err := NewLoadBalancer(opts.Algorithm, upstreamTargets)
 	if err != nil {
 		return nil, err
 	}
 
-	if timeout <= 0 {
-		timeout = 10 * time.Second
-	}
-
-	client := &http.Client{
-		Timeout: timeout,
-		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			return http.ErrUseLastResponse // Don't auto-follow redirects, proxy them back
-		},
-	}
-
 	return &ReverseProxy{
-		TargetURL: parsedURLs[0],
+		TargetURL: upstreamTargets[0].URL,
 		Balancer:  lb,
 		Client:    client,
 	}, nil
+}
+
+// Close stops active background health checks.
+func (p *ReverseProxy) Close() {
+	if p.Balancer != nil {
+		p.Balancer.Stop()
+	}
 }
 
 // ServeHTTP translates a Toron Request, proxies it to the upstream server, and writes the upstream response to Res.
@@ -140,23 +190,28 @@ func (p *ReverseProxy) ServeHTTP(req *httpparser.Request, res *httpparser.Respon
 
 // ServeHTTPWithPrefix proxies the request stripping an optional route prefix.
 func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httpparser.Response, prefix string) {
-	var targetURL *url.URL
+	var targetNode *UpstreamTarget
 	if p.Balancer != nil {
 		selected, err := p.Balancer.Next(req)
 		if err != nil {
-			p.writeBadGateway(res, fmt.Sprintf("Load balancer error: %v", err))
+			if errors.Is(err, ErrNoHealthyUpstreamAvailable) {
+				p.writeServiceUnavailable(res, "503 Service Unavailable: All upstream targets are unhealthy or circuit open")
+			} else {
+				p.writeBadGateway(res, fmt.Sprintf("Load balancer error: %v", err))
+			}
 			return
 		}
-		targetURL = selected
-	} else {
-		targetURL = p.TargetURL
+		targetNode = selected
+	} else if p.TargetURL != nil {
+		targetNode = NewUpstreamTarget(p.TargetURL, "", 3, 10*time.Second)
 	}
 
-	if targetURL == nil {
+	if targetNode == nil || targetNode.URL == nil {
 		p.writeBadGateway(res, "No upstream target available")
 		return
 	}
 
+	targetURL := targetNode.URL
 	relPath := req.Path
 	if prefix != "" {
 		relPath = strings.TrimPrefix(req.Path, prefix)
@@ -203,10 +258,17 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	// Dispatch request to upstream
 	outResp, err := p.Client.Do(outReq)
 	if err != nil {
+		targetNode.RecordFailure()
 		p.writeBadGateway(res, fmt.Sprintf("Upstream unreachable (%s): %v", targetURL.String(), err))
 		return
 	}
 	defer outResp.Body.Close()
+
+	if outResp.StatusCode >= 500 {
+		targetNode.RecordFailure()
+	} else {
+		targetNode.RecordSuccess()
+	}
 
 	// Copy upstream status code
 	res.SetStatus(outResp.StatusCode)
@@ -229,6 +291,13 @@ func (p *ReverseProxy) writeBadGateway(res *httpparser.Response, msg string) {
 	res.Header.Set("Content-Type", "application/json")
 	res.Body.Reset()
 	_, _ = res.WriteString(fmt.Sprintf(`{"error":"502 Bad Gateway","message":%q}`, msg))
+}
+
+func (p *ReverseProxy) writeServiceUnavailable(res *httpparser.Response, msg string) {
+	res.SetStatus(http.StatusServiceUnavailable)
+	res.Header.Set("Content-Type", "application/json")
+	res.Body.Reset()
+	_, _ = res.WriteString(fmt.Sprintf(`{"error":"503 Service Unavailable","message":%q}`, msg))
 }
 
 func singleJoiningSlash(a, b string) string {

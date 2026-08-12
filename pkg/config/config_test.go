@@ -119,3 +119,17 @@ proxy:
 		t.Errorf("expected round_robin algorithm, got %q", route.GetAlgorithm())
 	}
 }
+
+func TestConfig_DefaultConfigYamlLoading(t *testing.T) {
+	cfg, err := config.LoadFromFile("../../config.yaml")
+	if err != nil {
+		t.Fatalf("failed to load root config.yaml: %v", err)
+	}
+
+	if !cfg.Proxy.Enabled {
+		t.Error("expected proxy.enabled to be true in config.yaml")
+	}
+	if len(cfg.Proxy.Routes) != 5 {
+		t.Errorf("expected 5 proxy routes in config.yaml, got %d", len(cfg.Proxy.Routes))
+	}
+}

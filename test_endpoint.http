@@ -1,0 +1,88 @@
+# Toron Web Server - REST Client HTTP Test Suite
+# Use with VS Code REST Client, Antigravity, JetBrains HTTP Client, or curl.
+
+@baseUrl = http://localhost:8080
+
+###############################################################################
+# 1. Native Server Endpoints
+###############################################################################
+
+### 1.1 Health Check Endpoint
+GET {{baseUrl}}/health
+Accept: application/json
+
+### 1.2 Toron Engine Status Endpoint
+GET {{baseUrl}}/api/status
+Accept: application/json
+
+
+###############################################################################
+# 2. Static Site File Serving Endpoints
+###############################################################################
+
+### 2.1 Static Site Home Page (index.html)
+GET {{baseUrl}}/
+
+### 2.2 Static CSS File
+GET {{baseUrl}}/style.css
+
+### 2.3 Static JavaScript File
+GET {{baseUrl}}/app.js
+
+
+###############################################################################
+# 3. Header-Based Proxy Routing Endpoints
+###############################################################################
+
+### 3.1 Header Routing v2 (Round-Robin Load Balanced across Ports 9001, 9002, 9003)
+# Execute this request multiple times to observe round-robin rotation in JSON response
+GET {{baseUrl}}/api/users
+X-Version: v2
+Accept: application/json
+
+### 3.2 Header Routing v1 (Single Target on Port 9004)
+GET {{baseUrl}}/api/users
+X-Version: v1
+Accept: application/json
+
+
+###############################################################################
+# 4. Path Prefix Proxy Routing & Load Balancing Endpoints
+###############################################################################
+
+### 4.1 Path Cluster Route (Round-Robin Load Balanced across Ports 9005, 9006, 9007)
+# Execute this request multiple times to observe round-robin rotation in JSON response
+GET {{baseUrl}}/services/cluster/info
+Accept: application/json
+
+### 4.2 Path Auth Route (Single Target on Port 9008)
+GET {{baseUrl}}/services/auth/login
+Accept: application/json
+
+### 4.3 Path Analytics Route (Round-Robin Load Balanced across Ports 9009, 9010)
+GET {{baseUrl}}/services/analytics/report
+Accept: application/json
+
+
+###############################################################################
+# 5. HTTP Method Dispatching & POST Requests
+###############################################################################
+
+### 5.1 POST Request to Auth Upstream (Port 9008)
+POST {{baseUrl}}/services/auth/login
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "secretpassword123"
+}
+
+### 5.2 POST Request to Cluster Upstream (Ports 9005, 9006, 9007)
+POST {{baseUrl}}/services/cluster/submit
+Content-Type: application/json
+X-Version: v2
+
+{
+  "action": "process_batch",
+  "items": [101, 102, 103]
+}

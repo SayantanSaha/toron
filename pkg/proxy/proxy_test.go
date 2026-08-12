@@ -135,3 +135,46 @@ func TestLoadBalancer_Validation(t *testing.T) {
 		t.Error("expected error for unsupported algorithm")
 	}
 }
+
+func TestCircuitBreaker_StateTransitions(t *testing.T) {
+	healthyServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("healthy"))
+	}))
+	defer healthyServer.Close()
+
+	offlinePort := "http://127.0.0.1:59998"
+
+	opts := proxy.ProxyOptions{
+		Targets:             []string{healthyServer.URL, offlinePort},
+		Algorithm:           proxy.AlgorithmRoundRobin,
+		Timeout:             500 * time.Millisecond,
+		MaxFailures:         2,
+		CooldownPeriod:      200 * time.Millisecond,
+		HealthCheckPath:     "/health",
+		HealthCheckInterval: 50 * time.Millisecond,
+	}
+
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create proxy with options: %v", err)
+	}
+	defer px.Close()
+
+	// Wait for background active health checker to trip offline server to Open
+	time.Sleep(150 * time.Millisecond)
+
+	// Make 4 requests - all should automatically route to healthyServer because offline target is Open/tripped
+	for i := 0; i < 4; i++ {
+		req, _ := httpparser.NewRequest("GET", "/", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("request %d: expected 200 OK from healthy node, got %d", i, res.StatusCode)
+		}
+		if res.Body.String() != "healthy" {
+			t.Errorf("request %d: expected body 'healthy', got %q", i, res.Body.String())
+		}
+	}
+}

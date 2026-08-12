@@ -40,13 +40,17 @@ type ProxyConfig struct {
 	Routes  []ProxyRouteConfig `yaml:"routes" json:"routes"`
 }
 
-// ProxyRouteConfig describes an individual prefix and optional header condition to upstream target URL mapping with optional load balancing.
+// ProxyRouteConfig describes an individual prefix and optional header condition to upstream target URL mapping with optional load balancing, active health check, and circuit breaker settings.
 type ProxyRouteConfig struct {
-	Prefix    string            `yaml:"prefix" json:"prefix"`
-	Headers   map[string]string `yaml:"headers" json:"headers"`
-	Target    string            `yaml:"target" json:"target"`
-	Targets   []string          `yaml:"targets" json:"targets"`
-	Algorithm string            `yaml:"algorithm" json:"algorithm"`
+	Prefix              string            `yaml:"prefix" json:"prefix"`
+	Headers             map[string]string `yaml:"headers" json:"headers"`
+	Target              string            `yaml:"target" json:"target"`
+	Targets             []string          `yaml:"targets" json:"targets"`
+	Algorithm           string            `yaml:"algorithm" json:"algorithm"`
+	HealthCheckPath     string            `yaml:"health_check_path" json:"health_check_path"`
+	HealthCheckInterval time.Duration     `yaml:"health_check_interval" json:"health_check_interval"`
+	ConsecutiveFailures int               `yaml:"consecutive_failures" json:"consecutive_failures"`
+	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
 }
 
 // GetTargets returns all configured upstream target URLs for the route.

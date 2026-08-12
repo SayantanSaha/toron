@@ -40,10 +40,18 @@ Toron includes a native **Reverse Proxy** engine (`pkg/proxy`), allowing it to r
 proxy:
   enabled: true
   routes:
-    - prefix: "/api/v2"
-      target: "http://localhost:9090"
+    # Header routing + Round-Robin load balancing across ports 9001-9003
+    - prefix: "/api"
+      headers:
+        X-Version: "v2"
+      algorithm: "round_robin"
+      targets:
+        - "http://localhost:9001"
+        - "http://localhost:9002"
+        - "http://localhost:9003"
+    # Path prefix routing + Single target on port 9008
     - prefix: "/services/auth"
-      target: "http://auth-service:3000"
+      target: "http://localhost:9008"
 ```
 
 ## Programmatic Route Registration

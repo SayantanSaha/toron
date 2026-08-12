@@ -6,11 +6,17 @@
 
 - **Upstream Reverse Proxy Load Balancing**: Multi-target load balancing with pluggable `LoadBalancer` interface, thread-safe Round-Robin selection algorithm (`round_robin`), YAML `targets` & `algorithm` configuration, and `r.ProxyBalancer` router helpers (`TASK-011`, `REQ-011`).
 - **Dummy Web Services Test Suite**: 10 dummy HTTP web services running on ports 9001–9010 (`dummy-services/`) for testing reverse proxy routing and load balancer upstream targets (`TASK-012`, `REQ-012`).
+- **Upstream Health Check & Circuit Breaker**: Active HTTP health check probing (`health_check_path`), 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`), automatic offline target filtering, and recovery cooldown management (`TASK-014`, `REQ-014`).
+- **Full Proxy Route Integration Configuration**: Updated `config.yaml` with active proxy routing (`proxy.enabled: true`) mapping all path, header, single-target, and load-balanced routes to dummy services 9001–9010 (`TASK-013`, `REQ-013`).
+- **Standardized REST Client Test File**: Created `test_endpoint.http` in root directory for one-click HTTP request execution across all native, static, header, path, and proxy endpoints (`TASK-015`, `REQ-015`).
 
 ### Related Tasks
 
 - `TASK-011`: Reverse Proxy Load Balancer Implementation
 - `TASK-012`: Add 10 Dummy Web Services for Upstream Testing
+- `TASK-013`: Update config.yaml to Map Proxy Routes to Dummy Web Services
+- `TASK-014`: Implement Upstream Health Check and Circuit Breaker
+- `TASK-015`: Create test_endpoint.http REST Client Test File
 
 ## 2026-08-11 - Prototype 1, 2, 3, 4, 5 & 6 Release
 

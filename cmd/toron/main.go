@@ -58,13 +58,22 @@ func main() {
 		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
 	})
 
-	// Register Reverse Proxy routes (with header routing & load balancing support) if enabled
+	// Register Reverse Proxy routes (with header routing, load balancing, health check & circuit breaker support) if enabled
 	if appCfg.Proxy.Enabled {
 		for _, pr := range appCfg.Proxy.Routes {
 			targets := pr.GetTargets()
 			algo := pr.GetAlgorithm()
-			log.Printf("[TORON] Configuring Reverse Proxy: prefix %q (headers: %v) -> targets %v [algo: %s]", pr.Prefix, pr.Headers, targets, algo)
-			if err := r.ProxyBalancerHeaders(pr.Prefix, pr.Headers, targets, proxy.Algorithm(algo)); err != nil {
+			log.Printf("[TORON] Configuring Reverse Proxy: prefix %q (headers: %v) -> targets %v [algo: %s, healthCheck: %q]", pr.Prefix, pr.Headers, targets, algo, pr.HealthCheckPath)
+			opts := proxy.ProxyOptions{
+				Targets:             targets,
+				Algorithm:           proxy.Algorithm(algo),
+				Timeout:             10 * time.Second,
+				HealthCheckPath:     pr.HealthCheckPath,
+				HealthCheckInterval: pr.HealthCheckInterval,
+				MaxFailures:         pr.ConsecutiveFailures,
+				CooldownPeriod:      pr.CooldownPeriod,
+			}
+			if err := r.ProxyWithOptions(pr.Prefix, pr.Headers, opts); err != nil {
 				log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)
 			}
 		}

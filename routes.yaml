@@ -3,7 +3,16 @@
 proxy:
   enabled: true
   routes:
-    # 1. Header-Based Routing + Multi-Target Round-Robin Load Balancing (Dummy Services 1, 2, 3)
+    # 1. Domain-Based Routing (Host: api.toron.local -> Dummy Services 1, 2, 3)
+    - host: "api.toron.local"
+      prefix: "/"
+      algorithm: "round_robin"
+      targets:
+        - "http://localhost:9001"
+        - "http://localhost:9002"
+        - "http://localhost:9003"
+
+    # 2. Header-Based Routing + Multi-Target Round-Robin Load Balancing (Dummy Services 1, 2, 3)
     - prefix: "/api"
       headers:
         X-Version: "v2"
@@ -13,13 +22,13 @@ proxy:
         - "http://localhost:9002"
         - "http://localhost:9003"
 
-    # 2. Header-Based Routing + Single Target (Dummy Service 4)
+    # 3. Header-Based Routing + Single Target (Dummy Service 4)
     - prefix: "/api"
       headers:
         X-Version: "v1"
       target: "http://localhost:9004"
 
-    # 3. Path Prefix Routing + Multi-Target Round-Robin Load Balancing (Dummy Services 5, 6, 7)
+    # 4. Path Prefix Routing + Multi-Target Round-Robin Load Balancing (Dummy Services 5, 6, 7)
     - prefix: "/services/cluster"
       algorithm: "round_robin"
       targets:
@@ -27,11 +36,11 @@ proxy:
         - "http://localhost:9006"
         - "http://localhost:9007"
 
-    # 4. Path Prefix Routing + Single Target (Dummy Service 8)
+    # 5. Path Prefix Routing + Single Target (Dummy Service 8)
     - prefix: "/services/auth"
       target: "http://localhost:9008"
 
-    # 5. Path Prefix Routing + Multi-Target Load Balancing (Dummy Services 9, 10)
+    # 6. Path Prefix Routing + Multi-Target Load Balancing (Dummy Services 9, 10)
     - prefix: "/services/analytics"
       algorithm: "round_robin"
       targets:

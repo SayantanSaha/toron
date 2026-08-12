@@ -1,5 +1,18 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 12 Release (Domain-Based Virtual Host Routing)
+
+### Added
+
+- **Domain-Based HTTP Routing**: Added Virtual Host matching support in `pkg/router/router.go` (`r.GETHost`, `r.HandleHostHeader`, `r.ProxyWithOptions` with host matching) (`TASK-020`, `REQ-020`).
+- **YAML Schema Extension**: Supported `host` and `domain` parameters under proxy route configurations in `routes.yaml`.
+- **Host Header Extraction & Sanitization**: Implemented `extractHost(req)` stripping optional port numbers and matching exact subdomains.
+- **HTTP REST Test Suite**: Added domain-based Host header request examples in `test_endpoint.http`.
+
+### Related Tasks
+
+- `TASK-020`: Implement Domain-Based HTTP Routing and Proxy Forwarding
+
 ## 2026-08-12 - Prototype 11 Release (Decoupled Dual-File YAML Configuration)
 
 ### Added

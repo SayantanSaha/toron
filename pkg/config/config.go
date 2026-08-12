@@ -42,6 +42,8 @@ type ProxyConfig struct {
 
 // ProxyRouteConfig describes an individual prefix and optional header condition to upstream target URL mapping with optional load balancing, active health check, and circuit breaker settings.
 type ProxyRouteConfig struct {
+	Host                string            `yaml:"host" json:"host"`
+	Domain              string            `yaml:"domain" json:"domain"`
 	Prefix              string            `yaml:"prefix" json:"prefix"`
 	Headers             map[string]string `yaml:"headers" json:"headers"`
 	Target              string            `yaml:"target" json:"target"`
@@ -51,6 +53,17 @@ type ProxyRouteConfig struct {
 	HealthCheckInterval time.Duration     `yaml:"health_check_interval" json:"health_check_interval"`
 	ConsecutiveFailures int               `yaml:"consecutive_failures" json:"consecutive_failures"`
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
+}
+
+// GetHost returns configured domain host matching string.
+func (p *ProxyRouteConfig) GetHost() string {
+	if strings.TrimSpace(p.Host) != "" {
+		return strings.ToLower(strings.TrimSpace(p.Host))
+	}
+	if strings.TrimSpace(p.Domain) != "" {
+		return strings.ToLower(strings.TrimSpace(p.Domain))
+	}
+	return ""
 }
 
 // GetTargets returns all configured upstream target URLs for the route.

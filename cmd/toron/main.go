@@ -64,6 +64,7 @@ func main() {
 	if appCfg.Proxy.Enabled {
 		for _, pr := range appCfg.Proxy.Routes {
 			internalRoutes = append(internalRoutes, server.RouteInfo{
+				Host:      pr.GetHost(),
 				Prefix:    pr.Prefix,
 				Headers:   pr.Headers,
 				Algorithm: pr.GetAlgorithm(),
@@ -93,12 +94,13 @@ func main() {
 		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
 	})
 
-	// Register Reverse Proxy routes (with header routing, load balancing, health check & circuit breaker support) if enabled
+	// Register Reverse Proxy routes (with domain routing, header routing, load balancing, health check & circuit breaker support) if enabled
 	if appCfg.Proxy.Enabled {
 		for _, pr := range appCfg.Proxy.Routes {
 			targets := pr.GetTargets()
 			algo := pr.GetAlgorithm()
-			log.Printf("[TORON] Configuring Reverse Proxy: prefix %q (headers: %v) -> targets %v [algo: %s, healthCheck: %q]", pr.Prefix, pr.Headers, targets, algo, pr.HealthCheckPath)
+			host := pr.GetHost()
+			log.Printf("[TORON] Configuring Reverse Proxy: host %q, prefix %q (headers: %v) -> targets %v [algo: %s, healthCheck: %q]", host, pr.Prefix, pr.Headers, targets, algo, pr.HealthCheckPath)
 			opts := proxy.ProxyOptions{
 				Targets:             targets,
 				Algorithm:           proxy.Algorithm(algo),
@@ -108,7 +110,7 @@ func main() {
 				MaxFailures:         pr.ConsecutiveFailures,
 				CooldownPeriod:      pr.CooldownPeriod,
 			}
-			if err := r.ProxyWithOptions(pr.Prefix, pr.Headers, opts); err != nil {
+			if err := r.ProxyWithOptions(host, pr.Prefix, pr.Headers, opts); err != nil {
 				log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)
 			}
 		}

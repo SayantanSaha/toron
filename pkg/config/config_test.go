@@ -164,7 +164,7 @@ func TestConfig_DefaultConfigYamlLoading(t *testing.T) {
 	if !cfg.Proxy.Enabled {
 		t.Error("expected proxy.enabled to be true in routes.yaml")
 	}
-	if len(cfg.Proxy.Routes) != 5 {
-		t.Errorf("expected 5 proxy routes in routes.yaml, got %d", len(cfg.Proxy.Routes))
+	if len(cfg.Proxy.Routes) != 6 {
+		t.Errorf("expected 6 proxy routes in routes.yaml, got %d", len(cfg.Proxy.Routes))
 	}
 }

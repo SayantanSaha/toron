@@ -15,8 +15,9 @@ import (
 
 // RouteInfo represents routing metadata for internal route listings.
 type RouteInfo struct {
+	Host      string            `json:"host,omitempty"`
 	Prefix    string            `json:"prefix"`
-	Headers   map[string]string `json:"headers"`
+	Headers   map[string]string `json:"headers,omitempty"`
 	Algorithm string            `json:"algorithm"`
 	Targets   []string          `json:"targets"`
 }

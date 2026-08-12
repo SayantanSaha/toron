@@ -22,17 +22,19 @@ type HandlerFunc func(req *httpparser.Request, res *httpparser.Response)
 type MiddlewareFunc func(next HandlerFunc) HandlerFunc
 
 type routeEntry struct {
+	host    string
 	headers map[string]string
 	handler HandlerFunc
 }
 
 type prefixRoute struct {
+	host    string
 	prefix  string
 	headers map[string]string
 	handler HandlerFunc
 }
 
-// Router handles URL routing, method dispatching, header-based routing, static file serving, reverse proxying, and middleware execution.
+// Router handles URL routing, method dispatching, domain matching, header-based routing, static file serving, reverse proxying, and middleware execution.
 type Router struct {
 	mu               sync.RWMutex
 	routes           map[string]map[string][]routeEntry // path -> method -> []routeEntry
@@ -63,7 +65,7 @@ func New() *Router {
 	return r
 }
 
-// Use adds global middlewares to the router chain.
+// Use attaches one or more global middlewares to the router execution chain.
 func (r *Router) Use(mw ...MiddlewareFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -72,11 +74,16 @@ func (r *Router) Use(mw ...MiddlewareFunc) {
 
 // Handle registers a handler for a specific HTTP method and exact path.
 func (r *Router) Handle(method, path string, handler HandlerFunc) {
-	r.HandleHeader(method, path, nil, handler)
+	r.HandleHostHeader(method, "", path, nil, handler)
 }
 
 // HandleHeader registers a handler conditional on matching specific HTTP header key/value pairs.
 func (r *Router) HandleHeader(method, path string, headers map[string]string, handler HandlerFunc) {
+	r.HandleHostHeader(method, "", path, headers, handler)
+}
+
+// HandleHostHeader registers a handler conditional on domain Host and specific HTTP headers.
+func (r *Router) HandleHostHeader(method, host, path string, headers map[string]string, handler HandlerFunc) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -84,6 +91,7 @@ func (r *Router) HandleHeader(method, path string, headers map[string]string, ha
 		r.routes[path] = make(map[string][]routeEntry)
 	}
 	r.routes[path][method] = append(r.routes[path][method], routeEntry{
+		host:    strings.ToLower(strings.TrimSpace(host)),
 		headers: headers,
 		handler: handler,
 	})
@@ -94,6 +102,11 @@ func (r *Router) GET(path string, handler HandlerFunc) {
 	r.Handle("GET", path, handler)
 }
 
+// GETHost registers a GET route matching a domain host.
+func (r *Router) GETHost(host, path string, handler HandlerFunc) {
+	r.HandleHostHeader("GET", host, path, nil, handler)
+}
+
 // GETHeader registers a GET route conditional on matching an HTTP header.
 func (r *Router) GETHeader(path, headerKey, headerVal string, handler HandlerFunc) {
 	r.HandleHeader("GET", path, map[string]string{headerKey: headerVal}, handler)
@@ -102,6 +115,11 @@ func (r *Router) GETHeader(path, headerKey, headerVal string, handler HandlerFun
 // POST convenience helper.
 func (r *Router) POST(path string, handler HandlerFunc) {
 	r.Handle("POST", path, handler)
+}
+
+// POSTHost registers a POST route matching a domain host.
+func (r *Router) POSTHost(host, path string, handler HandlerFunc) {
+	r.HandleHostHeader("POST", host, path, nil, handler)
 }
 
 // POSTHeader registers a POST route conditional on matching an HTTP header.
@@ -131,15 +149,15 @@ func (r *Router) ProxyBalancer(prefix string, targets []string, algo proxy.Algor
 
 // ProxyBalancerHeaders registers a prefix reverse proxy route load balancing across multiple upstream targets with header matching.
 func (r *Router) ProxyBalancerHeaders(prefix string, headers map[string]string, targets []string, algo proxy.Algorithm) error {
-	return r.ProxyWithOptions(prefix, headers, proxy.ProxyOptions{
+	return r.ProxyWithOptions("", prefix, headers, proxy.ProxyOptions{
 		Targets:   targets,
 		Algorithm: algo,
 		Timeout:   10 * time.Second,
 	})
 }
 
-// ProxyWithOptions registers a prefix reverse proxy route using full ProxyOptions (health check, circuit breaker).
-func (r *Router) ProxyWithOptions(prefix string, headers map[string]string, opts proxy.ProxyOptions) error {
+// ProxyWithOptions registers a prefix reverse proxy route using domain host and full ProxyOptions (health check, circuit breaker).
+func (r *Router) ProxyWithOptions(host, prefix string, headers map[string]string, opts proxy.ProxyOptions) error {
 	px, err := proxy.NewProxyWithOptions(opts)
 	if err != nil {
 		return err
@@ -157,6 +175,7 @@ func (r *Router) ProxyWithOptions(prefix string, headers map[string]string, opts
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
+		host:    strings.ToLower(strings.TrimSpace(host)),
 		prefix:  cleanPrefix,
 		headers: headers,
 		handler: proxyHandler,
@@ -266,6 +285,7 @@ func (r *Router) Static(prefix, dirPath string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
+		host:    "",
 		prefix:  cleanPrefix,
 		headers: nil,
 		handler: staticHandler,
@@ -277,18 +297,19 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	r.mu.RLock()
 	var targetHandler HandlerFunc
 
+	reqHost := extractHost(req)
+
 	methodsMap, pathExists := r.routes[req.Path]
 	if pathExists {
 		entries, methodExists := methodsMap[req.Method]
 		if methodExists {
-			// First pass: Find route entry with matching header conditions
 			var fallbackEntry *routeEntry
 			for i := range entries {
-				if len(entries[i].headers) > 0 && headersMatch(req, entries[i].headers) {
+				if headersAndHostMatch(reqHost, req, entries[i].host, entries[i].headers) {
 					targetHandler = entries[i].handler
 					break
 				}
-				if len(entries[i].headers) == 0 {
+				if entries[i].host == "" && len(entries[i].headers) == 0 {
 					fallbackEntry = &entries[i]
 				}
 			}
@@ -309,11 +330,11 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 		for i := range r.prefixRoutes {
 			pr := &r.prefixRoutes[i]
 			if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
-				if len(pr.headers) > 0 && headersMatch(req, pr.headers) {
+				if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
 					targetHandler = pr.handler
 					break
 				}
-				if len(pr.headers) == 0 && fallbackPrefix == nil {
+				if pr.host == "" && len(pr.headers) == 0 && fallbackPrefix == nil {
 					fallbackPrefix = pr
 				}
 			}
@@ -338,7 +359,23 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	finalChain(req, res)
 }
 
-func headersMatch(req *httpparser.Request, expectedHeaders map[string]string) bool {
+func extractHost(req *httpparser.Request) string {
+	h := req.Header.Get("Host")
+	if h == "" {
+		return ""
+	}
+	if idx := strings.Index(h, ":"); idx != -1 {
+		h = h[:idx]
+	}
+	return strings.ToLower(strings.TrimSpace(h))
+}
+
+func headersAndHostMatch(reqHost string, req *httpparser.Request, routeHost string, expectedHeaders map[string]string) bool {
+	if routeHost != "" {
+		if reqHost != strings.ToLower(routeHost) {
+			return false
+		}
+	}
 	for k, expectedVal := range expectedHeaders {
 		actualVal := req.Header.Get(k)
 		if actualVal != expectedVal {

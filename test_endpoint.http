@@ -86,3 +86,14 @@ X-Version: v2
   "action": "process_batch",
   "items": [101, 102, 103]
 }
+
+
+###############################################################################
+# 6. Domain-Based Virtual Host Proxy Routing Endpoints
+###############################################################################
+
+### 6.1 Domain Routing (Host: api.toron.local -> Ports 9001, 9002, 9003)
+GET {{baseUrl}}/
+Host: api.toron.local
+Accept: application/json
+

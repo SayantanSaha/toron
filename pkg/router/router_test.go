@@ -215,6 +215,40 @@ func TestRouter_ProxyBalancer(t *testing.T) {
 	res2 := httpparser.NewResponse()
 	r.ServeHTTP(req2, res2)
 	if res2.Body.String() != "backend-2" {
-		t.Errorf("request 2: expected backend-2, got %q", res2.Body.String())
+		t.Errorf("expected backend-2 response, got %q", res2.Body.String())
+	}
+}
+
+func TestRouter_DomainHostRouting(t *testing.T) {
+	r := router.New()
+
+	r.GETHost("api.toron.local", "/v1/data", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("api-domain-matched")
+	})
+
+	r.GETHost("admin.toron.local", "/v1/data", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("admin-domain-matched")
+	})
+
+	// 1. Match api.toron.local
+	req1, _ := httpparser.NewRequest("GET", "/v1/data", "HTTP/1.1")
+	req1.Header.Set("Host", "api.toron.local:8080")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if res1.StatusCode != http.StatusOK || res1.Body.String() != "api-domain-matched" {
+		t.Errorf("expected api-domain-matched, got status %d body %q", res1.StatusCode, res1.Body.String())
+	}
+
+	// 2. Match admin.toron.local
+	req2, _ := httpparser.NewRequest("GET", "/v1/data", "HTTP/1.1")
+	req2.Header.Set("Host", "admin.toron.local")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if res2.StatusCode != http.StatusOK || res2.Body.String() != "admin-domain-matched" {
+		t.Errorf("expected admin-domain-matched, got status %d body %q", res2.StatusCode, res2.Body.String())
 	}
 }

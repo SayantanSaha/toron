@@ -271,7 +271,12 @@ func (s *Server) http2AdapterHandler() http.Handler {
 			req.Header.Set("Host", r.Host)
 		}
 
-		if r.Body != nil {
+		// Transfer Extended CONNECT pseudo-header if present
+		if protoHeader := r.Header.Get(":protocol"); protoHeader != "" {
+			req.Header.Set(":protocol", protoHeader)
+		}
+
+		if r.Method != "CONNECT" && r.Body != nil {
 			bodyBytes, err := io.ReadAll(r.Body)
 			if err == nil {
 				req.Body = bytes.NewReader(bodyBytes)
@@ -286,7 +291,28 @@ func (s *Server) http2AdapterHandler() http.Handler {
 				w.Header().Add(k, v)
 			}
 		}
-		w.WriteHeader(res.StatusCode)
+
+		// RFC 8441: HTTP/2 WebSockets use 200 OK for successful extended CONNECT upgrade
+		statusCode := res.StatusCode
+		if statusCode == http.StatusSwitchingProtocols {
+			statusCode = http.StatusOK
+		}
+
+		w.WriteHeader(statusCode)
+
+		if res.UpgradedConn != nil {
+			if flusher, ok := w.(http.Flusher); ok {
+				flusher.Flush()
+			}
+			go func() {
+				_, _ = io.Copy(res.UpgradedConn, r.Body)
+				_ = res.UpgradedConn.Close()
+			}()
+			_, _ = io.Copy(w, res.UpgradedConn)
+			_ = res.UpgradedConn.Close()
+			return
+		}
+
 		if len(res.Body.Bytes()) > 0 {
 			_, _ = w.Write(res.Body.Bytes())
 		}

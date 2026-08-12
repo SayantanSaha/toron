@@ -52,14 +52,21 @@ type Request struct {
 	RawConn       net.Conn
 }
 
-// IsWebSocketUpgrade returns true if the request contains WebSocket upgrade headers.
+// IsWebSocketUpgrade returns true if the request contains WebSocket upgrade headers (HTTP/1.1) or RFC 8441 Extended CONNECT pseudo-headers (HTTP/2).
 func (r *Request) IsWebSocketUpgrade() bool {
 	if r == nil || r.Header == nil {
 		return false
 	}
 	connHeader := strings.ToLower(r.Header.Get("Connection"))
 	upgradeHeader := strings.ToLower(r.Header.Get("Upgrade"))
-	return strings.Contains(connHeader, "upgrade") && upgradeHeader == "websocket"
+	if strings.Contains(connHeader, "upgrade") && upgradeHeader == "websocket" {
+		return true
+	}
+	// RFC 8441 Extended CONNECT
+	if r.Method == "CONNECT" && strings.ToLower(r.Header.Get(":protocol")) == "websocket" {
+		return true
+	}
+	return false
 }
 
 // NewRequest creates a Request with initialized fields.

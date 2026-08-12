@@ -107,4 +107,13 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 	if nReq.IsWebSocketUpgrade() {
 		t.Errorf("expected IsWebSocketUpgrade() to return false for normal request")
 	}
+
+	h2WSReq, err := httpparser.NewRequest("CONNECT", "/ws", "HTTP/2.0")
+	if err != nil {
+		t.Fatalf("failed to create h2 connect req: %v", err)
+	}
+	h2WSReq.Header.Set(":protocol", "websocket")
+	if !h2WSReq.IsWebSocketUpgrade() {
+		t.Errorf("expected IsWebSocketUpgrade() to return true for RFC 8441 Extended CONNECT")
+	}
 }

@@ -71,3 +71,54 @@ func TestServer_HTTP2PriorKnowledge(t *testing.T) {
 		t.Errorf("expected body %q, got %q", expectedBody, string(body))
 	}
 }
+
+func TestServer_HTTP2ExtendedConnect(t *testing.T) {
+	// Start mock raw upstream server
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen upstream: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	go func() {
+		conn, err := upstreamLn.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		if err == nil && n > 0 {
+			upgradeResp := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+			_, _ = conn.Write([]byte(upgradeResp))
+		}
+	}()
+
+	r := router.New()
+	if err := r.Proxy("/ws-h2", "http://"+upstreamLn.Addr().String()); err != nil {
+		t.Fatalf("failed to setup proxy route: %v", err)
+	}
+
+	req := &httpparser.Request{
+		Method: "CONNECT",
+		Path:   "/ws-h2",
+		Header: make(httpparser.Header),
+	}
+	req.Header.Set(":protocol", "websocket")
+
+	if !req.IsWebSocketUpgrade() {
+		t.Fatalf("expected IsWebSocketUpgrade() to return true for RFC 8441 CONNECT request")
+	}
+
+	res := httpparser.NewResponse()
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected proxy to return 101 Switching Protocols to router, got %d", res.StatusCode)
+	}
+	if res.UpgradedConn == nil {
+		t.Fatalf("expected non-nil UpgradedConn from upstream")
+	}
+	_ = res.UpgradedConn.Close()
+}

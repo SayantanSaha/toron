@@ -43,7 +43,7 @@ routes:
 
 ## How It Works
 
-1. **Handshake Verification**: When an incoming request contains `Connection: Upgrade` and `Upgrade: websocket`, Toron identifies the connection upgrade request.
-2. **Upstream Connection**: Toron connects to the configured upstream target and forwards the original WebSocket handshake headers.
-3. **101 Handshake Response**: Once the upstream target accepts the upgrade with a `101 Switching Protocols` status, Toron relays the response to the client socket.
-4. **Bi-directional Stream Tunneling**: Toron suspends request timeout deadlines and launches concurrent full-duplex socket copying goroutines (`io.Copy`), maintaining raw binary/text frame pass-through until either side closes the session.
+1. **HTTP/1.1 Handshake Verification (RFC 6455)**: When an incoming HTTP/1.1 request contains `Connection: Upgrade` and `Upgrade: websocket`, Toron identifies the connection upgrade request and verifies the 101 status line.
+2. **HTTP/2 Extended CONNECT (RFC 8441)**: For HTTP/2 connections, clients send `:method = CONNECT` and `:protocol = websocket`. Toron maps the extended CONNECT request, returns HTTP `200 OK` on the HTTP/2 stream, and bridges full-duplex stream data without dropping connection multiplexing.
+3. **Upstream Connection**: Toron connects to the configured upstream target and forwards the original WebSocket handshake headers.
+4. **Bi-directional Stream Tunneling**: Toron suspends request timeout deadlines and launches concurrent full-duplex socket/stream copying goroutines (`io.Copy`), maintaining raw binary/text frame pass-through until either side closes the session.

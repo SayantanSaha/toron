@@ -9,8 +9,8 @@ proxy:
       algorithm: "round_robin"
       targets:
         - "http://localhost:9001"
-        - "http://localhost:9002"
-        - "http://localhost:9003"
+        - "http://localhost:9004"
+        - "http://localhost:9006"
 
     # 2. Header-Based Routing + Multi-Target Round-Robin Load Balancing (Dummy Services 1, 2, 3)
     - prefix: "/api"

@@ -19,10 +19,13 @@ import (
 func main() {
 	var configPath string
 	var routesPath string
+	var testConfig bool
 	flag.StringVar(&configPath, "config", "", "Path to YAML server configuration file (e.g. -config config.yaml)")
 	flag.StringVar(&configPath, "c", "", "Path to YAML server configuration file (short alias)")
 	flag.StringVar(&routesPath, "routes", "", "Path to YAML proxy routing configuration file (e.g. -routes routes.yaml)")
 	flag.StringVar(&routesPath, "r", "", "Path to YAML proxy routing configuration file (short alias)")
+	flag.BoolVar(&testConfig, "test-config", false, "Test configuration files syntax and exit without running server")
+	flag.BoolVar(&testConfig, "t", false, "Test configuration files syntax and exit (short alias)")
 	flag.Parse()
 
 	// If no flag provided, check if default files exist in current working directory
@@ -39,7 +42,21 @@ func main() {
 
 	appCfg, err := config.LoadFromFiles(configPath, routesPath)
 	if err != nil {
+		if testConfig {
+			log.Printf("[TORON] Configuration syntax ERROR: %v", err)
+			os.Exit(1)
+		}
 		log.Fatalf("[TORON] Configuration error: %v", err)
+	}
+
+	// Dry-run mode: test configuration syntax and exit
+	if testConfig {
+		if valErr := config.ValidateConfig(appCfg); valErr != nil {
+			log.Printf("[TORON] Configuration syntax ERROR: %v", valErr)
+			os.Exit(1)
+		}
+		log.Printf("[TORON] Configuration syntax OK: %s and %s are valid.", configPath, routesPath)
+		os.Exit(0)
 	}
 
 	if configPath != "" {

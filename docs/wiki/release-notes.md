@@ -1,5 +1,17 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 13 Release (Configuration Syntax Testing & Dry-Run CLI Flag)
+
+### Added
+
+- **Configuration Dry-Run Flag**: Added `-test-config` (`-t`) CLI option in `cmd/toron/main.go` to test YAML syntax and configuration parameters before starting the server (`TASK-021`, `REQ-021`).
+- **Strict Validator**: Implemented `ValidateConfig(cfg *AppConfig) error` in `pkg/config/loader.go` checking port ranges, static file directory accessibility, load balancing algorithms, and target URL schemes (`http://` / `https://`).
+- **CLI Reference**: Updated CLI reference guide (`docs/wiki/reference/cli.md`).
+
+### Related Tasks
+
+- `TASK-021`: Implement Configuration Test Option (-test-config / -t) and Strict Validator
+
 ## 2026-08-12 - Prototype 12 Release (Domain-Based Virtual Host Routing)
 
 ### Added

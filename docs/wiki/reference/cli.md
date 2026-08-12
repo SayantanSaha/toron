@@ -33,19 +33,21 @@ toron [flags]
 
 | Flag | Short | Default | Description |
 | ---- | ----- | ------- | ----------- |
-| `-config <path>` | `-c <path>` | `""` (checks `config.yaml`) | Path to YAML configuration file |
+| `-config <path>` | `-c <path>` | `""` (checks `config.yaml`) | Path to YAML server configuration file |
+| `-routes <path>` | `-r <path>` | `""` (checks `routes.yaml`) | Path to YAML proxy routing configuration file |
+| `-test-config` | `-t` | `false` | Dry-run test configuration file syntax and exit |
 | `-help` | `-h` | N/A | Prints CLI flag usage summary |
 
 ## Examples
 
-### Specify custom config file
+### Test configuration file syntax before starting server
 ```bash
-go run ./cmd/toron -config ./configs/production.yaml
+go run ./cmd/toron -t
 ```
 
-### Use default config resolution
+### Specify custom server and routing config files
 ```bash
-go run ./cmd/toron
+go run ./cmd/toron -config ./configs/server.yaml -routes ./configs/routes.yaml
 ```
 
 ## Related Pages

@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -101,7 +102,7 @@ func (m *Manager) LoadFromFiles(configPath, routesPath string) (*AppConfig, erro
 		}
 	}
 
-	validateConfig(cfg)
+	validateConfigDefaults(cfg)
 	return cfg, nil
 }
 
@@ -110,7 +111,7 @@ func (m *Manager) LoadFromFile(filePath string) (*AppConfig, error) {
 	return m.LoadFromFiles(filePath, "")
 }
 
-func validateConfig(cfg *AppConfig) {
+func validateConfigDefaults(cfg *AppConfig) {
 	if cfg.Server.Port <= 0 {
 		cfg.Server.Port = 8080
 	}
@@ -123,6 +124,58 @@ func validateConfig(cfg *AppConfig) {
 	if cfg.Server.MaxBodyBytes <= 0 {
 		cfg.Server.MaxBodyBytes = 4 * 1024 * 1024
 	}
+}
+
+// ValidateConfig performs strict validation of the configuration structure for dry-run CLI test checks.
+func ValidateConfig(cfg *AppConfig) error {
+	if cfg == nil {
+		return fmt.Errorf("configuration object is nil")
+	}
+
+	if cfg.Server.Port <= 0 || cfg.Server.Port > 65535 {
+		return fmt.Errorf("server.port must be between 1 and 65535, got %d", cfg.Server.Port)
+	}
+
+	if cfg.Server.WorkerPoolSize <= 0 {
+		return fmt.Errorf("server.worker_pool_size must be greater than 0, got %d", cfg.Server.WorkerPoolSize)
+	}
+
+	if cfg.Static.Enabled {
+		if cfg.Static.Dir == "" {
+			return fmt.Errorf("static.dir cannot be empty when static file serving is enabled")
+		}
+		if _, err := os.Stat(cfg.Static.Dir); err != nil {
+			return fmt.Errorf("static.dir %q does not exist or is not accessible: %w", cfg.Static.Dir, err)
+		}
+	}
+
+	if cfg.Proxy.Enabled {
+		for i, route := range cfg.Proxy.Routes {
+			prefix := strings.TrimSpace(route.Prefix)
+			if prefix == "" {
+				return fmt.Errorf("proxy route #%d missing required prefix parameter", i+1)
+			}
+
+			algo := route.GetAlgorithm()
+			if algo != "round_robin" && algo != "random" {
+				return fmt.Errorf("proxy route %q specifies unsupported load balancing algorithm %q (supported: round_robin, random)", prefix, algo)
+			}
+
+			targets := route.GetTargets()
+			if len(targets) == 0 {
+				return fmt.Errorf("proxy route %q has no valid target URLs configured", prefix)
+			}
+
+			for _, targetStr := range targets {
+				parsedURL, err := url.Parse(targetStr)
+				if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+					return fmt.Errorf("proxy route %q target %q is invalid (must be a valid absolute HTTP or HTTPS URL, e.g. http://localhost:9001)", prefix, targetStr)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // LoadFromFile helper shortcut using default Manager.

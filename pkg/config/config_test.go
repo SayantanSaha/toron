@@ -168,3 +168,32 @@ func TestConfig_DefaultConfigYamlLoading(t *testing.T) {
 		t.Errorf("expected 6 proxy routes in routes.yaml, got %d", len(cfg.Proxy.Routes))
 	}
 }
+
+func TestConfig_ValidateConfig(t *testing.T) {
+	// 1. Valid config
+	cfg := config.DefaultAppConfig()
+	cfg.Static.Enabled = false
+	if err := config.ValidateConfig(cfg); err != nil {
+		t.Errorf("expected valid default config, got error: %v", err)
+	}
+
+	// 2. Invalid port
+	cfgInvalidPort := config.DefaultAppConfig()
+	cfgInvalidPort.Server.Port = 70000
+	if err := config.ValidateConfig(cfgInvalidPort); err == nil {
+		t.Error("expected error for port 70000, got nil")
+	}
+
+	// 3. Invalid target URL
+	cfgInvalidTarget := config.DefaultAppConfig()
+	cfgInvalidTarget.Proxy.Enabled = true
+	cfgInvalidTarget.Proxy.Routes = []config.ProxyRouteConfig{
+		{
+			Prefix: "/api",
+			Target: "not-a-valid-url",
+		},
+	}
+	if err := config.ValidateConfig(cfgInvalidTarget); err == nil {
+		t.Error("expected error for invalid target URL, got nil")
+	}
+}

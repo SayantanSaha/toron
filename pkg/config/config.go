@@ -23,6 +23,14 @@ type HTTP2Config struct {
 	AllowH2C             bool   `yaml:"allow_h2c" json:"allow_h2c"`
 }
 
+// TLSConfig captures HTTPS TLS settings and certificate locations.
+type TLSConfig struct {
+	Enabled     bool   `yaml:"enabled" json:"enabled"`
+	CertFile    string `yaml:"cert_file" json:"cert_file"`
+	KeyFile     string `yaml:"key_file" json:"key_file"`
+	AutoDevCert bool   `yaml:"auto_dev_cert" json:"auto_dev_cert"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
 	Host           string        `yaml:"host" json:"host"`
@@ -34,27 +42,31 @@ type ServerConfig struct {
 	MaxHeaderBytes int           `yaml:"max_header_bytes" json:"max_header_bytes"`
 	MaxBodyBytes   int64         `yaml:"max_body_bytes" json:"max_body_bytes"`
 	HTTP2          HTTP2Config   `yaml:"http2" json:"http2"`
+	TLS            TLSConfig     `yaml:"tls" json:"tls"`
 }
 
-// StaticConfig captures static asset directory settings.
+// StaticConfig captures legacy static asset directory settings.
 type StaticConfig struct {
 	Enabled bool   `yaml:"enabled" json:"enabled"`
 	Prefix  string `yaml:"prefix" json:"prefix"`
 	Dir     string `yaml:"dir" json:"dir"`
 }
 
-// ProxyConfig captures reverse proxy routes settings.
+// ProxyConfig captures routing rules settings (static sites & upstream reverse proxies).
 type ProxyConfig struct {
 	Enabled bool               `yaml:"enabled" json:"enabled"`
 	Routes  []ProxyRouteConfig `yaml:"routes" json:"routes"`
 }
 
-// ProxyRouteConfig describes an individual prefix and optional header condition to upstream target URL mapping with optional load balancing, active health check, and circuit breaker settings.
+// ProxyRouteConfig describes a route rule that can serve either a static site or act as an upstream reverse proxy.
 type ProxyRouteConfig struct {
+	Type                string            `yaml:"type" json:"type"` // "static" or "upstream" / "proxy"
 	Host                string            `yaml:"host" json:"host"`
 	Domain              string            `yaml:"domain" json:"domain"`
 	Prefix              string            `yaml:"prefix" json:"prefix"`
 	Headers             map[string]string `yaml:"headers" json:"headers"`
+	Dir                 string            `yaml:"dir" json:"dir"`
+	StaticDir           string            `yaml:"static_dir" json:"static_dir"`
 	Target              string            `yaml:"target" json:"target"`
 	Targets             []string          `yaml:"targets" json:"targets"`
 	Algorithm           string            `yaml:"algorithm" json:"algorithm"`
@@ -62,6 +74,42 @@ type ProxyRouteConfig struct {
 	HealthCheckInterval time.Duration     `yaml:"health_check_interval" json:"health_check_interval"`
 	ConsecutiveFailures int               `yaml:"consecutive_failures" json:"consecutive_failures"`
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
+}
+
+// GetType returns the normalized route target type ("static" or "upstream").
+func (p *ProxyRouteConfig) GetType() string {
+	t := strings.ToLower(strings.TrimSpace(p.Type))
+	if t == "static" {
+		return "static"
+	}
+	if t == "upstream" || t == "proxy" {
+		return "upstream"
+	}
+	if p.GetDir() != "" {
+		return "static"
+	}
+	return "upstream"
+}
+
+// IsStatic returns true if the route serves static site assets.
+func (p *ProxyRouteConfig) IsStatic() bool {
+	return p.GetType() == "static"
+}
+
+// IsUpstream returns true if the route acts as an upstream reverse proxy.
+func (p *ProxyRouteConfig) IsUpstream() bool {
+	return p.GetType() == "upstream"
+}
+
+// GetDir returns the configured local directory path for static routes.
+func (p *ProxyRouteConfig) GetDir() string {
+	if strings.TrimSpace(p.Dir) != "" {
+		return strings.TrimSpace(p.Dir)
+	}
+	if strings.TrimSpace(p.StaticDir) != "" {
+		return strings.TrimSpace(p.StaticDir)
+	}
+	return ""
 }
 
 // GetHost returns configured domain host matching string.
@@ -76,7 +124,6 @@ func (p *ProxyRouteConfig) GetHost() string {
 }
 
 // GetTargets returns all configured upstream target URLs for the route.
-// Combines Target (single string) and Targets ([]string), eliminating duplicates while preserving order.
 func (p *ProxyRouteConfig) GetTargets() []string {
 	var list []string
 	seen := make(map[string]bool)
@@ -134,12 +181,12 @@ func DefaultAppConfig() *AppConfig {
 			},
 		},
 		Static: StaticConfig{
-			Enabled: true,
-			Prefix:  "/",
+			Enabled: false,
+			Prefix:  "/internal/dashboard/",
 			Dir:     "./public",
 		},
 		Proxy: ProxyConfig{
-			Enabled: false,
+			Enabled: true,
 			Routes:  []ProxyRouteConfig{},
 		},
 		Logging: LoggingConfig{
@@ -167,6 +214,10 @@ func (c *AppConfig) ToServerConfig() server.Config {
 		HTTP2Enabled:              c.Server.HTTP2.Enabled,
 		HTTP2MaxConcurrentStreams: c.Server.HTTP2.MaxConcurrentStreams,
 		HTTP2MaxFrameSize:         c.Server.HTTP2.MaxFrameSize,
+		TLSEnabled:                c.Server.TLS.Enabled,
+		TLSCertFile:               c.Server.TLS.CertFile,
+		TLSKeyFile:                c.Server.TLS.KeyFile,
+		TLSAutoDevCert:            c.Server.TLS.AutoDevCert,
 	}
 }
 

@@ -252,3 +252,44 @@ func TestRouter_DomainHostRouting(t *testing.T) {
 		t.Errorf("expected admin-domain-matched, got status %d body %q", res2.StatusCode, res2.Body.String())
 	}
 }
+
+func TestRouter_RoutePrefixStaticWithOptions(t *testing.T) {
+	tmpDir := t.TempDir()
+	htmlContent := "<html><body>Domain Match Static Page</body></html>"
+	_ = os.WriteFile(filepath.Join(tmpDir, "index.html"), []byte(htmlContent), 0644)
+
+	r := router.New()
+
+	// Register static route with host and header matching via RoutePrefix
+	err := r.RoutePrefix(router.RouteTypeStatic, "docs.toron.local", "/docs", map[string]string{"X-UI": "v2"}, tmpDir, proxy.ProxyOptions{})
+	if err != nil {
+		t.Fatalf("failed to register static route via RoutePrefix: %v", err)
+	}
+
+	// 1. Matching request with correct host and header
+	req, _ := httpparser.NewRequest("GET", "/docs/", "HTTP/1.1")
+	req.Header.Set("Host", "docs.toron.local")
+	req.Header.Set("X-UI", "v2")
+	res := httpparser.NewResponse()
+
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.Body.String() != htmlContent {
+		t.Errorf("expected body %q, got %q", htmlContent, res.Body.String())
+	}
+
+	// 2. Request with wrong host -> 404 Not Found
+	reqWrongHost, _ := httpparser.NewRequest("GET", "/docs/", "HTTP/1.1")
+	reqWrongHost.Header.Set("Host", "other.toron.local")
+	reqWrongHost.Header.Set("X-UI", "v2")
+	resWrongHost := httpparser.NewResponse()
+
+	r.ServeHTTP(reqWrongHost, resWrongHost)
+
+	if resWrongHost.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 Not Found for non-matching host, got %d", resWrongHost.StatusCode)
+	}
+}

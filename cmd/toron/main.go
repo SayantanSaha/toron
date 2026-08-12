@@ -78,25 +78,45 @@ func main() {
 
 	// Register Internal Management API Routes (/internal/api/)
 	internalRoutes := make([]server.RouteInfo, 0)
+	var staticEnabled bool
+	var staticPrefix, staticDir string
+
 	if appCfg.Proxy.Enabled {
 		for _, pr := range appCfg.Proxy.Routes {
-			internalRoutes = append(internalRoutes, server.RouteInfo{
-				Host:      pr.GetHost(),
-				Prefix:    pr.Prefix,
-				Headers:   pr.Headers,
-				Algorithm: pr.GetAlgorithm(),
-				Targets:   pr.GetTargets(),
-			})
+			rInfo := server.RouteInfo{
+				Type:    pr.GetType(),
+				Host:    pr.GetHost(),
+				Prefix:  pr.Prefix,
+				Headers: pr.Headers,
+			}
+			if pr.IsStatic() {
+				rInfo.Dir = pr.GetDir()
+				staticEnabled = true
+				if staticPrefix == "" {
+					staticPrefix = pr.Prefix
+					staticDir = pr.GetDir()
+				}
+			} else {
+				rInfo.Algorithm = pr.GetAlgorithm()
+				rInfo.Targets = pr.GetTargets()
+			}
+			internalRoutes = append(internalRoutes, rInfo)
 		}
 	}
+	if !staticEnabled && appCfg.Static.Enabled {
+		staticEnabled = true
+		staticPrefix = appCfg.Static.Prefix
+		staticDir = appCfg.Static.Dir
+	}
+
 	internalCfg := server.InternalAPIConfig{
 		Port:           appCfg.Server.Port,
 		WorkerPoolSize: appCfg.Server.WorkerPoolSize,
 		ProxyEnabled:   appCfg.Proxy.Enabled,
 		Routes:         internalRoutes,
-		StaticEnabled:  appCfg.Static.Enabled,
-		StaticPrefix:   appCfg.Static.Prefix,
-		StaticDir:      appCfg.Static.Dir,
+		StaticEnabled:  staticEnabled,
+		StaticPrefix:   staticPrefix,
+		StaticDir:      staticDir,
 	}
 	server.RegisterInternalAPIRoutes(r, internalCfg)
 
@@ -111,32 +131,39 @@ func main() {
 		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
 	})
 
-	// Register Reverse Proxy routes (with domain routing, header routing, load balancing, health check & circuit breaker support) if enabled
+	// Register Routing Rules (Static site routes & Upstream reverse proxy routes) if enabled
 	if appCfg.Proxy.Enabled {
 		for _, pr := range appCfg.Proxy.Routes {
-			targets := pr.GetTargets()
-			algo := pr.GetAlgorithm()
 			host := pr.GetHost()
-			log.Printf("[TORON] Configuring Reverse Proxy: host %q, prefix %q (headers: %v) -> targets %v [algo: %s, healthCheck: %q]", host, pr.Prefix, pr.Headers, targets, algo, pr.HealthCheckPath)
-			opts := proxy.ProxyOptions{
-				Targets:             targets,
-				Algorithm:           proxy.Algorithm(algo),
-				Timeout:             10 * time.Second,
-				HealthCheckPath:     pr.HealthCheckPath,
-				HealthCheckInterval: pr.HealthCheckInterval,
-				MaxFailures:         pr.ConsecutiveFailures,
-				CooldownPeriod:      pr.CooldownPeriod,
-			}
-			if err := r.ProxyWithOptions(host, pr.Prefix, pr.Headers, opts); err != nil {
-				log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)
+			if pr.IsStatic() {
+				log.Printf("[TORON] Configuring Static Route: host %q, prefix %q (headers: %v) -> dir %q", host, pr.Prefix, pr.Headers, pr.GetDir())
+				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{}); err != nil {
+					log.Fatalf("[TORON] Invalid static route configuration for prefix %q: %v", pr.Prefix, err)
+				}
+			} else {
+				targets := pr.GetTargets()
+				algo := pr.GetAlgorithm()
+				log.Printf("[TORON] Configuring Reverse Proxy Route: host %q, prefix %q (headers: %v) -> targets %v [algo: %s, healthCheck: %q]", host, pr.Prefix, pr.Headers, targets, algo, pr.HealthCheckPath)
+				opts := proxy.ProxyOptions{
+					Targets:             targets,
+					Algorithm:           proxy.Algorithm(algo),
+					Timeout:             10 * time.Second,
+					HealthCheckPath:     pr.HealthCheckPath,
+					HealthCheckInterval: pr.HealthCheckInterval,
+					MaxFailures:         pr.ConsecutiveFailures,
+					CooldownPeriod:      pr.CooldownPeriod,
+				}
+				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
+					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)
+				}
 			}
 		}
 	}
 
-	// Serve Static Site files if enabled in config
-	if appCfg.Static.Enabled {
+	// Legacy static asset fallback if configured and no static routes present
+	if appCfg.Static.Enabled && !staticEnabled {
 		log.Printf("[TORON] Serving static assets from %s under prefix %q...", appCfg.Static.Dir, appCfg.Static.Prefix)
-		r.Static(appCfg.Static.Prefix, appCfg.Static.Dir)
+		_ = r.RoutePrefix(router.RouteTypeStatic, "", appCfg.Static.Prefix, nil, appCfg.Static.Dir, proxy.ProxyOptions{})
 	}
 
 	srv := server.New(srvCfg, r)
@@ -146,9 +173,16 @@ func main() {
 	defer stop()
 
 	go func() {
-		log.Printf("[TORON] Server listening on http://localhost%s...", srvCfg.Addr)
-		if err := srv.ListenAndServe(); err != nil && err != server.ErrServerClosed {
-			log.Fatalf("[TORON] Server fatal error: %v", err)
+		if appCfg.Server.TLS.Enabled {
+			log.Printf("[TORON] HTTPS Server listening on https://localhost%s (TLS enabled)...", srvCfg.Addr)
+			if err := srv.ListenAndServeTLS(appCfg.Server.TLS.CertFile, appCfg.Server.TLS.KeyFile); err != nil && err != server.ErrServerClosed {
+				log.Fatalf("[TORON] HTTPS Server fatal error: %v", err)
+			}
+		} else {
+			log.Printf("[TORON] HTTP Server listening on http://localhost%s...", srvCfg.Addr)
+			if err := srv.ListenAndServe(); err != nil && err != server.ErrServerClosed {
+				log.Fatalf("[TORON] HTTP Server fatal error: %v", err)
+			}
 		}
 	}()
 

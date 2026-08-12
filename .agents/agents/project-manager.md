@@ -207,7 +207,7 @@ The Project Manager should provide the Document Writer with:
 5. Provide that agent with only the relevant inputs.
 6. Validate that the agent output follows `template.md` where applicable.
 7. When a feature implementation is complete, route the work to the Document Writer for wiki and release note updates.
-8. After the wiki is updated, always commit to git with proper message.
+8. After the wiki is updated, always commit to git with proper message.h a R
 9. Update the user with the next action or blocker.
 
 ## Constraints

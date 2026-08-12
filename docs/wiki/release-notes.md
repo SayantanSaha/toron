@@ -1,5 +1,18 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 15 Release (HTTPS TLS Encryption & Dev Certificate Generator)
+
+### Added
+
+- **HTTPS TLS Listener**: Added `ListenAndServeTLS` and `CreateTLSConfig` in `pkg/server/tls.go` and `pkg/server/server.go` (`TASK-023`, `REQ-023`).
+- **ALPN HTTP/2 Negotiation**: Integrated TLS ALPN protocol negotiation (`h2`, `http/1.1`) mapping encrypted HTTP/2 streams to the server core.
+- **Auto Self-Signed Dev Certs**: Implemented `GenerateDevCert()` providing zero-configuration ECDSA P-256 self-signed certificates for `localhost` development.
+- **HTTPS Unit Test Suite**: Added `TestServer_HTTPSSelfSigned` and `TestServer_HTTPSWithALPNHTTP2` in `pkg/server/tls_test.go`.
+
+### Related Tasks
+
+- `TASK-023`: Implement HTTPS TLS Encryption, ALPN Negotiation, and Dev Cert Generator
+
 ## 2026-08-12 - Prototype 14 Release (HTTP/2 Protocol Support & Stream Multiplexing)
 
 ### Added

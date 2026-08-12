@@ -14,11 +14,11 @@ server:
     max_concurrent_streams: 250
     max_frame_size: 16384
     allow_h2c: true
-
-static:
-  enabled: true
-  prefix: "/internal/dashboard/"
-  dir: "./public"
+  tls:
+    enabled: false
+    cert_file: ""
+    key_file: ""
+    auto_dev_cert: true
 
 logging:
   level: "info"

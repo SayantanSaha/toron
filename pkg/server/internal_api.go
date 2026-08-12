@@ -15,11 +15,13 @@ import (
 
 // RouteInfo represents routing metadata for internal route listings.
 type RouteInfo struct {
+	Type      string            `json:"type"`
 	Host      string            `json:"host,omitempty"`
 	Prefix    string            `json:"prefix"`
 	Headers   map[string]string `json:"headers,omitempty"`
-	Algorithm string            `json:"algorithm"`
-	Targets   []string          `json:"targets"`
+	Dir       string            `json:"dir,omitempty"`
+	Algorithm string            `json:"algorithm,omitempty"`
+	Targets   []string          `json:"targets,omitempty"`
 }
 
 // InternalAPIConfig configures /internal/api/ route parameters without importing pkg/config.

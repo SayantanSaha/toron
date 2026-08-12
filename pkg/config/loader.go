@@ -45,7 +45,7 @@ func (m *Manager) Register(ext string, loader Loader) {
 	m.loaders[strings.ToLower(ext)] = loader
 }
 
-// LoadFromFiles loads server infrastructure config from configPath and proxy routing config from routesPath.
+// LoadFromFiles loads server infrastructure config from configPath and routing config from routesPath.
 func (m *Manager) LoadFromFiles(configPath, routesPath string) (*AppConfig, error) {
 	cfg := DefaultAppConfig()
 
@@ -91,13 +91,21 @@ func (m *Manager) LoadFromFiles(configPath, routesPath string) (*AppConfig, erro
 		}
 
 		var routesWrapper struct {
-			Proxy ProxyConfig `yaml:"proxy" json:"proxy"`
+			Enabled *bool              `yaml:"enabled" json:"enabled"`
+			Routes  []ProxyRouteConfig `yaml:"routes" json:"routes"`
+			Proxy   ProxyConfig        `yaml:"proxy" json:"proxy"`
 		}
 		if err := yaml.Unmarshal(routesData, &routesWrapper); err != nil {
 			return nil, fmt.Errorf("config: failed to parse routes file %s: %w", routesPath, err)
 		}
 
-		if len(routesWrapper.Proxy.Routes) > 0 || routesWrapper.Proxy.Enabled {
+		if len(routesWrapper.Routes) > 0 {
+			cfg.Proxy.Routes = routesWrapper.Routes
+			cfg.Proxy.Enabled = true
+			if routesWrapper.Enabled != nil {
+				cfg.Proxy.Enabled = *routesWrapper.Enabled
+			}
+		} else if len(routesWrapper.Proxy.Routes) > 0 || routesWrapper.Proxy.Enabled {
 			cfg.Proxy = routesWrapper.Proxy
 		}
 	}
@@ -153,23 +161,33 @@ func ValidateConfig(cfg *AppConfig) error {
 		for i, route := range cfg.Proxy.Routes {
 			prefix := strings.TrimSpace(route.Prefix)
 			if prefix == "" {
-				return fmt.Errorf("proxy route #%d missing required prefix parameter", i+1)
+				return fmt.Errorf("route #%d missing required prefix parameter", i+1)
 			}
 
-			algo := route.GetAlgorithm()
-			if algo != "round_robin" && algo != "random" {
-				return fmt.Errorf("proxy route %q specifies unsupported load balancing algorithm %q (supported: round_robin, random)", prefix, algo)
-			}
+			if route.IsStatic() {
+				dir := route.GetDir()
+				if dir == "" {
+					return fmt.Errorf("static route %q missing required dir parameter", prefix)
+				}
+				if _, err := os.Stat(dir); err != nil {
+					return fmt.Errorf("static route %q dir %q does not exist or is not accessible: %w", prefix, dir, err)
+				}
+			} else if route.IsUpstream() {
+				algo := route.GetAlgorithm()
+				if algo != "round_robin" && algo != "random" {
+					return fmt.Errorf("proxy route %q specifies unsupported load balancing algorithm %q (supported: round_robin, random)", prefix, algo)
+				}
 
-			targets := route.GetTargets()
-			if len(targets) == 0 {
-				return fmt.Errorf("proxy route %q has no valid target URLs configured", prefix)
-			}
+				targets := route.GetTargets()
+				if len(targets) == 0 {
+					return fmt.Errorf("proxy route %q has no valid target URLs configured", prefix)
+				}
 
-			for _, targetStr := range targets {
-				parsedURL, err := url.Parse(targetStr)
-				if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
-					return fmt.Errorf("proxy route %q target %q is invalid (must be a valid absolute HTTP or HTTPS URL, e.g. http://localhost:9001)", prefix, targetStr)
+				for _, targetStr := range targets {
+					parsedURL, err := url.Parse(targetStr)
+					if err != nil || (parsedURL.Scheme != "http" && parsedURL.Scheme != "https") || parsedURL.Host == "" {
+						return fmt.Errorf("proxy route %q target %q is invalid (must be a valid absolute HTTP or HTTPS URL, e.g. http://localhost:9001)", prefix, targetStr)
+					}
 				}
 			}
 		}

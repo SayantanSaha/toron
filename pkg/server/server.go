@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -78,6 +79,27 @@ func (s *Server) ListenAndServe() error {
 	return s.reactor.ListenAndServe()
 }
 
+// ListenAndServeTLS binds TLS listener and starts processing incoming HTTPS requests.
+func (s *Server) ListenAndServeTLS(certFile, keyFile string) error {
+	s.config.TLSEnabled = true
+	if certFile != "" {
+		s.config.TLSCertFile = certFile
+	}
+	if keyFile != "" {
+		s.config.TLSKeyFile = keyFile
+	}
+	tlsConfig, err := CreateTLSConfig(s.config)
+	if err != nil {
+		return err
+	}
+	ln, err := net.Listen("tcp", s.config.Addr)
+	if err != nil {
+		return err
+	}
+	tlsListener := tls.NewListener(ln, tlsConfig)
+	return s.reactor.Serve(tlsListener)
+}
+
 // Serve accepts connections from the given net.Listener.
 func (s *Server) Serve(ln net.Listener) error {
 	return s.reactor.Serve(ln)
@@ -93,6 +115,20 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 	opts := httpparser.ParserOptions{
 		MaxHeaderBytes: s.config.MaxHeaderBytes,
 		MaxBodyBytes:   s.config.MaxBodyBytes,
+	}
+
+	// TLS ALPN Protocol Detection (h2 over TLS)
+	if tlsConn, ok := conn.(*tls.Conn); ok {
+		if tlsConn.ConnectionState().NegotiatedProtocol == "h2" {
+			h2Server := &http2.Server{
+				MaxConcurrentStreams: s.config.HTTP2MaxConcurrentStreams,
+				MaxReadFrameSize:     s.config.HTTP2MaxFrameSize,
+			}
+			h2Server.ServeConn(conn, &http2.ServeConnOpts{
+				Handler: s.http2AdapterHandler(),
+			})
+			return nil
+		}
 	}
 
 	if s.config.HTTP2Enabled {

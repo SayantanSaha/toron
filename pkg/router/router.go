@@ -15,6 +15,14 @@ import (
 	"toron/pkg/proxy"
 )
 
+// RouteType specifies whether a route handler serves static site assets or proxies requests upstream.
+type RouteType string
+
+const (
+	RouteTypeUpstream RouteType = "upstream"
+	RouteTypeStatic   RouteType = "static"
+)
+
 // HandlerFunc describes an HTTP request handler function in Toron.
 type HandlerFunc func(req *httpparser.Request, res *httpparser.Response)
 
@@ -127,6 +135,52 @@ func (r *Router) POSTHeader(path, headerKey, headerVal string, handler HandlerFu
 	r.HandleHeader("POST", path, map[string]string{headerKey: headerVal}, handler)
 }
 
+// RoutePrefix registers a prefix route that acts either as a static file server or an upstream reverse proxy, matching optional host and headers.
+func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers map[string]string, dirPath string, opts proxy.ProxyOptions) error {
+	cleanPrefix := "/" + strings.Trim(prefix, "/")
+	if cleanPrefix == "/" {
+		cleanPrefix = ""
+	}
+
+	normType := RouteType(strings.ToLower(strings.TrimSpace(string(targetType))))
+	if normType == "proxy" {
+		normType = RouteTypeUpstream
+	}
+
+	var handler HandlerFunc
+
+	if normType == RouteTypeStatic {
+		if dirPath == "" {
+			return fmt.Errorf("router: static route for prefix %q requires non-empty dirPath", prefix)
+		}
+		absDir, err := filepath.Abs(dirPath)
+		if err != nil {
+			absDir = dirPath
+		}
+		handler = r.createStaticHandler(cleanPrefix, absDir)
+	} else if normType == RouteTypeUpstream {
+		px, err := proxy.NewProxyWithOptions(opts)
+		if err != nil {
+			return err
+		}
+		handler = func(req *httpparser.Request, res *httpparser.Response) {
+			px.ServeHTTPWithPrefix(req, res, cleanPrefix)
+		}
+	} else {
+		return fmt.Errorf("router: invalid route type %q (must be 'static' or 'upstream')", targetType)
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
+		host:    strings.ToLower(strings.TrimSpace(host)),
+		prefix:  cleanPrefix,
+		headers: headers,
+		handler: handler,
+	})
+	return nil
+}
+
 // Proxy registers a URL prefix to reverse proxy incoming requests to an upstream target URL string.
 func (r *Router) Proxy(prefix, targetURLStr string) error {
 	return r.ProxyHeaders(prefix, nil, targetURLStr)
@@ -158,44 +212,21 @@ func (r *Router) ProxyBalancerHeaders(prefix string, headers map[string]string, 
 
 // ProxyWithOptions registers a prefix reverse proxy route using domain host and full ProxyOptions (health check, circuit breaker).
 func (r *Router) ProxyWithOptions(host, prefix string, headers map[string]string, opts proxy.ProxyOptions) error {
-	px, err := proxy.NewProxyWithOptions(opts)
-	if err != nil {
-		return err
-	}
-
-	cleanPrefix := "/" + strings.Trim(prefix, "/")
-	if cleanPrefix == "/" {
-		cleanPrefix = ""
-	}
-
-	proxyHandler := func(req *httpparser.Request, res *httpparser.Response) {
-		px.ServeHTTPWithPrefix(req, res, cleanPrefix)
-	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
-		host:    strings.ToLower(strings.TrimSpace(host)),
-		prefix:  cleanPrefix,
-		headers: headers,
-		handler: proxyHandler,
-	})
-	return nil
+	return r.RoutePrefix(RouteTypeUpstream, host, prefix, headers, "", opts)
 }
 
 // Static registers a URL prefix to serve static files from a local directory path.
 func (r *Router) Static(prefix, dirPath string) {
-	cleanPrefix := "/" + strings.Trim(prefix, "/")
-	if cleanPrefix == "/" {
-		cleanPrefix = ""
-	}
+	_ = r.RoutePrefix(RouteTypeStatic, "", prefix, nil, dirPath, proxy.ProxyOptions{})
+}
 
-	absDir, err := filepath.Abs(dirPath)
-	if err != nil {
-		absDir = dirPath
-	}
+// StaticWithOptions registers a URL prefix to serve static files with host and header matching options.
+func (r *Router) StaticWithOptions(host, prefix string, headers map[string]string, dirPath string) error {
+	return r.RoutePrefix(RouteTypeStatic, host, prefix, headers, dirPath, proxy.ProxyOptions{})
+}
 
-	staticHandler := func(req *httpparser.Request, res *httpparser.Response) {
+func (r *Router) createStaticHandler(cleanPrefix, absDir string) HandlerFunc {
+	return func(req *httpparser.Request, res *httpparser.Response) {
 		if req.Method != "GET" && req.Method != "HEAD" {
 			r.MethodNotAllowed(req, res)
 			return
@@ -281,15 +312,6 @@ func (r *Router) Static(prefix, dirPath string) {
 			_, _ = res.Write(data)
 		}
 	}
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
-		host:    "",
-		prefix:  cleanPrefix,
-		headers: nil,
-		handler: staticHandler,
-	})
 }
 
 // ServeHTTP dispatches the request to registered handlers through the middleware chain.
@@ -325,7 +347,7 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	}
 
 	if targetHandler == nil {
-		// Check prefix routes (e.g. static file or proxy routes)
+		// Check prefix routes (static file or upstream reverse proxy routes)
 		var fallbackPrefix *prefixRoute
 		for i := range r.prefixRoutes {
 			pr := &r.prefixRoutes[i]

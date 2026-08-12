@@ -15,6 +15,14 @@ type AppConfig struct {
 	Logging LoggingConfig `yaml:"logging" json:"logging"`
 }
 
+// HTTP2Config captures HTTP/2 protocol settings.
+type HTTP2Config struct {
+	Enabled              bool   `yaml:"enabled" json:"enabled"`
+	MaxConcurrentStreams uint32 `yaml:"max_concurrent_streams" json:"max_concurrent_streams"`
+	MaxFrameSize         uint32 `yaml:"max_frame_size" json:"max_frame_size"`
+	AllowH2C             bool   `yaml:"allow_h2c" json:"allow_h2c"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
 	Host           string        `yaml:"host" json:"host"`
@@ -25,6 +33,7 @@ type ServerConfig struct {
 	IdleTimeout    time.Duration `yaml:"idle_timeout" json:"idle_timeout"`
 	MaxHeaderBytes int           `yaml:"max_header_bytes" json:"max_header_bytes"`
 	MaxBodyBytes   int64         `yaml:"max_body_bytes" json:"max_body_bytes"`
+	HTTP2          HTTP2Config   `yaml:"http2" json:"http2"`
 }
 
 // StaticConfig captures static asset directory settings.
@@ -117,6 +126,12 @@ func DefaultAppConfig() *AppConfig {
 			IdleTimeout:    30 * time.Second,
 			MaxHeaderBytes: 8 * 1024,        // 8 KB
 			MaxBodyBytes:   4 * 1024 * 1024, // 4 MB
+			HTTP2: HTTP2Config{
+				Enabled:              true,
+				MaxConcurrentStreams: 250,
+				MaxFrameSize:         16384,
+				AllowH2C:             true,
+			},
 		},
 		Static: StaticConfig{
 			Enabled: true,
@@ -142,13 +157,16 @@ func (c *AppConfig) ToServerConfig() server.Config {
 	}
 
 	return server.Config{
-		Addr:           addr,
-		WorkerPoolSize: c.Server.WorkerPoolSize,
-		ReadTimeout:    c.Server.ReadTimeout,
-		WriteTimeout:   c.Server.WriteTimeout,
-		IdleTimeout:    c.Server.IdleTimeout,
-		MaxHeaderBytes: c.Server.MaxHeaderBytes,
-		MaxBodyBytes:   c.Server.MaxBodyBytes,
+		Addr:                      addr,
+		WorkerPoolSize:            c.Server.WorkerPoolSize,
+		ReadTimeout:               c.Server.ReadTimeout,
+		WriteTimeout:              c.Server.WriteTimeout,
+		IdleTimeout:               c.Server.IdleTimeout,
+		MaxHeaderBytes:            c.Server.MaxHeaderBytes,
+		MaxBodyBytes:              c.Server.MaxBodyBytes,
+		HTTP2Enabled:              c.Server.HTTP2.Enabled,
+		HTTP2MaxConcurrentStreams: c.Server.HTTP2.MaxConcurrentStreams,
+		HTTP2MaxFrameSize:         c.Server.HTTP2.MaxFrameSize,
 	}
 }
 

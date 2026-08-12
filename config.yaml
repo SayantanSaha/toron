@@ -9,6 +9,11 @@ server:
   idle_timeout: 30s
   max_header_bytes: 8192      # 8 KB
   max_body_bytes: 4194304     # 4 MB
+  http2:
+    enabled: true
+    max_concurrent_streams: 250
+    max_frame_size: 16384
+    allow_h2c: true
 
 static:
   enabled: true

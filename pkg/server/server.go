@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -10,15 +11,33 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/net/http2"
+
 	"toron/pkg/httpparser"
 	"toron/pkg/reactor"
 	"toron/pkg/router"
 )
 
+const http2ClientPreface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
 // ErrServerClosed is returned when operations are performed on a closed server.
 var ErrServerClosed = reactor.ErrServerClosed
 
-// Server orchestrates the reactor, router, and HTTP request processing lifecycle.
+type prefixConn struct {
+	net.Conn
+	prefix []byte
+}
+
+func (c *prefixConn) Read(b []byte) (n int, err error) {
+	if len(c.prefix) > 0 {
+		n = copy(b, c.prefix)
+		c.prefix = c.prefix[n:]
+		return n, nil
+	}
+	return c.Conn.Read(b)
+}
+
+// Server orchestrates the reactor, router, HTTP/1.1, and HTTP/2 request processing lifecycle.
 type Server struct {
 	config  Config
 	router  *router.Router
@@ -76,6 +95,28 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		MaxBodyBytes:   s.config.MaxBodyBytes,
 	}
 
+	if s.config.HTTP2Enabled {
+		buf := make([]byte, len(http2ClientPreface))
+		if s.config.ReadTimeout > 0 {
+			_ = conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
+		}
+		n, err := io.ReadFull(conn, buf)
+		if err == nil && string(buf[:n]) == http2ClientPreface {
+			pConn := &prefixConn{Conn: conn, prefix: buf[:n]}
+			h2Server := &http2.Server{
+				MaxConcurrentStreams: s.config.HTTP2MaxConcurrentStreams,
+				MaxReadFrameSize:     s.config.HTTP2MaxFrameSize,
+			}
+			h2Server.ServeConn(pConn, &http2.ServeConnOpts{
+				Handler: s.http2AdapterHandler(),
+			})
+			return nil
+		}
+		if n > 0 {
+			conn = &prefixConn{Conn: conn, prefix: buf[:n]}
+		}
+	}
+
 	firstRequest := true
 	for {
 		timeout := s.config.ReadTimeout
@@ -127,7 +168,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 
 		// Process request through router
 		res := httpparser.NewResponse()
-		
+
 		// Set default Connection header
 		connHeader := strings.ToLower(req.Header.Get("Connection"))
 		if connHeader == "close" {
@@ -150,4 +191,43 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			return nil
 		}
 	}
+}
+
+func (s *Server) http2AdapterHandler() http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		req := &httpparser.Request{
+			Method: r.Method,
+			Path:   r.URL.Path,
+			Proto:  r.Proto,
+			Header: make(httpparser.Header),
+		}
+		for k, vv := range r.Header {
+			for _, v := range vv {
+				req.Header.Add(k, v)
+			}
+		}
+		if r.Host != "" {
+			req.Header.Set("Host", r.Host)
+		}
+
+		if r.Body != nil {
+			bodyBytes, err := io.ReadAll(r.Body)
+			if err == nil {
+				req.Body = bytes.NewReader(bodyBytes)
+			}
+		}
+
+		res := httpparser.NewResponse()
+		s.router.ServeHTTP(req, res)
+
+		for k, vv := range res.Header {
+			for _, v := range vv {
+				w.Header().Add(k, v)
+			}
+		}
+		w.WriteHeader(res.StatusCode)
+		if len(res.Body.Bytes()) > 0 {
+			_, _ = w.Write(res.Body.Bytes())
+		}
+	})
 }

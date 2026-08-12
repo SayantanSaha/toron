@@ -1,5 +1,18 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 14 Release (HTTP/2 Protocol Support & Stream Multiplexing)
+
+### Added
+
+- **HTTP/2 Engine Integration**: Integrated `golang.org/x/net/http2` server engine into `pkg/server/server.go` (`TASK-022`, `REQ-022`).
+- **Connection Preface Auto-Detection**: Added connection preface detection (`PRI * HTTP/2.0...`) in `handleConn`, enabling zero-downtime hybrid HTTP/1.1 and HTTP/2 cleartext (`h2c`) stream handling.
+- **HTTP/2 Configuration**: Added `http2` settings (`enabled`, `max_concurrent_streams`, `max_frame_size`, `allow_h2c`) to `config.yaml` and `pkg/config`.
+- **HTTP/2 Integration Tests**: Added `TestServer_HTTP2PriorKnowledge` unit test in `pkg/server/http2_test.go`.
+
+### Related Tasks
+
+- `TASK-022`: Implement HTTP/2 Server Connection Handler and Configuration Options
+
 ## 2026-08-12 - Prototype 13 Release (Configuration Syntax Testing & Dry-Run CLI Flag)
 
 ### Added

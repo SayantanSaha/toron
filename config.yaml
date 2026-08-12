@@ -21,7 +21,10 @@ proxy:
     - prefix: "/api"
       headers:
         X-Version: "v2"
-      target: "http://localhost:9092"
+      algorithm: "round_robin"
+      targets:
+        - "http://localhost:9092"
+        - "http://localhost:9093"
     - prefix: "/api"
       headers:
         X-Version: "v1"

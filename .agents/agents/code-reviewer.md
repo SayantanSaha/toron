@@ -184,7 +184,6 @@ Code review of...
 - ...
 ```
 
-
 ## Operating Instructions
 
 1. Read the relevant requirement, task, architecture, test case, and security review documents.
@@ -196,6 +195,7 @@ Code review of...
 7. Note missing or weak tests.
 8. Create or update a code review document.
 9. Return findings first, ordered by severity.
+10. Hands off the findings to the developmnent lead agent
 
 ## Constraints
 

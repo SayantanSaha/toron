@@ -79,3 +79,43 @@ func TestConfig_UnsupportedExtension(t *testing.T) {
 		t.Error("expected error for unsupported extension, got nil")
 	}
 }
+
+func TestConfig_ProxyLoadBalancer(t *testing.T) {
+	tmpDir := t.TempDir()
+	yamlPath := filepath.Join(tmpDir, "config.yaml")
+
+	yamlData := `
+proxy:
+  enabled: true
+  routes:
+    - prefix: "/api"
+      target: "http://backend1:8080"
+      targets:
+        - "http://backend2:8080"
+        - "http://backend3:8080"
+      algorithm: "round_robin"
+`
+	_ = os.WriteFile(yamlPath, []byte(yamlData), 0644)
+
+	cfg, err := config.LoadFromFile(yamlPath)
+	if err != nil {
+		t.Fatalf("failed to load config: %v", err)
+	}
+
+	if len(cfg.Proxy.Routes) != 1 {
+		t.Fatalf("expected 1 proxy route, got %d", len(cfg.Proxy.Routes))
+	}
+
+	route := cfg.Proxy.Routes[0]
+	targets := route.GetTargets()
+	if len(targets) != 3 {
+		t.Errorf("expected 3 targets, got %d (%v)", len(targets), targets)
+	}
+	if targets[0] != "http://backend1:8080" || targets[1] != "http://backend2:8080" || targets[2] != "http://backend3:8080" {
+		t.Errorf("unexpected target ordering: %v", targets)
+	}
+
+	if route.GetAlgorithm() != "round_robin" {
+		t.Errorf("expected round_robin algorithm, got %q", route.GetAlgorithm())
+	}
+}

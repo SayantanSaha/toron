@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"time"
 
 	"toron/pkg/server"
@@ -39,11 +40,46 @@ type ProxyConfig struct {
 	Routes  []ProxyRouteConfig `yaml:"routes" json:"routes"`
 }
 
-// ProxyRouteConfig describes an individual prefix and optional header condition to upstream target URL mapping.
+// ProxyRouteConfig describes an individual prefix and optional header condition to upstream target URL mapping with optional load balancing.
 type ProxyRouteConfig struct {
-	Prefix  string            `yaml:"prefix" json:"prefix"`
-	Headers map[string]string `yaml:"headers" json:"headers"`
-	Target  string            `yaml:"target" json:"target"`
+	Prefix    string            `yaml:"prefix" json:"prefix"`
+	Headers   map[string]string `yaml:"headers" json:"headers"`
+	Target    string            `yaml:"target" json:"target"`
+	Targets   []string          `yaml:"targets" json:"targets"`
+	Algorithm string            `yaml:"algorithm" json:"algorithm"`
+}
+
+// GetTargets returns all configured upstream target URLs for the route.
+// Combines Target (single string) and Targets ([]string), eliminating duplicates while preserving order.
+func (p *ProxyRouteConfig) GetTargets() []string {
+	var list []string
+	seen := make(map[string]bool)
+
+	if p.Target != "" {
+		trimmed := strings.TrimSpace(p.Target)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			list = append(list, trimmed)
+		}
+	}
+
+	for _, t := range p.Targets {
+		trimmed := strings.TrimSpace(t)
+		if trimmed != "" && !seen[trimmed] {
+			seen[trimmed] = true
+			list = append(list, trimmed)
+		}
+	}
+
+	return list
+}
+
+// GetAlgorithm returns the configured load balancing algorithm or "round_robin" by default.
+func (p *ProxyRouteConfig) GetAlgorithm() string {
+	if strings.TrimSpace(p.Algorithm) == "" {
+		return "round_robin"
+	}
+	return strings.TrimSpace(p.Algorithm)
 }
 
 // LoggingConfig captures logging settings.

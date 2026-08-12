@@ -2,11 +2,13 @@ package router_test
 
 import (
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/proxy"
 	"toron/pkg/router"
 )
 
@@ -166,5 +168,41 @@ func TestRouter_StaticFileServing(t *testing.T) {
 
 	if res3.StatusCode != http.StatusForbidden && res3.StatusCode != http.StatusNotFound {
 		t.Errorf("expected status 403 Forbidden or 404 for traversal, got %d", res3.StatusCode)
+	}
+}
+
+func TestRouter_ProxyBalancer(t *testing.T) {
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-1"))
+	}))
+	defer server1.Close()
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-2"))
+	}))
+	defer server2.Close()
+
+	r := router.New()
+	err := r.ProxyBalancer("/api", []string{server1.URL, server2.URL}, proxy.AlgorithmRoundRobin)
+	if err != nil {
+		t.Fatalf("failed to configure ProxyBalancer: %v", err)
+	}
+
+	// Request 1 -> server1
+	req1, _ := httpparser.NewRequest("GET", "/api/users", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.Body.String() != "backend-1" {
+		t.Errorf("request 1: expected backend-1, got %q", res1.Body.String())
+	}
+
+	// Request 2 -> server2
+	req2, _ := httpparser.NewRequest("GET", "/api/users", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.Body.String() != "backend-2" {
+		t.Errorf("request 2: expected backend-2, got %q", res2.Body.String())
 	}
 }

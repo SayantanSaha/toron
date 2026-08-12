@@ -1,5 +1,17 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 7 Release (Load Balancing)
+
+### Added
+
+- **Upstream Reverse Proxy Load Balancing**: Multi-target load balancing with pluggable `LoadBalancer` interface, thread-safe Round-Robin selection algorithm (`round_robin`), YAML `targets` & `algorithm` configuration, and `r.ProxyBalancer` router helpers (`TASK-011`, `REQ-011`).
+- **Dummy Web Services Test Suite**: 10 dummy HTTP web services running on ports 9001–9010 (`dummy-services/`) for testing reverse proxy routing and load balancer upstream targets (`TASK-012`, `REQ-012`).
+
+### Related Tasks
+
+- `TASK-011`: Reverse Proxy Load Balancer Implementation
+- `TASK-012`: Add 10 Dummy Web Services for Upstream Testing
+
 ## 2026-08-11 - Prototype 1, 2, 3, 4, 5 & 6 Release
 
 ### Added

@@ -11,6 +11,7 @@ import (
 
 	"toron/pkg/config"
 	"toron/pkg/httpparser"
+	"toron/pkg/proxy"
 	"toron/pkg/router"
 	"toron/pkg/server"
 )
@@ -57,12 +58,14 @@ func main() {
 		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
 	})
 
-	// Register Reverse Proxy routes (with header routing support) if enabled
+	// Register Reverse Proxy routes (with header routing & load balancing support) if enabled
 	if appCfg.Proxy.Enabled {
 		for _, pr := range appCfg.Proxy.Routes {
-			log.Printf("[TORON] Configuring Reverse Proxy: prefix %q (headers: %v) -> upstream %q", pr.Prefix, pr.Headers, pr.Target)
-			if err := r.ProxyHeaders(pr.Prefix, pr.Headers, pr.Target); err != nil {
-				log.Fatalf("[TORON] Invalid proxy configuration for target %q: %v", pr.Target, err)
+			targets := pr.GetTargets()
+			algo := pr.GetAlgorithm()
+			log.Printf("[TORON] Configuring Reverse Proxy: prefix %q (headers: %v) -> targets %v [algo: %s]", pr.Prefix, pr.Headers, targets, algo)
+			if err := r.ProxyBalancerHeaders(pr.Prefix, pr.Headers, targets, proxy.Algorithm(algo)); err != nil {
+				log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)
 			}
 		}
 	}

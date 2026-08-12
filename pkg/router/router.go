@@ -121,7 +121,17 @@ func (r *Router) ProxyHeader(prefix, headerKey, headerVal, targetURLStr string) 
 
 // ProxyHeaders registers a prefix reverse proxy route conditional on matching multiple HTTP headers.
 func (r *Router) ProxyHeaders(prefix string, headers map[string]string, targetURLStr string) error {
-	px, err := proxy.NewReverseProxy(targetURLStr, 10*time.Second)
+	return r.ProxyBalancerHeaders(prefix, headers, []string{targetURLStr}, proxy.AlgorithmRoundRobin)
+}
+
+// ProxyBalancer registers a prefix reverse proxy route load balancing across multiple upstream target URL strings.
+func (r *Router) ProxyBalancer(prefix string, targets []string, algo proxy.Algorithm) error {
+	return r.ProxyBalancerHeaders(prefix, nil, targets, algo)
+}
+
+// ProxyBalancerHeaders registers a prefix reverse proxy route load balancing across multiple upstream targets with header matching.
+func (r *Router) ProxyBalancerHeaders(prefix string, headers map[string]string, targets []string, algo proxy.Algorithm) error {
+	px, err := proxy.NewLoadBalancerProxy(targets, algo, 10*time.Second)
 	if err != nil {
 		return err
 	}

@@ -200,6 +200,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			return err
 		}
 
+		req.RawConn = conn
 		firstRequest = false
 
 		// Process request through router
@@ -214,6 +215,30 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		s.router.ServeHTTP(req, res)
+
+		if res.UpgradedConn != nil || res.StatusCode == http.StatusSwitchingProtocols {
+			_ = conn.SetDeadline(time.Time{})
+			if res.UpgradedConn != nil {
+				_ = res.UpgradedConn.SetDeadline(time.Time{})
+			}
+
+			if err := res.Serialize(conn); err != nil {
+				if res.UpgradedConn != nil {
+					res.UpgradedConn.Close()
+				}
+				return fmt.Errorf("server: failed to write upgrade response: %w", err)
+			}
+
+			if res.UpgradedConn != nil {
+				go func() {
+					_, _ = io.Copy(res.UpgradedConn, conn)
+					_ = res.UpgradedConn.Close()
+				}()
+				_, _ = io.Copy(conn, res.UpgradedConn)
+				_ = conn.Close()
+				return nil
+			}
+		}
 
 		if s.config.WriteTimeout > 0 {
 			_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))

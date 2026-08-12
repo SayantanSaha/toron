@@ -84,3 +84,27 @@ func TestResponse_Serialize(t *testing.T) {
 		t.Errorf("expected body in response, got %q", out)
 	}
 }
+
+func TestIsWebSocketUpgrade(t *testing.T) {
+	wsReq := "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+	opts := httpparser.DefaultParserOptions()
+
+	req, err := httpparser.ParseRequest(bytes.NewBufferString(wsReq), opts)
+	if err != nil {
+		t.Fatalf("failed to parse websocket request: %v", err)
+	}
+
+	if !req.IsWebSocketUpgrade() {
+		t.Errorf("expected IsWebSocketUpgrade() to return true")
+	}
+
+	normalReq := "GET /api HTTP/1.1\r\nHost: localhost\r\n\r\n"
+	nReq, err := httpparser.ParseRequest(bytes.NewBufferString(normalReq), opts)
+	if err != nil {
+		t.Fatalf("failed to parse normal request: %v", err)
+	}
+
+	if nReq.IsWebSocketUpgrade() {
+		t.Errorf("expected IsWebSocketUpgrade() to return false for normal request")
+	}
+}

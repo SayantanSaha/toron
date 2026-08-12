@@ -4,15 +4,17 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strconv"
 )
 
 // Response represents an HTTP/1.1 response builder.
 type Response struct {
-	StatusCode int
-	Header     Header
-	Body       *bytes.Buffer
+	StatusCode   int
+	Header       Header
+	Body         *bytes.Buffer
+	UpgradedConn net.Conn
 }
 
 // NewResponse initializes an HTTP response with default status 200 OK.
@@ -46,12 +48,14 @@ func (r *Response) Serialize(w io.Writer) error {
 		statusText = "Unknown"
 	}
 
-	// Ensure Content-Length is present if not already set
-	if r.Header.Get("Content-Length") == "" {
-		r.Header.Set("Content-Length", strconv.Itoa(r.Body.Len()))
-	}
-	if r.Header.Get("Content-Type") == "" {
-		r.Header.Set("Content-Type", "text/plain; charset=utf-8")
+	if r.StatusCode != http.StatusSwitchingProtocols {
+		// Ensure Content-Length is present if not already set
+		if r.Header.Get("Content-Length") == "" {
+			r.Header.Set("Content-Length", strconv.Itoa(r.Body.Len()))
+		}
+		if r.Header.Get("Content-Type") == "" {
+			r.Header.Set("Content-Type", "text/plain; charset=utf-8")
+		}
 	}
 
 	var buf bytes.Buffer

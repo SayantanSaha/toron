@@ -9,6 +9,7 @@
 * **Event Reactor Engine**: High-performance, non-blocking TCP event loop with a configurable worker pool for concurrent request dispatching.
 * **HTTP/1.1 & HTTP/2 Concurrency**: Cleartext `h2c` and stream multiplexing with connection preface auto-detection (`PRI * HTTP/2.0...`).
 * **HTTPS TLS Encryption & ALPN**: TLS 1.2/1.3 support, ALPN negotiation (`h2`, `http/1.1`), and zero-config self-signed ECDSA dev certificate generator (`auto_dev_cert`).
+* **WebSocket Protocol Upgrade & Tunneling**: RFC 6455 101 Switching Protocols handshake verification and bi-directional raw TCP socket stream tunneling for real-time web services.
 * **Dual-File YAML Configuration**: Decoupled infrastructure settings ([`config.yaml`](./config.yaml)) and routing rules ([`routes.yaml`](./routes.yaml)).
 * **Unified Routing Architecture**: Routing rules accept `type: "static"` or `type: "upstream"`, sharing identical domain host matching, header-conditional dispatching, and subpath prefix routing capabilities.
 * **Upstream Load Balancing & Health Checks**: Multi-target round-robin and random load balancing, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).

@@ -1,10 +1,13 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -227,6 +230,11 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	outURL.Path = singleJoiningSlash(targetURL.Path, relPath)
 	outURL.RawQuery = req.QueryParams.Encode()
 
+	if req.IsWebSocketUpgrade() {
+		p.serveWebSocketProxy(req, res, targetNode, outURL, prefix)
+		return
+	}
+
 	var bodyReader io.Reader
 	if req.Body != nil {
 		bodyBytes, err := io.ReadAll(req.Body)
@@ -310,4 +318,109 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
+}
+
+func (p *ReverseProxy) serveWebSocketProxy(req *httpparser.Request, res *httpparser.Response, targetNode *UpstreamTarget, outURL url.URL, prefix string) {
+	host := outURL.Host
+	if !strings.Contains(host, ":") {
+		if outURL.Scheme == "https" || outURL.Scheme == "wss" {
+			host = host + ":443"
+		} else {
+			host = host + ":80"
+		}
+	}
+
+	var upstreamConn net.Conn
+	var dialErr error
+	if outURL.Scheme == "https" || outURL.Scheme == "wss" {
+		upstreamConn, dialErr = tls.Dial("tcp", host, &tls.Config{InsecureSkipVerify: true})
+	} else {
+		timeout := p.Client.Timeout
+		if timeout <= 0 {
+			timeout = 10 * time.Second
+		}
+		upstreamConn, dialErr = net.DialTimeout("tcp", host, timeout)
+	}
+
+	if dialErr != nil {
+		targetNode.RecordFailure()
+		p.writeBadGateway(res, fmt.Sprintf("Upstream WebSocket target unreachable (%s): %v", outURL.String(), dialErr))
+		return
+	}
+
+	reqURI := outURL.RequestURI()
+	if reqURI == "" {
+		reqURI = "/"
+	}
+
+	var reqBuf bytes.Buffer
+	fmt.Fprintf(&reqBuf, "%s %s HTTP/1.1\r\n", req.Method, reqURI)
+	for k, vv := range req.Header {
+		for _, v := range vv {
+			fmt.Fprintf(&reqBuf, "%s: %s\r\n", k, v)
+		}
+	}
+	if req.Header.Get("Host") == "" {
+		fmt.Fprintf(&reqBuf, "Host: %s\r\n", outURL.Host)
+	}
+	reqBuf.WriteString("\r\n")
+
+	if _, err := upstreamConn.Write(reqBuf.Bytes()); err != nil {
+		upstreamConn.Close()
+		targetNode.RecordFailure()
+		p.writeBadGateway(res, fmt.Sprintf("Failed to write WebSocket handshake to upstream: %v", err))
+		return
+	}
+
+	reader := bufio.NewReader(upstreamConn)
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		upstreamConn.Close()
+		targetNode.RecordFailure()
+		p.writeBadGateway(res, fmt.Sprintf("Failed to read WebSocket upgrade response from upstream: %v", err))
+		return
+	}
+
+	if !strings.Contains(statusLine, "101") {
+		upstreamConn.Close()
+		targetNode.RecordFailure()
+		p.writeBadGateway(res, fmt.Sprintf("Upstream rejected WebSocket upgrade: %s", strings.TrimSpace(statusLine)))
+		return
+	}
+
+	res.SetStatus(http.StatusSwitchingProtocols)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil || line == "\r\n" || line == "\n" {
+			break
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			res.Header.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	}
+
+	targetNode.RecordSuccess()
+
+	if reader.Buffered() > 0 {
+		bufBytes := make([]byte, reader.Buffered())
+		_, _ = reader.Read(bufBytes)
+		res.UpgradedConn = &proxyPrefixConn{Conn: upstreamConn, prefix: bufBytes}
+	} else {
+		res.UpgradedConn = upstreamConn
+	}
+}
+
+type proxyPrefixConn struct {
+	net.Conn
+	prefix []byte
+}
+
+func (c *proxyPrefixConn) Read(b []byte) (n int, err error) {
+	if len(c.prefix) > 0 {
+		n = copy(b, c.prefix)
+		c.prefix = c.prefix[n:]
+		return n, nil
+	}
+	return c.Conn.Read(b)
 }

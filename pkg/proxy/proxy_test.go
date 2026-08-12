@@ -3,6 +3,7 @@ package proxy_test
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -177,4 +178,62 @@ func TestCircuitBreaker_StateTransitions(t *testing.T) {
 			t.Errorf("request %d: expected body 'healthy', got %q", i, res.Body.String())
 		}
 	}
+}
+
+func TestWebSocketProxyTunnel(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		if err != nil || !strings.Contains(strings.ToLower(string(buf[:n])), "upgrade: websocket") {
+			return
+		}
+
+		upgradeResp := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+		_, _ = conn.Write([]byte(upgradeResp))
+
+		n, err = conn.Read(buf)
+		if err == nil && n > 0 {
+			_, _ = conn.Write(buf[:n])
+		}
+	}()
+
+	px, err := proxy.NewReverseProxy("http://"+ln.Addr().String(), 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/ws", "HTTP/1.1")
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "websocket")
+	req.Header.Set("Sec-WebSocket-Key", "testkey")
+
+	res := httpparser.NewResponse()
+	px.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("expected 101 Switching Protocols, got %d", res.StatusCode)
+	}
+	if res.UpgradedConn == nil {
+		t.Fatalf("expected non-nil UpgradedConn")
+	}
+
+	_, _ = res.UpgradedConn.Write([]byte("ping"))
+	buf := make([]byte, 10)
+	n, err := res.UpgradedConn.Read(buf)
+	if err != nil || string(buf[:n]) != "ping" {
+		t.Errorf("expected echo 'ping', got %q (err %v)", string(buf[:n]), err)
+	}
+	res.UpgradedConn.Close()
 }

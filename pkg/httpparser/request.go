@@ -3,6 +3,7 @@ package httpparser
 import (
 	"bytes"
 	"io"
+	"net"
 	"net/url"
 	"strings"
 )
@@ -48,6 +49,17 @@ type Request struct {
 	QueryParams   url.Values
 	Body          io.Reader
 	ContentLength int64
+	RawConn       net.Conn
+}
+
+// IsWebSocketUpgrade returns true if the request contains WebSocket upgrade headers.
+func (r *Request) IsWebSocketUpgrade() bool {
+	if r == nil || r.Header == nil {
+		return false
+	}
+	connHeader := strings.ToLower(r.Header.Get("Connection"))
+	upgradeHeader := strings.ToLower(r.Header.Get("Upgrade"))
+	return strings.Contains(connHeader, "upgrade") && upgradeHeader == "websocket"
 }
 
 // NewRequest creates a Request with initialized fields.

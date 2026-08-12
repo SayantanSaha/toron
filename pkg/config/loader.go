@@ -44,31 +44,70 @@ func (m *Manager) Register(ext string, loader Loader) {
 	m.loaders[strings.ToLower(ext)] = loader
 }
 
-// LoadFromFile loads, decodes, and merges configuration from a file path.
-func (m *Manager) LoadFromFile(filePath string) (*AppConfig, error) {
+// LoadFromFiles loads server infrastructure config from configPath and proxy routing config from routesPath.
+func (m *Manager) LoadFromFiles(configPath, routesPath string) (*AppConfig, error) {
 	cfg := DefaultAppConfig()
 
-	if filePath == "" {
-		return cfg, nil
+	// 1. Load server configuration file
+	if configPath != "" {
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("config: failed to read config file %s: %w", configPath, err)
+		}
+
+		ext := strings.ToLower(filepath.Ext(configPath))
+		loader, exists := m.loaders[ext]
+		if !exists {
+			return nil, fmt.Errorf("config: unsupported config file extension %q (supported: .yaml, .yml)", ext)
+		}
+
+		if err := loader.Load(data, cfg); err != nil {
+			return nil, fmt.Errorf("config: failed to parse config file %s: %w", configPath, err)
+		}
 	}
 
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		return nil, fmt.Errorf("config: failed to read file %s: %w", filePath, err)
+	// 2. Determine routesPath if not explicitly specified
+	if routesPath == "" {
+		if configPath != "" {
+			dir := filepath.Dir(configPath)
+			candidate := filepath.Join(dir, "routes.yaml")
+			if _, err := os.Stat(candidate); err == nil {
+				routesPath = candidate
+			}
+		}
+		if routesPath == "" {
+			if _, err := os.Stat("routes.yaml"); err == nil {
+				routesPath = "routes.yaml"
+			}
+		}
 	}
 
-	ext := strings.ToLower(filepath.Ext(filePath))
-	loader, exists := m.loaders[ext]
-	if !exists {
-		return nil, fmt.Errorf("config: unsupported config file extension %q (supported: .yaml, .yml)", ext)
-	}
+	// 3. Load routes configuration file if present
+	if routesPath != "" {
+		routesData, err := os.ReadFile(routesPath)
+		if err != nil {
+			return nil, fmt.Errorf("config: failed to read routes file %s: %w", routesPath, err)
+		}
 
-	if err := loader.Load(data, cfg); err != nil {
-		return nil, fmt.Errorf("config: failed to parse file %s: %w", filePath, err)
+		var routesWrapper struct {
+			Proxy ProxyConfig `yaml:"proxy" json:"proxy"`
+		}
+		if err := yaml.Unmarshal(routesData, &routesWrapper); err != nil {
+			return nil, fmt.Errorf("config: failed to parse routes file %s: %w", routesPath, err)
+		}
+
+		if len(routesWrapper.Proxy.Routes) > 0 || routesWrapper.Proxy.Enabled {
+			cfg.Proxy = routesWrapper.Proxy
+		}
 	}
 
 	validateConfig(cfg)
 	return cfg, nil
+}
+
+// LoadFromFile loads, decodes, and merges configuration from a single file path or auto-discovered routes file.
+func (m *Manager) LoadFromFile(filePath string) (*AppConfig, error) {
+	return m.LoadFromFiles(filePath, "")
 }
 
 func validateConfig(cfg *AppConfig) {
@@ -89,4 +128,9 @@ func validateConfig(cfg *AppConfig) {
 // LoadFromFile helper shortcut using default Manager.
 func LoadFromFile(filePath string) (*AppConfig, error) {
 	return NewManager().LoadFromFile(filePath)
+}
+
+// LoadFromFiles helper shortcut using default Manager.
+func LoadFromFiles(configPath, routesPath string) (*AppConfig, error) {
+	return NewManager().LoadFromFiles(configPath, routesPath)
 }

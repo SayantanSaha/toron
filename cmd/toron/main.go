@@ -18,26 +18,38 @@ import (
 
 func main() {
 	var configPath string
-	flag.StringVar(&configPath, "config", "", "Path to YAML configuration file (e.g. -config config.yaml)")
-	flag.StringVar(&configPath, "c", "", "Path to YAML configuration file (short alias)")
+	var routesPath string
+	flag.StringVar(&configPath, "config", "", "Path to YAML server configuration file (e.g. -config config.yaml)")
+	flag.StringVar(&configPath, "c", "", "Path to YAML server configuration file (short alias)")
+	flag.StringVar(&routesPath, "routes", "", "Path to YAML proxy routing configuration file (e.g. -routes routes.yaml)")
+	flag.StringVar(&routesPath, "r", "", "Path to YAML proxy routing configuration file (short alias)")
 	flag.Parse()
 
-	// If no flag provided, check if config.yaml exists in current working directory
+	// If no flag provided, check if default files exist in current working directory
 	if configPath == "" {
 		if _, err := os.Stat("config.yaml"); err == nil {
 			configPath = "config.yaml"
 		}
 	}
+	if routesPath == "" {
+		if _, err := os.Stat("routes.yaml"); err == nil {
+			routesPath = "routes.yaml"
+		}
+	}
 
-	appCfg, err := config.LoadFromFile(configPath)
+	appCfg, err := config.LoadFromFiles(configPath, routesPath)
 	if err != nil {
 		log.Fatalf("[TORON] Configuration error: %v", err)
 	}
 
 	if configPath != "" {
-		log.Printf("[TORON] Loaded configuration from %s", configPath)
+		log.Printf("[TORON] Loaded server configuration from %s", configPath)
 	} else {
 		log.Println("[TORON] No configuration file specified. Using built-in defaults.")
+	}
+
+	if routesPath != "" {
+		log.Printf("[TORON] Loaded routing configuration from %s", routesPath)
 	}
 
 	srvCfg := appCfg.ToServerConfig()

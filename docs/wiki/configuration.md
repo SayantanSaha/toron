@@ -29,17 +29,17 @@ related_to:
 
 Toron features a flexible configuration system that reads parameters from YAML configuration files or falls back to built-in default settings.
 
-## Specifying a Configuration File
+## Specifying Configuration Files
 
-Pass the path to your configuration file using the `-config` (or `-c`) command-line flag:
+Pass paths to your server and routing configuration files using the `-config` (`-c`) and `-routes` (`-r`) command-line flags:
 
 ```bash
-go run ./cmd/toron -config config.yaml
+go run ./cmd/toron -config config.yaml -routes routes.yaml
 ```
 
-If no command-line flag is passed, Toron automatically checks for `config.yaml` in the current working directory.
+If no flags are passed, Toron automatically checks for `config.yaml` and `routes.yaml` in the current working directory.
 
-## Sample `config.yaml`
+## Sample `config.yaml` (Infrastructure)
 
 ```yaml
 server:
@@ -54,12 +54,28 @@ server:
 
 static:
   enabled: true
-  prefix: "/"
+  prefix: "/internal/dashboard/"
   dir: "./public"
 
 logging:
   level: "info"
   format: "text"
+```
+
+## Sample `routes.yaml` (Proxy Routing)
+
+```yaml
+proxy:
+  enabled: true
+  routes:
+    - prefix: "/api"
+      headers:
+        X-Version: "v2"
+      algorithm: "round_robin"
+      targets:
+        - "http://localhost:9001"
+        - "http://localhost:9002"
+        - "http://localhost:9003"
 ```
 
 ## Extensible Multi-Format Support

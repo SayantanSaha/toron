@@ -1,5 +1,17 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 11 Release (Decoupled Dual-File YAML Configuration)
+
+### Added
+
+- **Dual-File Configuration Architecture**: Split application configuration into `config.yaml` (server infrastructure, static assets, logging) and `routes.yaml` (reverse proxy routing rules, load balancers, health checks) (`TASK-019`, `REQ-019`).
+- **Loader Enhancement**: Added `LoadFromFiles(configPath, routesPath)` in `pkg/config` with auto-discovery of `routes.yaml`.
+- **CLI Flag Integration**: Added `-routes` (`-r`) CLI flag alongside `-config` (`-c`) in `cmd/toron/main.go`.
+
+### Related Tasks
+
+- `TASK-019`: Implement Dual-File YAML Config Loader (config.yaml & routes.yaml)
+
 ## 2026-08-12 - Prototype 10 Release (Configurable Static Prefix & Relative Asset Resolution)
 
 ### Added

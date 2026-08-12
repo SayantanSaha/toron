@@ -1,4 +1,4 @@
-# Toron Web Server Configuration File
+# Toron Web Server Infrastructure Configuration File
 
 server:
   host: "0.0.0.0"
@@ -12,46 +12,8 @@ server:
 
 static:
   enabled: true
-  prefix: "/internal/dashboard"
+  prefix: "/internal/dashboard/"
   dir: "./public"
-
-proxy:
-  enabled: true
-  routes:
-    # 1. Header-Based Routing + Multi-Target Round-Robin Load Balancing (Dummy Services 1, 2, 3)
-    - prefix: "/api"
-      headers:
-        X-Version: "v2"
-      algorithm: "round_robin"
-      targets:
-        - "http://localhost:9001"
-        - "http://localhost:9002"
-        - "http://localhost:9003"
-
-    # 2. Header-Based Routing + Single Target (Dummy Service 4)
-    - prefix: "/api"
-      headers:
-        X-Version: "v1"
-      target: "http://localhost:9004"
-
-    # 3. Path Prefix Routing + Multi-Target Round-Robin Load Balancing (Dummy Services 5, 6, 7)
-    - prefix: "/services/cluster"
-      algorithm: "round_robin"
-      targets:
-        - "http://localhost:9005"
-        - "http://localhost:9006"
-        - "http://localhost:9007"
-
-    # 4. Path Prefix Routing + Single Target (Dummy Service 8)
-    - prefix: "/services/auth"
-      target: "http://localhost:9008"
-
-    # 5. Path Prefix Routing + Multi-Target Load Balancing (Dummy Services 9, 10)
-    - prefix: "/services/analytics"
-      algorithm: "round_robin"
-      targets:
-        - "http://localhost:9009"
-        - "http://localhost:9010"
 
 logging:
   level: "info"

@@ -82,7 +82,7 @@ func TestConfig_UnsupportedExtension(t *testing.T) {
 
 func TestConfig_ProxyLoadBalancer(t *testing.T) {
 	tmpDir := t.TempDir()
-	yamlPath := filepath.Join(tmpDir, "config.yaml")
+	yamlPath := filepath.Join(tmpDir, "routes.yaml")
 
 	yamlData := `
 proxy:
@@ -97,7 +97,7 @@ proxy:
 `
 	_ = os.WriteFile(yamlPath, []byte(yamlData), 0644)
 
-	cfg, err := config.LoadFromFile(yamlPath)
+	cfg, err := config.LoadFromFiles("", yamlPath)
 	if err != nil {
 		t.Fatalf("failed to load config: %v", err)
 	}
@@ -120,16 +120,51 @@ proxy:
 	}
 }
 
-func TestConfig_DefaultConfigYamlLoading(t *testing.T) {
-	cfg, err := config.LoadFromFile("../../config.yaml")
+func TestConfig_DualFileLoading(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+	routesPath := filepath.Join(tmpDir, "routes.yaml")
+
+	configYaml := `
+server:
+  port: 8080
+`
+	routesYaml := `
+proxy:
+  enabled: true
+  routes:
+    - prefix: "/api"
+      target: "http://localhost:9001"
+`
+	_ = os.WriteFile(configPath, []byte(configYaml), 0644)
+	_ = os.WriteFile(routesPath, []byte(routesYaml), 0644)
+
+	cfg, err := config.LoadFromFiles(configPath, routesPath)
 	if err != nil {
-		t.Fatalf("failed to load root config.yaml: %v", err)
+		t.Fatalf("failed to load dual configs: %v", err)
+	}
+
+	if cfg.Server.Port != 8080 {
+		t.Errorf("expected port 8080, got %d", cfg.Server.Port)
+	}
+	if !cfg.Proxy.Enabled {
+		t.Error("expected proxy enabled true")
+	}
+	if len(cfg.Proxy.Routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(cfg.Proxy.Routes))
+	}
+}
+
+func TestConfig_DefaultConfigYamlLoading(t *testing.T) {
+	cfg, err := config.LoadFromFiles("../../config.yaml", "../../routes.yaml")
+	if err != nil {
+		t.Fatalf("failed to load root config.yaml & routes.yaml: %v", err)
 	}
 
 	if !cfg.Proxy.Enabled {
-		t.Error("expected proxy.enabled to be true in config.yaml")
+		t.Error("expected proxy.enabled to be true in routes.yaml")
 	}
 	if len(cfg.Proxy.Routes) != 5 {
-		t.Errorf("expected 5 proxy routes in config.yaml, got %d", len(cfg.Proxy.Routes))
+		t.Errorf("expected 5 proxy routes in routes.yaml, got %d", len(cfg.Proxy.Routes))
 	}
 }

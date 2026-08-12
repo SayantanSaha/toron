@@ -47,6 +47,29 @@ func main() {
 	r.Use(router.LoggerMiddleware())
 	r.Use(router.RecoveryMiddleware())
 
+	// Register Internal Management API Routes (/internal/api/)
+	internalRoutes := make([]server.RouteInfo, 0)
+	if appCfg.Proxy.Enabled {
+		for _, pr := range appCfg.Proxy.Routes {
+			internalRoutes = append(internalRoutes, server.RouteInfo{
+				Prefix:    pr.Prefix,
+				Headers:   pr.Headers,
+				Algorithm: pr.GetAlgorithm(),
+				Targets:   pr.GetTargets(),
+			})
+		}
+	}
+	internalCfg := server.InternalAPIConfig{
+		Port:           appCfg.Server.Port,
+		WorkerPoolSize: appCfg.Server.WorkerPoolSize,
+		ProxyEnabled:   appCfg.Proxy.Enabled,
+		Routes:         internalRoutes,
+		StaticEnabled:  appCfg.Static.Enabled,
+		StaticPrefix:   appCfg.Static.Prefix,
+		StaticDir:      appCfg.Static.Dir,
+	}
+	server.RegisterInternalAPIRoutes(r, internalCfg)
+
 	// Register API Routes
 	r.GET("/health", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")

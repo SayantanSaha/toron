@@ -112,50 +112,51 @@ function renderHealthGrid(container) {
   `).join('');
 }
 
-async function probeSingleNode(svc) {
-  const badge = document.getElementById(`badge-status-${svc.id}`);
-  const latencySpan = document.getElementById(`latency-${svc.id}`);
-  if (!badge || !latencySpan) return;
-
-  badge.textContent = 'PROBING...';
-  badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 animate-pulse';
-
-  const startTime = performance.now();
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 3000);
+async function probeAllNodes() {
+  UPSTREAM_SERVICES.forEach(svc => {
+    const badge = document.getElementById(`badge-status-${svc.id}`);
+    if (badge) {
+      badge.textContent = 'PROBING...';
+      badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 animate-pulse';
+    }
+  });
 
   try {
-    const res = await fetch(`http://localhost:${svc.port}/`, {
-      method: 'GET',
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-    const elapsed = (performance.now() - startTime).toFixed(1);
-    latencySpan.textContent = `${elapsed}ms`;
+    const res = await fetch('/internal/api/upstreams/health');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
 
-    if (res.status === 200) {
-      badge.textContent = 'CLOSED';
-      badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
-    } else if (res.status >= 500) {
-      badge.textContent = `OPEN (${res.status} ERR)`;
-      badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse';
-    } else {
-      badge.textContent = `STATUS ${res.status}`;
-      badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30';
+    if (data.upstreams && Array.isArray(data.upstreams)) {
+      data.upstreams.forEach(svc => {
+        const badge = document.getElementById(`badge-status-${svc.id}`);
+        const latencySpan = document.getElementById(`latency-${svc.id}`);
+        if (!badge || !latencySpan) return;
+
+        latencySpan.textContent = `${svc.latency_ms.toFixed(1)}ms`;
+
+        if (svc.status === 'CLOSED') {
+          badge.textContent = 'CLOSED';
+          badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20';
+        } else if (svc.status.includes('OPEN')) {
+          badge.textContent = svc.status;
+          badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40 animate-pulse';
+        } else {
+          badge.textContent = svc.status;
+          badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium bg-rose-500/20 text-rose-400 border border-rose-500/30';
+        }
+      });
     }
   } catch (err) {
-    clearTimeout(timeoutId);
-    const elapsed = (performance.now() - startTime).toFixed(1);
-    latencySpan.textContent = `${elapsed}ms`;
-    badge.textContent = 'UNREACHABLE';
-    badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium bg-rose-500/20 text-rose-400 border border-rose-500/30';
+    UPSTREAM_SERVICES.forEach(svc => {
+      const badge = document.getElementById(`badge-status-${svc.id}`);
+      const latencySpan = document.getElementById(`latency-${svc.id}`);
+      if (badge) {
+        badge.textContent = 'UNREACHABLE';
+        badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium bg-rose-500/20 text-rose-400 border border-rose-500/30';
+      }
+      if (latencySpan) latencySpan.textContent = '-- ms';
+    });
   }
-}
-
-function probeAllNodes() {
-  UPSTREAM_SERVICES.forEach(svc => {
-    probeSingleNode(svc);
-  });
 }
 
 // --- 3. LIVE API TESTER ---
@@ -205,60 +206,63 @@ function initTester() {
         headers[parts[0].trim()] = parts.slice(1).join(':').trim();
       }
 
-      resStatus.textContent = 'FETCHING...';
+      resStatus.textContent = 'EXECUTING (INTERNAL)...';
       resStatus.className = 'text-xs px-2.5 py-0.5 rounded font-mono font-bold bg-amber-500/20 text-amber-300 animate-pulse';
-      resHeaders.textContent = 'Waiting for response headers...';
-      resBody.textContent = 'Executing request...';
-
-      const startTime = performance.now();
+      resHeaders.textContent = 'Waiting for internal response headers...';
+      resBody.textContent = 'Routing through Toron proxy engine...';
 
       try {
-        const response = await fetch(targetUrl, {
-          method: method,
-          headers: headers
+        const response = await fetch('/internal/api/proxy-test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            path: targetUrl,
+            method: method,
+            headers: headers
+          })
         });
 
-        const elapsed = (performance.now() - startTime).toFixed(1);
-        resLatency.textContent = `${elapsed} ms`;
+        if (!response.ok) {
+          throw new Error(`Internal API returned HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+
+        resLatency.textContent = `${data.latency_ms.toFixed(1)} ms`;
 
         // Format Headers
-        let headerText = `HTTP/1.1 ${response.status} ${response.statusText}\n`;
-        response.headers.forEach((val, key) => {
-          headerText += `${key}: ${val}\n`;
-        });
+        let headerText = `HTTP/1.1 ${data.status_code} ${data.status_text}\n`;
+        if (data.headers) {
+          Object.entries(data.headers).forEach(([key, val]) => {
+            headerText += `${key}: ${val}\n`;
+          });
+        }
         resHeaders.textContent = headerText;
 
         // Status Badge
-        if (response.ok) {
-          resStatus.textContent = `${response.status} ${response.statusText || 'OK'}`;
+        if (data.status_code >= 200 && data.status_code < 400) {
+          resStatus.textContent = `${data.status_code} ${data.status_text || 'OK'}`;
           resStatus.className = 'text-xs px-2.5 py-0.5 rounded font-mono font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30';
         } else {
-          resStatus.textContent = `${response.status} ${response.statusText || 'Error'}`;
+          resStatus.textContent = `${data.status_code} ${data.status_text || 'Error'}`;
           resStatus.className = 'text-xs px-2.5 py-0.5 rounded font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30';
         }
 
         // Body Parsing
-        const contentType = response.headers.get('content-type') || '';
-        const bodyText = await response.text();
-
-        if (contentType.includes('application/json')) {
-          try {
-            const parsed = JSON.parse(bodyText);
-            resBody.textContent = JSON.stringify(parsed, null, 2);
-          } catch (e) {
-            resBody.textContent = bodyText;
-          }
-        } else {
+        const bodyText = data.body || '';
+        try {
+          const parsed = JSON.parse(bodyText);
+          resBody.textContent = JSON.stringify(parsed, null, 2);
+        } catch (e) {
           resBody.textContent = bodyText.length > 500 ? bodyText.substring(0, 500) + '\n... (truncated)' : bodyText;
         }
 
       } catch (err) {
-        const elapsed = (performance.now() - startTime).toFixed(1);
-        resLatency.textContent = `${elapsed} ms`;
+        resLatency.textContent = '0 ms';
         resStatus.textContent = 'FETCH FAILED';
         resStatus.className = 'text-xs px-2.5 py-0.5 rounded font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30';
-        resHeaders.textContent = 'Error: Connection failed or request blocked.';
-        resBody.textContent = `Error details: ${err.message}\nMake sure Toron server is running on http://localhost:8080.`;
+        resHeaders.textContent = 'Error: Connection to /internal/api/proxy-test failed.';
+        resBody.textContent = `Error details: ${err.message}`;
       }
     });
   }
@@ -276,10 +280,11 @@ function initPolling() {
     }
 
     try {
-      const res = await fetch('/health');
+      const res = await fetch('/internal/api/status');
       if (res.ok) {
+        const data = await res.json();
         const headerUptime = document.getElementById('header-uptime');
-        if (headerUptime) headerUptime.textContent = '100% (Healthy)';
+        if (headerUptime) headerUptime.textContent = `100% (${data.uptime})`;
       }
     } catch (e) {
       const headerUptime = document.getElementById('header-uptime');

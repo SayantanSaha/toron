@@ -1,5 +1,18 @@
 # Release Notes
 
+## 2026-08-12 - Prototype 9 Release (Internal Management API Endpoints)
+
+### Added
+
+- **Internal Management API Namespace**: Added `/internal/api/` control plane endpoints (`status`, `routes`, `upstreams/health`, `proxy-test`) in `pkg/server/internal_api.go` (`TASK-017`, `REQ-017`).
+- **Server-Side Upstream Probing**: Backend routines perform concurrent HTTP health checks against upstreams, returning node health states to the dashboard without requiring browser-to-upstream target calls.
+- **Internal Proxy Test Dispatcher**: `POST /internal/api/proxy-test` accepts path/method/header payloads, executes proxy routes server-side, and returns status codes, latency, headers, and body payloads.
+- **Frontend Integration**: Updated `public/app.js` to query `/internal/api/` endpoints exclusively.
+
+### Related Tasks
+
+- `TASK-017`: Implement /internal/api/ Management Endpoints and Update Frontend Client
+
 ## 2026-08-12 - Prototype 8 Release (Mobile-First Control Center & Dashboard)
 
 ### Added

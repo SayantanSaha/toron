@@ -53,6 +53,13 @@ Built-in endpoint reference for Toron.
 }
 ```
 
+## 3. Internal Management API Endpoints
+
+- **`/internal/api/status`** (`GET`): Returns server runtime stats, port, and worker pool size.
+- **`/internal/api/routes`** (`GET`): Returns active proxy route configurations, headers, and load balancing target nodes.
+- **`/internal/api/upstreams/health`** (`GET`): Executes backend HTTP health probes against all upstream targets (`9001-9010`) and returns node statuses (`CLOSED`, `OPEN`, `UNREACHABLE`).
+- **`/internal/api/proxy-test`** (`POST`): Accepts JSON request body (`path`, `method`, `headers`), dispatches internal test request, and returns execution metrics (`status_code`, `latency_ms`, `headers`, `body`).
+
 ## Related Pages
 
 - [Getting Started](../getting-started.md)

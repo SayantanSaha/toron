@@ -21,8 +21,10 @@ import (
 type Algorithm string
 
 const (
-	AlgorithmRoundRobin Algorithm = "round_robin"
-	AlgorithmRandom     Algorithm = "random"
+	AlgorithmRoundRobin   Algorithm = "round_robin"
+	AlgorithmRandom       Algorithm = "random"
+	AlgorithmStickyCookie Algorithm = "sticky_cookie"
+	AlgorithmIPHash       Algorithm = "ip_hash"
 )
 
 var (
@@ -91,6 +93,11 @@ func (b *RoundRobinBalancer) Stop() {
 
 // NewLoadBalancer constructs a LoadBalancer for given targets and algorithm.
 func NewLoadBalancer(algo Algorithm, targets []*UpstreamTarget) (LoadBalancer, error) {
+	return NewLoadBalancerWithOptions(algo, targets, "")
+}
+
+// NewLoadBalancerWithOptions constructs a LoadBalancer supporting sticky session options.
+func NewLoadBalancerWithOptions(algo Algorithm, targets []*UpstreamTarget, cookieName string) (LoadBalancer, error) {
 	if len(targets) == 0 {
 		return nil, ErrNoTargetsAvailable
 	}
@@ -99,6 +106,10 @@ func NewLoadBalancer(algo Algorithm, targets []*UpstreamTarget) (LoadBalancer, e
 	switch normAlgo {
 	case "", AlgorithmRoundRobin:
 		return NewRoundRobinBalancer(targets)
+	case AlgorithmStickyCookie:
+		return NewStickyCookieBalancer(targets, cookieName)
+	case AlgorithmIPHash:
+		return NewIPHashBalancer(targets)
 	default:
 		return nil, fmt.Errorf("proxy: unsupported load balancing algorithm %q", algo)
 	}
@@ -126,6 +137,7 @@ type ProxyOptions struct {
 	MaxFailures         int
 	CooldownPeriod      time.Duration
 	RateLimit           string
+	StickyCookieName    string
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.
@@ -168,7 +180,7 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		upstreamTargets = append(upstreamTargets, targetNode)
 	}
 
-	lb, err := NewLoadBalancer(opts.Algorithm, upstreamTargets)
+	lb, err := NewLoadBalancerWithOptions(opts.Algorithm, upstreamTargets, opts.StickyCookieName)
 	if err != nil {
 		return nil, err
 	}
@@ -287,6 +299,12 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		for _, val := range values {
 			res.Header.Add(key, val)
 		}
+	}
+
+	// Inject sticky session cookie if sticky_cookie load balancer is active
+	if stickyBalancer, ok := p.Balancer.(*StickyCookieBalancer); ok {
+		cookieVal := TargetHash(targetNode.URL.String())
+		res.Header.Set("Set-Cookie", fmt.Sprintf("%s=%s; Path=/; HttpOnly", stickyBalancer.CookieName(), cookieVal))
 	}
 
 	// Copy upstream body

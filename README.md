@@ -13,7 +13,7 @@
 * **Layer 4 TCP & UDP Transport Proxying**: Raw socket stream forwarding (`type: "tcp"`) and connectionless datagram proxying (`type: "udp"`) with port listener binding and load balancing.
 * **Dual-File YAML Configuration**: Decoupled infrastructure settings ([`config.yaml`](./config.yaml)) and routing rules ([`routes.yaml`](./routes.yaml)).
 * **Unified Routing Architecture**: Routing rules accept `type: "static"` or `type: "upstream"`, sharing identical domain host matching, header-conditional dispatching, and subpath prefix routing capabilities.
-* **Upstream Load Balancing & Health Checks**: Multi-target round-robin and random load balancing, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).
+* **Upstream Load Balancing & Sticky Sessions**: Multi-target load balancing (`round_robin`, `random`, `sticky_cookie`, `ip_hash`), cookie-based session affinity, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).
 * **Token Bucket Rate Limiting Middleware**: Route-level DDoS and abuse protection (`rate_limit: "100/min"`, `"10/sec"`) per client IP or `X-API-Key` header returning `429 Too Many Requests` and `Retry-After` headers.
 * **Web Control Center & Management API**: Mobile-first Web Dashboard UI served on `/internal/dashboard/` powered by internal management API endpoints (`/internal/api/status`, `/internal/api/routes`, `/internal/api/upstreams/health`, `/internal/api/proxy-test`).
 * **Security & Path Traversal Guards**: Strict header (8 KB) and body (4 MB) size limits, socket read/write timeouts, path traversal sanitization, and panic recovery middleware.
@@ -153,7 +153,8 @@ routes:
 * `headers`: Key/value map of expected request HTTP headers (e.g., `X-Version: "v2"`).
 * `dir`: Local filesystem path for `static` routes (e.g., `./public`).
 * `targets` / `target`: Target URL string or list of URLs for `upstream` reverse proxy routes.
-* `algorithm`: Load balancing algorithm (`"round_robin"` or `"random"`).
+* `algorithm`: Load balancing algorithm (`"round_robin"`, `"random"`, `"sticky_cookie"`, or `"ip_hash"`).
+* `sticky_cookie_name`: Optional custom cookie name for `"sticky_cookie"` session affinity (default: `"TORON_STICKY"`).
 * `rate_limit`: Route rate limit threshold string (e.g. `"100/min"`, `"10/sec"`, `"1000/hour"`) enforcing Token Bucket client rate limits.
 * `health_check_path`: Path for upstream active health probing (e.g., `/health`).
 

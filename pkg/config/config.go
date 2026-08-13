@@ -86,6 +86,7 @@ type ProxyRouteConfig struct {
 	ConsecutiveFailures int               `yaml:"consecutive_failures" json:"consecutive_failures"`
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
 	RateLimit           string            `yaml:"rate_limit" json:"rate_limit"`
+	StickyCookieName    string            `yaml:"sticky_cookie_name" json:"sticky_cookie_name"`
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").

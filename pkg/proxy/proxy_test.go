@@ -237,3 +237,99 @@ func TestWebSocketProxyTunnel(t *testing.T) {
 	}
 	res.UpgradedConn.Close()
 }
+
+func TestLoadBalancer_StickyCookie(t *testing.T) {
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("server-1"))
+	}))
+	defer server1.Close()
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("server-2"))
+	}))
+	defer server2.Close()
+
+	opts := proxy.ProxyOptions{
+		Targets:          []string{server1.URL, server2.URL},
+		Algorithm:        proxy.AlgorithmStickyCookie,
+		StickyCookieName: "TORON_STICKY",
+	}
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	// Request 1: Initial request (no cookie) -> receives Set-Cookie header
+	req1, _ := httpparser.NewRequest("GET", "/app", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	px.ServeHTTP(req1, res1)
+
+	if res1.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", res1.StatusCode)
+	}
+
+	setCookieHeader := res1.Header.Get("Set-Cookie")
+	if !strings.Contains(setCookieHeader, "TORON_STICKY=") {
+		t.Fatalf("expected Set-Cookie header containing TORON_STICKY=, got %q", setCookieHeader)
+	}
+
+	// Extract cookie value
+	kv := strings.SplitN(setCookieHeader, ";", 2)[0]
+
+	// Request 2 & 3: Send sticky cookie -> expect routing to identical server instance
+	firstBody := res1.Body.String()
+	for i := 0; i < 3; i++ {
+		reqSticky, _ := httpparser.NewRequest("GET", "/app", "HTTP/1.1")
+		reqSticky.Header.Set("Cookie", kv)
+		resSticky := httpparser.NewResponse()
+		px.ServeHTTP(reqSticky, resSticky)
+
+		if resSticky.Body.String() != firstBody {
+			t.Errorf("request %d: expected sticky response %q, got %q", i+1, firstBody, resSticky.Body.String())
+		}
+	}
+}
+
+func TestLoadBalancer_IPHash(t *testing.T) {
+	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("server-1"))
+	}))
+	defer server1.Close()
+
+	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("server-2"))
+	}))
+	defer server2.Close()
+
+	opts := proxy.ProxyOptions{
+		Targets:   []string{server1.URL, server2.URL},
+		Algorithm: proxy.AlgorithmIPHash,
+	}
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create ip_hash proxy: %v", err)
+	}
+
+	req1, _ := httpparser.NewRequest("GET", "/app", "HTTP/1.1")
+	req1.Header.Set("X-Forwarded-For", "192.168.1.50")
+	res1 := httpparser.NewResponse()
+	px.ServeHTTP(req1, res1)
+
+	initialBody := res1.Body.String()
+
+	// Repeated requests from same IP should route to same target
+	for i := 0; i < 3; i++ {
+		req, _ := httpparser.NewRequest("GET", "/app", "HTTP/1.1")
+		req.Header.Set("X-Forwarded-For", "192.168.1.50")
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.Body.String() != initialBody {
+			t.Errorf("expected ip_hash to pin to %q, got %q", initialBody, res.Body.String())
+		}
+	}
+}

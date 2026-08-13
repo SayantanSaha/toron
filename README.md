@@ -7,7 +7,7 @@
 ## 🌟 Key Features
 
 * **Event Reactor Engine**: High-performance, non-blocking TCP event loop with a configurable worker pool for concurrent request dispatching.
-* **HTTP/1.1 & HTTP/2 Concurrency**: Cleartext `h2c` and stream multiplexing with connection preface auto-detection (`PRI * HTTP/2.0...`).
+* **HTTP/1.1, HTTP/2 & HTTP/3 Support**: Non-blocking HTTP/1.1, HTTP/2 cleartext `h2c` / stream multiplexing, and HTTP/3 QUIC (UDP) engine with automatic `Alt-Svc` protocol advertising headers.
 * **HTTPS TLS Encryption & ALPN**: TLS 1.2/1.3 support, ALPN negotiation (`h2`, `http/1.1`), and zero-config self-signed ECDSA dev certificate generator (`auto_dev_cert`).
 * **WebSocket Protocol Upgrade & Tunneling**: Full support for HTTP/1.1 (RFC 6455 101 Switching Protocols) and HTTP/2 Extended CONNECT protocol (RFC 8441 `:protocol = websocket`) with bi-directional stream tunneling for real-time web services.
 * **Layer 4 TCP & UDP Transport Proxying**: Raw socket stream forwarding (`type: "tcp"`) and connectionless datagram proxying (`type: "udp"`) with port listener binding and load balancing.
@@ -66,6 +66,10 @@ server:
     max_concurrent_streams: 250
     max_frame_size: 16384
     allow_h2c: true           # Allow HTTP/2 Cleartext (h2c) prior-knowledge connections
+  http3:
+    enabled: true             # Enable HTTP/3 QUIC (UDP) protocol engine
+    port: 8443                # HTTP/3 QUIC UDP port
+    alt_svc_header: true      # Automatically advertise Alt-Svc: h3=":8443" response headers
   tls:
     enabled: false            # Set true to enable HTTPS TLS listener
     cert_file: ""             # Path to TLS X.509 certificate file

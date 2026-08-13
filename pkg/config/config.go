@@ -31,6 +31,13 @@ type TLSConfig struct {
 	AutoDevCert bool   `yaml:"auto_dev_cert" json:"auto_dev_cert"`
 }
 
+// HTTP3Config captures HTTP/3 protocol settings over QUIC.
+type HTTP3Config struct {
+	Enabled      bool `yaml:"enabled" json:"enabled"`
+	Port         int  `yaml:"port" json:"port"`
+	AltSvcHeader bool `yaml:"alt_svc_header" json:"alt_svc_header"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
 	Host           string        `yaml:"host" json:"host"`
@@ -42,6 +49,7 @@ type ServerConfig struct {
 	MaxHeaderBytes int           `yaml:"max_header_bytes" json:"max_header_bytes"`
 	MaxBodyBytes   int64         `yaml:"max_body_bytes" json:"max_body_bytes"`
 	HTTP2          HTTP2Config   `yaml:"http2" json:"http2"`
+	HTTP3          HTTP3Config   `yaml:"http3" json:"http3"`
 	TLS            TLSConfig     `yaml:"tls" json:"tls"`
 }
 
@@ -208,6 +216,11 @@ func DefaultAppConfig() *AppConfig {
 				MaxFrameSize:         16384,
 				AllowH2C:             true,
 			},
+			HTTP3: HTTP3Config{
+				Enabled:      true,
+				Port:         8443,
+				AltSvcHeader: true,
+			},
 		},
 		Static: StaticConfig{
 			Enabled: false,
@@ -247,6 +260,9 @@ func (c *AppConfig) ToServerConfig() server.Config {
 		TLSCertFile:               c.Server.TLS.CertFile,
 		TLSKeyFile:                c.Server.TLS.KeyFile,
 		TLSAutoDevCert:            c.Server.TLS.AutoDevCert,
+		HTTP3Enabled:              c.Server.HTTP3.Enabled,
+		HTTP3Port:                 c.Server.HTTP3.Port,
+		HTTP3AltSvcHeader:         c.Server.HTTP3.AltSvcHeader,
 	}
 }
 

@@ -14,6 +14,8 @@ import (
 
 	"golang.org/x/net/http2"
 
+	"github.com/quic-go/quic-go/http3"
+
 	"toron/pkg/httpparser"
 	"toron/pkg/reactor"
 	"toron/pkg/router"
@@ -216,6 +218,16 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 
 		s.router.ServeHTTP(req, res)
 
+		if s.config.HTTP3Enabled && s.config.HTTP3AltSvcHeader {
+			if res.Header.Get("Alt-Svc") == "" {
+				h3Port := s.config.HTTP3Port
+				if h3Port <= 0 {
+					h3Port = 8443
+				}
+				res.Header.Set("Alt-Svc", fmt.Sprintf(`h3=":%d"; ma=2592000`, h3Port))
+			}
+		}
+
 		if res.UpgradedConn != nil || res.StatusCode == http.StatusSwitchingProtocols {
 			_ = conn.SetDeadline(time.Time{})
 			if res.UpgradedConn != nil {
@@ -317,4 +329,31 @@ func (s *Server) http2AdapterHandler() http.Handler {
 			_, _ = w.Write(res.Body.Bytes())
 		}
 	})
+}
+
+// ListenAndServeH3 starts an HTTP/3 server over QUIC (UDP).
+func (s *Server) ListenAndServeH3(certFile, keyFile string) error {
+	if certFile != "" {
+		s.config.TLSCertFile = certFile
+	}
+	if keyFile != "" {
+		s.config.TLSKeyFile = keyFile
+	}
+	tlsConfig, err := CreateTLSConfig(s.config)
+	if err != nil {
+		return err
+	}
+
+	port := s.config.HTTP3Port
+	if port <= 0 {
+		port = 8443
+	}
+
+	h3Server := &http3.Server{
+		Addr:      fmt.Sprintf(":%d", port),
+		Handler:   s.http2AdapterHandler(),
+		TLSConfig: tlsConfig,
+	}
+
+	return h3Server.ListenAndServe()
 }

@@ -18,6 +18,9 @@ type Config struct {
 	TLSCertFile              string
 	TLSKeyFile               string
 	TLSAutoDevCert           bool
+	HTTP3Enabled             bool
+	HTTP3Port                int
+	HTTP3AltSvcHeader        bool
 }
 
 // DefaultConfig provides recommended production defaults.
@@ -35,5 +38,8 @@ func DefaultConfig() Config {
 		HTTP2MaxFrameSize:        16384,
 		TLSEnabled:               false,
 		TLSAutoDevCert:           true,
+		HTTP3Enabled:             true,
+		HTTP3Port:                8443,
+		HTTP3AltSvcHeader:        true,
 	}
 }

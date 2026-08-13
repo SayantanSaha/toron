@@ -106,3 +106,48 @@ func TestServer_SecurityLimitsHeaderExceeded(t *testing.T) {
 		t.Errorf("expected status 431 header too large, got:\n%s", string(respBuf))
 	}
 }
+
+func TestServer_AltSvcHeader(t *testing.T) {
+	r := router.New()
+	r.GET("/test", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("ok")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.HTTP3Enabled = true
+	cfg.HTTP3Port = 8443
+	cfg.HTTP3AltSvcHeader = true
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /test HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	respBuf, err := io.ReadAll(conn)
+	if err != nil && err != io.EOF {
+		t.Fatalf("failed to read response: %v", err)
+	}
+
+	if !bytes.Contains(bytes.ToLower(respBuf), []byte(`alt-svc: h3=":8443"`)) {
+		t.Errorf("expected Alt-Svc header advertising h3=:8443, got:\n%s", string(respBuf))
+	}
+}

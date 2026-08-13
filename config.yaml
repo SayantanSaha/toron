@@ -14,6 +14,10 @@ server:
     max_concurrent_streams: 250
     max_frame_size: 16384
     allow_h2c: true
+  http3:
+    enabled: true             # Enable HTTP/3 QUIC (UDP) protocol engine
+    port: 8443                # HTTP/3 QUIC UDP listener port
+    alt_svc_header: true      # Automatically advertise Alt-Svc: h3=":8443" headers
   tls:
     enabled: false
     cert_file: ""

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -148,4 +149,66 @@ func (r *MetricsRegistry) ExportPrometheus() string {
 	}
 
 	return buf.String()
+}
+
+// GetSummaryJSON aggregates collected telemetry metrics into a map for JSON serialization.
+func (r *MetricsRegistry) GetSummaryJSON() map[string]interface{} {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	var totalReqs uint64
+	byStatus := make(map[string]uint64)
+	byMethod := make(map[string]uint64)
+	byRoute := make(map[string]uint64)
+
+	for key, count := range r.requestCounters {
+		totalReqs += count
+		method := extractTagValue(key, "method")
+		status := extractTagValue(key, "status")
+		route := extractTagValue(key, "route")
+
+		if method != "" {
+			byMethod[method] += count
+		}
+		if status != "" {
+			byStatus[status] += count
+		}
+		if route != "" {
+			byRoute[route] += count
+		}
+	}
+
+	cbTrips := make(map[string]uint64)
+	var totalTrips uint64
+	for target, count := range r.circuitBreakerTrips {
+		cbTrips[target] = count
+		totalTrips += count
+	}
+
+	return map[string]interface{}{
+		"total_requests":         totalReqs,
+		"active_quic_streams":    atomic.LoadInt64(&r.activeQUICStreams),
+		"active_tcp_connections": atomic.LoadInt64(&r.activeTCPConnections),
+		"circuit_breaker_trips": map[string]interface{}{
+			"total":   totalTrips,
+			"targets": cbTrips,
+		},
+		"requests_by_status": byStatus,
+		"requests_by_method": byMethod,
+		"requests_by_route":  byRoute,
+	}
+}
+
+func extractTagValue(s, tag string) string {
+	prefix := tag + "=\""
+	idx := strings.Index(s, prefix)
+	if idx == -1 {
+		return ""
+	}
+	start := idx + len(prefix)
+	end := strings.Index(s[start:], "\"")
+	if end == -1 {
+		return ""
+	}
+	return s[start : start+end]
 }

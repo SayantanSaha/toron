@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/metrics"
 	"toron/pkg/router"
 )
 
@@ -82,8 +83,16 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			"engine":           "event-driven",
 			"port":             cfg.Port,
 			"worker_pool_size": cfg.WorkerPoolSize,
+			"metrics":          metrics.DefaultRegistry.GetSummaryJSON(),
 		}
 		data, _ := json.Marshal(payload)
+		_, _ = res.Write(data)
+	})
+
+	// 1b. GET /internal/api/metrics
+	r.GET("/internal/api/metrics", func(req *httpparser.Request, res *httpparser.Response) {
+		res.Header.Set("Content-Type", "application/json")
+		data, _ := json.Marshal(metrics.DefaultRegistry.GetSummaryJSON())
 		_, _ = res.Write(data)
 	})
 

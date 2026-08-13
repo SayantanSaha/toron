@@ -151,3 +151,36 @@ func TestServer_AltSvcHeader(t *testing.T) {
 		t.Errorf("expected Alt-Svc header advertising h3=:8443, got:\n%s", string(respBuf))
 	}
 }
+
+func TestInternalAPI_StatusAndMetrics(t *testing.T) {
+	r := router.New()
+	server.RegisterInternalAPIRoutes(r, server.InternalAPIConfig{
+		Port:           8080,
+		WorkerPoolSize: 128,
+		ProxyEnabled:   true,
+	})
+
+	// Test GET /internal/api/status
+	reqStatus, _ := httpparser.NewRequest("GET", "/internal/api/status", "HTTP/1.1")
+	resStatus := httpparser.NewResponse()
+	r.ServeHTTP(reqStatus, resStatus)
+
+	if resStatus.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for /internal/api/status, got %d", resStatus.StatusCode)
+	}
+	if !bytes.Contains(resStatus.Body.Bytes(), []byte(`"metrics":`)) {
+		t.Errorf("expected metrics object in /internal/api/status JSON, got:\n%s", resStatus.Body.String())
+	}
+
+	// Test GET /internal/api/metrics
+	reqMetrics, _ := httpparser.NewRequest("GET", "/internal/api/metrics", "HTTP/1.1")
+	resMetrics := httpparser.NewResponse()
+	r.ServeHTTP(reqMetrics, resMetrics)
+
+	if resMetrics.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for /internal/api/metrics, got %d", resMetrics.StatusCode)
+	}
+	if !bytes.Contains(resMetrics.Body.Bytes(), []byte(`"total_requests":`)) {
+		t.Errorf("expected total_requests key in /internal/api/metrics JSON, got:\n%s", resMetrics.Body.String())
+	}
+}

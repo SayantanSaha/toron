@@ -10,6 +10,7 @@
 * **HTTP/1.1 & HTTP/2 Concurrency**: Cleartext `h2c` and stream multiplexing with connection preface auto-detection (`PRI * HTTP/2.0...`).
 * **HTTPS TLS Encryption & ALPN**: TLS 1.2/1.3 support, ALPN negotiation (`h2`, `http/1.1`), and zero-config self-signed ECDSA dev certificate generator (`auto_dev_cert`).
 * **WebSocket Protocol Upgrade & Tunneling**: Full support for HTTP/1.1 (RFC 6455 101 Switching Protocols) and HTTP/2 Extended CONNECT protocol (RFC 8441 `:protocol = websocket`) with bi-directional stream tunneling for real-time web services.
+* **Layer 4 TCP & UDP Transport Proxying**: Raw socket stream forwarding (`type: "tcp"`) and connectionless datagram proxying (`type: "udp"`) with port listener binding and load balancing.
 * **Dual-File YAML Configuration**: Decoupled infrastructure settings ([`config.yaml`](./config.yaml)) and routing rules ([`routes.yaml`](./routes.yaml)).
 * **Unified Routing Architecture**: Routing rules accept `type: "static"` or `type: "upstream"`, sharing identical domain host matching, header-conditional dispatching, and subpath prefix routing capabilities.
 * **Upstream Load Balancing & Health Checks**: Multi-target round-robin and random load balancing, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).
@@ -139,7 +140,8 @@ routes:
 ```
 
 #### Route Options Reference
-* `type`: Route handler mode (`"static"` or `"upstream"`).
+* `type`: Route handler mode (`"static"`, `"upstream"`, `"tcp"`, or `"udp"`).
+* `listen_port` / `port`: Dedicated port for Layer 4 `"tcp"` and `"udp"` proxy socket listeners.
 * `host` / `domain`: Optional domain matching (e.g., `api.toron.local` or `docs.toron.local`).
 * `prefix`: Path prefix matcher (e.g., `/api`, `/internal/dashboard`).
 * `headers`: Key/value map of expected request HTTP headers (e.g., `X-Version: "v2"`).

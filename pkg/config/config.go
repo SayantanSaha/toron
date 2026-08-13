@@ -67,6 +67,8 @@ type ProxyRouteConfig struct {
 	Headers             map[string]string `yaml:"headers" json:"headers"`
 	Dir                 string            `yaml:"dir" json:"dir"`
 	StaticDir           string            `yaml:"static_dir" json:"static_dir"`
+	ListenPort          int               `yaml:"listen_port" json:"listen_port"`
+	Port                int               `yaml:"port" json:"port"`
 	Target              string            `yaml:"target" json:"target"`
 	Targets             []string          `yaml:"targets" json:"targets"`
 	Algorithm           string            `yaml:"algorithm" json:"algorithm"`
@@ -76,9 +78,15 @@ type ProxyRouteConfig struct {
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
 }
 
-// GetType returns the normalized route target type ("static" or "upstream").
+// GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").
 func (p *ProxyRouteConfig) GetType() string {
 	t := strings.ToLower(strings.TrimSpace(p.Type))
+	if t == "tcp" {
+		return "tcp"
+	}
+	if t == "udp" {
+		return "udp"
+	}
 	if t == "static" {
 		return "static"
 	}
@@ -99,6 +107,27 @@ func (p *ProxyRouteConfig) IsStatic() bool {
 // IsUpstream returns true if the route acts as an upstream reverse proxy.
 func (p *ProxyRouteConfig) IsUpstream() bool {
 	return p.GetType() == "upstream"
+}
+
+// IsTCP returns true if the route is a Layer 4 TCP proxy.
+func (p *ProxyRouteConfig) IsTCP() bool {
+	return p.GetType() == "tcp"
+}
+
+// IsUDP returns true if the route is a Layer 4 UDP proxy.
+func (p *ProxyRouteConfig) IsUDP() bool {
+	return p.GetType() == "udp"
+}
+
+// GetListenPort returns the configured listener port for Layer 4 TCP/UDP routes.
+func (p *ProxyRouteConfig) GetListenPort() int {
+	if p.ListenPort > 0 {
+		return p.ListenPort
+	}
+	if p.Port > 0 {
+		return p.Port
+	}
+	return 0
 }
 
 // GetDir returns the configured local directory path for static routes.

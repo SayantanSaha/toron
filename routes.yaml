@@ -1,4 +1,4 @@
-# Toron Web Server Routing Configuration File (Static Sites & Upstream Reverse Proxies)
+# Toron Web Server Routing Configuration File (Static Sites, Upstream Reverse Proxies, Layer 4 TCP/UDP)
 
 routes:
   # 1. Static Site Route - Control Center & Dashboard UI
@@ -16,25 +16,26 @@ routes:
       - "http://localhost:9004"
       - "http://localhost:9006"
 
-  # 3. Header-Based Upstream Routing + Multi-Target Round-Robin Load Balancing
+  # 3. Header-Based Upstream Routing + Token Bucket Rate Limiting (X-Version: v2, 100 req/min)
   - type: "upstream"
     prefix: "/api"
     headers:
       X-Version: "v2"
     algorithm: "round_robin"
+    rate_limit: "100/min"
     targets:
       - "http://localhost:9001"
       - "http://localhost:9002"
       - "http://localhost:9003"
 
-  # 4. Header-Based Upstream Routing + Single Target
+  # 4. Header-Based Upstream Routing + Single Target (X-Version: v1)
   - type: "upstream"
     prefix: "/api"
     headers:
       X-Version: "v1"
     target: "http://localhost:9004"
 
-  # 5. Path Prefix Upstream Routing + Multi-Target Round-Robin Load Balancing
+  # 5. Load-Balanced Upstream Cluster + Active Health Checks & Circuit Breaker
   - type: "upstream"
     prefix: "/services/cluster"
     algorithm: "round_robin"
@@ -42,16 +43,39 @@ routes:
       - "http://localhost:9005"
       - "http://localhost:9006"
       - "http://localhost:9007"
+    health_check_path: "/health"
+    health_check_interval: 5s
+    consecutive_failures: 3
+    cooldown_period: 15s
 
-  # 6. Path Prefix Upstream Routing + Single Target
+  # 6. Upstream Routing + Cookie-Based Sticky Session Affinity
+  - type: "upstream"
+    prefix: "/services/analytics"
+    algorithm: "sticky_cookie"
+    sticky_cookie_name: "TORON_STICKY"
+    targets:
+      - "http://localhost:9009"
+      - "http://localhost:9010"
+
+  # 7. Upstream Routing + Client IP Hash Affinity
+  - type: "upstream"
+    prefix: "/services/sockets"
+    algorithm: "ip_hash"
+    targets:
+      - "http://localhost:9001"
+      - "http://localhost:9002"
+
+  # 8. Single Target Upstream Route
   - type: "upstream"
     prefix: "/services/auth"
     target: "http://localhost:9008"
 
-  # 7. Path Prefix Upstream Routing + Multi-Target Load Balancing
-  - type: "upstream"
-    prefix: "/services/analytics"
-    algorithm: "round_robin"
-    targets:
-      - "http://localhost:9009"
-      - "http://localhost:9010"
+  # 9. Layer 4 TCP Socket Stream Proxy Route (Listen Port 8090 -> TCP Backend 9090)
+  - type: "tcp"
+    listen_port: 8090
+    target: "127.0.0.1:9090"
+
+  # 10. Layer 4 UDP Datagram Proxy Route (Listen Port 8091 -> UDP Backend 9091)
+  - type: "udp"
+    listen_port: 8091
+    target: "127.0.0.1:9091"

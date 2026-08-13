@@ -189,6 +189,16 @@ func ValidateConfig(cfg *AppConfig) error {
 
 	if cfg.Proxy.Enabled {
 		for i, route := range cfg.Proxy.Routes {
+			if route.IsTCP() || route.IsUDP() {
+				if route.GetListenPort() <= 0 || route.GetListenPort() > 65535 {
+					return fmt.Errorf("Layer 4 %s route #%d missing or invalid listen_port (must be 1-65535)", route.GetType(), i+1)
+				}
+				if len(route.GetTargets()) == 0 {
+					return fmt.Errorf("Layer 4 %s route #%d has no target address configured", route.GetType(), i+1)
+				}
+				continue
+			}
+
 			prefix := strings.TrimSpace(route.Prefix)
 			if prefix == "" {
 				return fmt.Errorf("route #%d missing required prefix parameter", i+1)
@@ -203,9 +213,9 @@ func ValidateConfig(cfg *AppConfig) error {
 					return fmt.Errorf("static route %q dir %q does not exist or is not accessible: %w", prefix, dir, err)
 				}
 			} else if route.IsUpstream() {
-				algo := route.GetAlgorithm()
-				if algo != "round_robin" && algo != "random" {
-					return fmt.Errorf("proxy route %q specifies unsupported load balancing algorithm %q (supported: round_robin, random)", prefix, algo)
+				algo := strings.ToLower(route.GetAlgorithm())
+				if algo != "round_robin" && algo != "random" && algo != "sticky_cookie" && algo != "ip_hash" {
+					return fmt.Errorf("proxy route %q specifies unsupported load balancing algorithm %q (supported: round_robin, random, sticky_cookie, ip_hash)", prefix, algo)
 				}
 
 				targets := route.GetTargets()

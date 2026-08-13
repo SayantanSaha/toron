@@ -164,8 +164,8 @@ func TestConfig_DefaultConfigYamlLoading(t *testing.T) {
 	if !cfg.Proxy.Enabled {
 		t.Error("expected proxy.enabled to be true in routes.yaml")
 	}
-	if len(cfg.Proxy.Routes) != 7 {
-		t.Errorf("expected 7 routes in routes.yaml, got %d", len(cfg.Proxy.Routes))
+	if len(cfg.Proxy.Routes) != 10 {
+		t.Errorf("expected 10 routes in routes.yaml, got %d", len(cfg.Proxy.Routes))
 	}
 	if !cfg.Proxy.Routes[0].IsStatic() {
 		t.Errorf("expected first route to be a static site route")

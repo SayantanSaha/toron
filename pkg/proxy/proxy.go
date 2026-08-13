@@ -125,6 +125,7 @@ type ProxyOptions struct {
 	HealthCheckInterval time.Duration
 	MaxFailures         int
 	CooldownPeriod      time.Duration
+	RateLimit           string
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.

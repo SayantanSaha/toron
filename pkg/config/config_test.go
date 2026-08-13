@@ -200,3 +200,20 @@ func TestConfig_ValidateConfig(t *testing.T) {
 		t.Error("expected error for invalid target URL, got nil")
 	}
 }
+
+func TestConfig_ParseRateLimit(t *testing.T) {
+	rateSec, burstSec, err := config.ParseRateLimit("10/sec")
+	if err != nil || rateSec != 10.0 || burstSec != 10 {
+		t.Errorf("expected 10/sec -> (10.0, 10), got (%v, %d, %v)", rateSec, burstSec, err)
+	}
+
+	rateMin, burstMin, err := config.ParseRateLimit("120/min")
+	if err != nil || rateMin != 2.0 || burstMin != 120 {
+		t.Errorf("expected 120/min -> (2.0, 120), got (%v, %d, %v)", rateMin, burstMin, err)
+	}
+
+	_, _, errInvalid := config.ParseRateLimit("abc/invalid")
+	if errInvalid == nil {
+		t.Errorf("expected error for invalid rate limit format, got nil")
+	}
+}

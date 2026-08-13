@@ -178,6 +178,14 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 		return fmt.Errorf("router: invalid route type %q (must be 'static' or 'upstream')", targetType)
 	}
 
+	if strings.TrimSpace(opts.RateLimit) != "" {
+		rlMw, err := NewRateLimitMiddleware(opts.RateLimit)
+		if err != nil {
+			return fmt.Errorf("router: invalid rate_limit %q for prefix %q: %w", opts.RateLimit, prefix, err)
+		}
+		handler = rlMw(handler)
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{

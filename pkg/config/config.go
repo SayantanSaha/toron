@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -84,6 +85,7 @@ type ProxyRouteConfig struct {
 	HealthCheckInterval time.Duration     `yaml:"health_check_interval" json:"health_check_interval"`
 	ConsecutiveFailures int               `yaml:"consecutive_failures" json:"consecutive_failures"`
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
+	RateLimit           string            `yaml:"rate_limit" json:"rate_limit"`
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").
@@ -279,4 +281,35 @@ func itoa(i int) []byte {
 		n /= 10
 	}
 	return b[bp+1:]
+}
+
+// ParseRateLimit parses a rate limit string into refill rate per second and max burst capacity.
+func ParseRateLimit(s string) (ratePerSec float64, burst int, err error) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	if s == "" {
+		return 0, 0, nil
+	}
+
+	parts := strings.Split(s, "/")
+	countStr := strings.TrimSpace(parts[0])
+	var count int
+	if _, parseErr := fmt.Sscanf(countStr, "%d", &count); parseErr != nil || count <= 0 {
+		return 0, 0, fmt.Errorf("config: invalid rate limit count %q in %q", countStr, s)
+	}
+
+	unit := "sec"
+	if len(parts) > 1 {
+		unit = strings.TrimSpace(parts[1])
+	}
+
+	switch unit {
+	case "s", "sec", "second", "seconds":
+		return float64(count), count, nil
+	case "m", "min", "minute", "minutes":
+		return float64(count) / 60.0, count, nil
+	case "h", "hr", "hour", "hours":
+		return float64(count) / 3600.0, count, nil
+	default:
+		return 0, 0, fmt.Errorf("config: unknown rate limit unit %q in %q (expected sec, min, or hour)", unit, s)
+	}
 }

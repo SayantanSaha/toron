@@ -293,3 +293,27 @@ func TestRouter_RoutePrefixStaticWithOptions(t *testing.T) {
 		t.Errorf("expected 404 Not Found for non-matching host, got %d", resWrongHost.StatusCode)
 	}
 }
+
+func TestRouter_Reset(t *testing.T) {
+	r := router.New()
+	r.GET("/api/v1", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("v1")
+	})
+
+	req1, _ := httpparser.NewRequest("GET", "/api/v1", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK before reset, got %d", res1.StatusCode)
+	}
+
+	r.Reset()
+
+	req2, _ := httpparser.NewRequest("GET", "/api/v1", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 Not Found after reset, got %d", res2.StatusCode)
+	}
+}

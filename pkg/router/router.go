@@ -80,6 +80,14 @@ func (r *Router) Use(mw ...MiddlewareFunc) {
 	r.middlewares = append(r.middlewares, mw...)
 }
 
+// Reset clears all registered exact and prefix routes while preserving global middlewares and 404/405 handlers.
+func (r *Router) Reset() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.routes = make(map[string]map[string][]routeEntry)
+	r.prefixRoutes = nil
+}
+
 // Handle registers a handler for a specific HTTP method and exact path.
 func (r *Router) Handle(method, path string, handler HandlerFunc) {
 	r.HandleHostHeader(method, "", path, nil, handler)

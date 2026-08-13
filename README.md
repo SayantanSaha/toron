@@ -16,6 +16,7 @@
 * **Upstream Load Balancing & Health Checks**: Multi-target round-robin and random load balancing, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).
 * **Web Control Center & Management API**: Mobile-first Web Dashboard UI served on `/internal/dashboard/` powered by internal management API endpoints (`/internal/api/status`, `/internal/api/routes`, `/internal/api/upstreams/health`, `/internal/api/proxy-test`).
 * **Security & Path Traversal Guards**: Strict header (8 KB) and body (4 MB) size limits, socket read/write timeouts, path traversal sanitization, and panic recovery middleware.
+* **Zero-Downtime Route Hot Reloading**: Background `fsnotify` file worker (`RouteWatcher`) monitors `routes.yaml` file edits, automatically validating and atomically reloading routing tables without dropping active TCP/UDP/QUIC sockets.
 * **Configuration Dry-Run Validator**: Native CLI flag (`-t` / `-test-config`) to validate YAML syntax without starting the server listener.
 * **Testing & Microservices Suite**: Includes 10 dummy upstream microservices ([`dummy-services/`](./dummy-services/)) and a standardized REST client file ([`test_endpoint.http`](./test_endpoint.http)).
 

@@ -114,6 +114,36 @@ func (m *Manager) LoadFromFiles(configPath, routesPath string) (*AppConfig, erro
 	return cfg, nil
 }
 
+// LoadRoutesFromFile reads and parses a standalone routes.yaml file.
+func LoadRoutesFromFile(routesPath string) ([]ProxyRouteConfig, error) {
+	routesData, err := os.ReadFile(routesPath)
+	if err != nil {
+		return nil, fmt.Errorf("config: failed to read routes file %s: %w", routesPath, err)
+	}
+
+	var routesWrapper struct {
+		Enabled *bool              `yaml:"enabled" json:"enabled"`
+		Routes  []ProxyRouteConfig `yaml:"routes" json:"routes"`
+		Proxy   ProxyConfig        `yaml:"proxy" json:"proxy"`
+	}
+	if err := yaml.Unmarshal(routesData, &routesWrapper); err != nil {
+		return nil, fmt.Errorf("config: failed to parse routes file %s: %w", routesPath, err)
+	}
+
+	routes := routesWrapper.Routes
+	if len(routes) == 0 && len(routesWrapper.Proxy.Routes) > 0 {
+		routes = routesWrapper.Proxy.Routes
+	}
+
+	for i, r := range routes {
+		if strings.TrimSpace(r.Prefix) == "" {
+			return nil, fmt.Errorf("config: route #%d missing required prefix parameter", i+1)
+		}
+	}
+
+	return routes, nil
+}
+
 // LoadFromFile loads, decodes, and merges configuration from a single file path or auto-discovered routes file.
 func (m *Manager) LoadFromFile(filePath string) (*AppConfig, error) {
 	return m.LoadFromFiles(filePath, "")

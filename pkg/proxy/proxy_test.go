@@ -333,3 +333,27 @@ func TestLoadBalancer_IPHash(t *testing.T) {
 		}
 	}
 }
+
+func TestProxy_TraceparentPropagation(t *testing.T) {
+	var capturedTraceparent string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedTraceparent = r.Header.Get("traceparent")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstreamServer.Close()
+
+	px, err := proxy.NewReverseProxy(upstreamServer.URL, 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/api", "HTTP/1.1")
+	req.Header.Set("traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTP(req, res)
+
+	if !strings.HasPrefix(capturedTraceparent, "00-4bf92f3577b34da6a3ce929d0e0e4736-") {
+		t.Errorf("expected traceparent preserving trace ID 4bf92f3577b34da6a3ce929d0e0e4736, got %q", capturedTraceparent)
+	}
+}

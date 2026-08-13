@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/metrics"
 )
 
 // Algorithm defines the load balancing strategy name.
@@ -275,6 +276,10 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	if clientIP := req.Header.Get("X-Real-IP"); clientIP != "" {
 		outReq.Header.Set("X-Forwarded-For", clientIP)
 	}
+
+	// Propagate / Inject W3C traceparent header
+	incomingTrace := req.Header.Get("traceparent")
+	outReq.Header.Set("traceparent", metrics.EnsureW3CTraceparent(incomingTrace))
 
 	// Dispatch request to upstream
 	outResp, err := p.Client.Do(outReq)

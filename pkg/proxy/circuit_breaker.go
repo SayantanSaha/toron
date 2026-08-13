@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"toron/pkg/metrics"
 )
 
 // CircuitState represents the health and availability state of an upstream target.
@@ -98,6 +100,9 @@ func (t *UpstreamTarget) RecordFailure() {
 
 	fails := atomic.AddInt32(&t.ConsecutiveFailures, 1)
 	if fails >= t.MaxFailures {
+		if t.State != StateOpen {
+			metrics.DefaultRegistry.RecordCircuitBreakerTrip(t.URL.String())
+		}
 		t.State = StateOpen
 		t.LastStateChange = time.Now()
 	}

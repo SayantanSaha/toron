@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/metrics"
 	"toron/pkg/proxy"
 )
 
@@ -69,6 +70,12 @@ func New() *Router {
 		res.Header.Set("Content-Type", "application/json")
 		_, _ = res.WriteString(`{"error":"405 Method Not Allowed"}`)
 	}
+
+	r.GET("/metrics", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+		_, _ = res.WriteString(metrics.DefaultRegistry.ExportPrometheus())
+	})
 
 	return r
 }
@@ -394,7 +401,9 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 		finalChain = middlewares[i](finalChain)
 	}
 
+	start := time.Now()
 	finalChain(req, res)
+	metrics.DefaultRegistry.RecordRequest(req.Method, fmt.Sprintf("%d", res.StatusCode), req.Path, time.Since(start).Seconds())
 }
 
 func extractHost(req *httpparser.Request) string {

@@ -38,12 +38,12 @@ type ACMEConfig struct {
 
 // ACMEManager manages ACME account keys, HTTP-01/TLS-ALPN-01 challenge responders, and certificate caching.
 type ACMEManager struct {
-	cfg              ACMEConfig
-	accountKey       *ecdsa.PrivateKey
-	mu               sync.RWMutex
-	http01Tokens     map[string]string         // token -> keyAuth
-	tlsALPN01Certs   map[string]*tls.Certificate // domain -> challenge cert
-	certCache        map[string]*tls.Certificate // domain -> cached cert
+	cfg            ACMEConfig
+	accountKey     *ecdsa.PrivateKey
+	mu             sync.RWMutex
+	http01Tokens   map[string]string           // token -> keyAuth
+	tlsALPN01Certs map[string]*tls.Certificate // domain -> challenge cert
+	certCache      map[string]*tls.Certificate // domain -> cached cert
 }
 
 // NewACMEManager initializes the ACME manager, loading or generating account keys and disk caches.

@@ -49,20 +49,30 @@ type ACMEConfig struct {
 	ChallengeType string   `yaml:"challenge_type" json:"challenge_type"`
 }
 
+// CompressionConfig captures transparent response compression settings.
+type CompressionConfig struct {
+	Enabled   bool     `yaml:"enabled" json:"enabled"`
+	MinLength int      `yaml:"min_length" json:"min_length"`
+	Level     int      `yaml:"level" json:"level"`
+	Encodings []string `yaml:"encodings" json:"encodings"`
+	Types     []string `yaml:"types" json:"types"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
-	Host           string        `yaml:"host" json:"host"`
-	Port           int           `yaml:"port" json:"port"`
-	WorkerPoolSize int           `yaml:"worker_pool_size" json:"worker_pool_size"`
-	ReadTimeout    time.Duration `yaml:"read_timeout" json:"read_timeout"`
-	WriteTimeout   time.Duration `yaml:"write_timeout" json:"write_timeout"`
-	IdleTimeout    time.Duration `yaml:"idle_timeout" json:"idle_timeout"`
-	MaxHeaderBytes int           `yaml:"max_header_bytes" json:"max_header_bytes"`
-	MaxBodyBytes   int64         `yaml:"max_body_bytes" json:"max_body_bytes"`
-	HTTP2          HTTP2Config   `yaml:"http2" json:"http2"`
-	HTTP3          HTTP3Config   `yaml:"http3" json:"http3"`
-	TLS            TLSConfig     `yaml:"tls" json:"tls"`
-	ACME           ACMEConfig    `yaml:"acme" json:"acme"`
+	Host           string            `yaml:"host" json:"host"`
+	Port           int               `yaml:"port" json:"port"`
+	WorkerPoolSize int               `yaml:"worker_pool_size" json:"worker_pool_size"`
+	ReadTimeout    time.Duration     `yaml:"read_timeout" json:"read_timeout"`
+	WriteTimeout   time.Duration     `yaml:"write_timeout" json:"write_timeout"`
+	IdleTimeout    time.Duration     `yaml:"idle_timeout" json:"idle_timeout"`
+	MaxHeaderBytes int               `yaml:"max_header_bytes" json:"max_header_bytes"`
+	MaxBodyBytes   int64             `yaml:"max_body_bytes" json:"max_body_bytes"`
+	HTTP2          HTTP2Config       `yaml:"http2" json:"http2"`
+	HTTP3          HTTP3Config       `yaml:"http3" json:"http3"`
+	TLS            TLSConfig         `yaml:"tls" json:"tls"`
+	ACME           ACMEConfig        `yaml:"acme" json:"acme"`
+	Compression    CompressionConfig `yaml:"compression" json:"compression"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -234,6 +244,20 @@ func DefaultAppConfig() *AppConfig {
 				Enabled:      true,
 				Port:         8443,
 				AltSvcHeader: true,
+			},
+			Compression: CompressionConfig{
+				Enabled:   true,
+				MinLength: 512,
+				Level:     -1,
+				Encodings: []string{"gzip", "deflate"},
+				Types: []string{
+					"text/",
+					"application/json",
+					"application/javascript",
+					"application/xml",
+					"application/xhtml+xml",
+					"image/svg+xml",
+				},
 			},
 		},
 		Static: StaticConfig{

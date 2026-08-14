@@ -15,6 +15,7 @@
 * **Unified Routing Architecture**: Routing rules accept `type: "static"` or `type: "upstream"`, sharing identical domain host matching, header-conditional dispatching, and subpath prefix routing capabilities.
 * **Upstream Load Balancing & Sticky Sessions**: Multi-target load balancing (`round_robin`, `random`, `sticky_cookie`, `ip_hash`), cookie-based session affinity, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).
 * **Token Bucket Rate Limiting Middleware**: Route-level DDoS and abuse protection (`rate_limit: "100/min"`, `"10/sec"`) per client IP or `X-API-Key` header returning `429 Too Many Requests` and `Retry-After` headers.
+* **Streaming Response Compression (Gzip & Deflate)**: Transparent HTTP response compression middleware utilizing standard library `compress/gzip` and `compress/flate` with `sync.Pool` allocation reuse for high throughput and reduced bandwidth.
 * **Prometheus Metrics & W3C Tracing**: Standardized `/metrics` endpoint exporting Prometheus counters (`toron_http_requests_total`), latency histograms (`toron_http_request_duration_seconds`), QUIC stream gauges, and circuit breaker trip counters; automatic OpenTelemetry W3C `traceparent` context header propagation across upstream target microservices.
 * **Web Control Center & JSON Metrics API**: Mobile-first Web Dashboard UI served on `/internal/dashboard/` powered by internal management JSON API endpoints (`/internal/api/status`, `/internal/api/metrics`, `/internal/api/routes`, `/internal/api/upstreams/health`, `/internal/api/proxy-test`).
 * **Security & Path Traversal Guards**: Strict header (8 KB) and body (4 MB) size limits, socket read/write timeouts, path traversal sanitization, and panic recovery middleware.
@@ -85,6 +86,13 @@ server:
       - "api.toron.local"
     cache_dir: "./certs"
     challenge_type: "http-01" # Challenge validation strategy: "http-01" or "tls-alpn-01"
+  compression:
+    enabled: true             # Enable automatic gzip/deflate response compression
+    min_length: 512           # Minimum response byte threshold
+    level: -1                 # Compression level (-1 = default)
+    encodings:
+      - "gzip"
+      - "deflate"
 
 logging:
   level: "info"               # Logging level: debug, info, warn, error

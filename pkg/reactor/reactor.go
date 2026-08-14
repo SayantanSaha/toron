@@ -29,12 +29,12 @@ func (f HandlerFunc) HandleConn(ctx context.Context, conn net.Conn) error {
 
 // Config defines configuration parameters for the Event Reactor.
 type Config struct {
-	Addr            string
-	WorkerPoolSize  int
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	IdleTimeout     time.Duration
-	MaxBufferBytes  int
+	Addr           string
+	WorkerPoolSize int
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	IdleTimeout    time.Duration
+	MaxBufferBytes int
 }
 
 // DefaultConfig returns reasonable default configuration values.

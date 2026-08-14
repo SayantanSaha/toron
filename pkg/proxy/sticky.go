@@ -42,7 +42,7 @@ func (b *IPHashBalancer) Next(req *httpparser.Request) (*UpstreamTarget, error) 
 	return healthy[idx], nil
 }
 
-func (b *IPHashBalancer) Algorithm() Algorithm         { return AlgorithmIPHash }
+func (b *IPHashBalancer) Algorithm() Algorithm       { return AlgorithmIPHash }
 func (b *IPHashBalancer) Targets() []*UpstreamTarget { return b.targets }
 func (b *IPHashBalancer) Stop() {
 	for _, t := range b.targets {
@@ -126,7 +126,7 @@ func (b *StickyCookieBalancer) Next(req *httpparser.Request) (*UpstreamTarget, e
 	return nil, ErrNoHealthyUpstreamAvailable
 }
 
-func (b *StickyCookieBalancer) Algorithm() Algorithm         { return AlgorithmStickyCookie }
+func (b *StickyCookieBalancer) Algorithm() Algorithm       { return AlgorithmStickyCookie }
 func (b *StickyCookieBalancer) Targets() []*UpstreamTarget { return b.targets }
 func (b *StickyCookieBalancer) Stop() {
 	for _, t := range b.targets {

@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-14 - Prototype 24 Release (Streaming Response Compression: Gzip & Deflate)
+
+### Added
+- **Transparent Response Compression**: Added `CompressionMiddleware` in `pkg/router/compression.go` using Go standard library `compress/gzip` and `compress/flate` (`TASK-034`, `REQ-034`).
+- **sync.Pool Writer Allocation Reuse**: Implemented object pooling for gzip and flate writers to achieve zero-allocation buffer reuse during high-concurrency requests.
+- **Config & Protocol Safety**: Added `server.compression` settings to `config.yaml` (`enabled`, `min_length`, `level`, `encodings`, `types`) and safeguarded WebSocket 101 upgrades and binary media types against compression.
+
+### Related Tasks
+- `TASK-034`: Implement Transparent HTTP Response Compression Middleware (Gzip & Deflate)
+
 ## 2026-08-14 - Prototype 23 Release (ACME Zero-Touch Production SSL & TLS-ALPN-01)
 
 ### Added

@@ -77,6 +77,15 @@ func main() {
 	// Attach Middlewares
 	r.Use(router.LoggerMiddleware())
 	r.Use(router.RecoveryMiddleware())
+	if appCfg.Server.Compression.Enabled {
+		r.Use(router.NewCompressionMiddleware(router.CompressionConfig{
+			Enabled:   appCfg.Server.Compression.Enabled,
+			MinLength: appCfg.Server.Compression.MinLength,
+			Level:     appCfg.Server.Compression.Level,
+			Encodings: appCfg.Server.Compression.Encodings,
+			Types:     appCfg.Server.Compression.Types,
+		}))
+	}
 
 	// Register Internal Management API Routes (/internal/api/)
 	internalRoutes := make([]server.RouteInfo, 0)

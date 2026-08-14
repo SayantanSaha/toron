@@ -41,6 +41,15 @@ server:
     cache_dir: "./certs"
     challenge_type: "http-01" # Challenge validation strategy: "http-01" or "tls-alpn-01"
 
+  # Transparent Response Compression Settings (Gzip & Deflate)
+  compression:
+    enabled: true             # Enable automatic gzip/deflate response compression
+    min_length: 512           # Minimum response byte threshold for compression
+    level: -1                 # Compression level (-1 = default, 1 = best speed, 9 = best compression)
+    encodings:
+      - "gzip"
+      - "deflate"
+
 # Logging and Telemetry Output Settings
 logging:
   level: "info"

@@ -62,12 +62,12 @@ func NewUpstreamTarget(targetURL *url.URL, healthPath string, maxFailures int, c
 	}
 
 	return &UpstreamTarget{
-		URL:                 targetURL,
-		HealthCheckPath:     healthPath,
-		MaxFailures:         int32(maxFailures),
-		State:               StateClosed,
-		LastStateChange:     time.Now(),
-		CooldownPeriod:      cooldown,
+		URL:             targetURL,
+		HealthCheckPath: healthPath,
+		MaxFailures:     int32(maxFailures),
+		State:           StateClosed,
+		LastStateChange: time.Now(),
+		CooldownPeriod:  cooldown,
 	}
 }
 

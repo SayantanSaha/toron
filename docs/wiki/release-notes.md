@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-14 - Prototype 30 Release (Configurable CORS Policies & Enterprise Security Headers)
+
+### Added
+- **CORS Middleware**: Implemented `CORSMiddleware` in `pkg/router/cors.go` with fast-path `OPTIONS` preflight `204 No Content` handling, origin wildcard/subdomain matching, credential policies, and exposed headers (`TASK-040`, `REQ-040`).
+- **Enterprise Security Headers Middleware**: Added `SecurityHeadersMiddleware` in `pkg/router/security_headers.go` injecting `Strict-Transport-Security` (HSTS), `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Content-Security-Policy`, and `Permissions-Policy`.
+- **Global & Route Configuration**: Supported configuring CORS and Security Headers in `config.yaml` (`server.cors`, `server.security_headers`) and per-route in `routes.yaml`.
+
+### Related Tasks
+- `TASK-040`: Implement Configurable CORS Policies and Enterprise Security Headers Middleware
+
 ## 2026-08-14 - Prototype 29 Release (Per-Host Dynamic SNI Certificate Mapping & mTLS Client Auth)
 
 ### Added

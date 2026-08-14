@@ -114,6 +114,28 @@ func main() {
 			Excluded: appCfg.Server.Auth.Excluded,
 		}))
 	}
+	if appCfg.Server.CORS.Enabled {
+		r.Use(router.NewCORSMiddleware(router.CORSConfig{
+			Enabled:          appCfg.Server.CORS.Enabled,
+			AllowOrigins:     appCfg.Server.CORS.AllowOrigins,
+			AllowMethods:     appCfg.Server.CORS.AllowMethods,
+			AllowHeaders:     appCfg.Server.CORS.AllowHeaders,
+			ExposeHeaders:    appCfg.Server.CORS.ExposeHeaders,
+			AllowCredentials: appCfg.Server.CORS.AllowCredentials,
+			MaxAge:           appCfg.Server.CORS.MaxAge,
+		}))
+	}
+	if appCfg.Server.SecurityHeaders.Enabled {
+		r.Use(router.NewSecurityHeadersMiddleware(router.SecurityHeadersConfig{
+			Enabled:            appCfg.Server.SecurityHeaders.Enabled,
+			HSTS:               appCfg.Server.SecurityHeaders.HSTS,
+			ContentTypeOptions: appCfg.Server.SecurityHeaders.ContentTypeOptions,
+			FrameOptions:       appCfg.Server.SecurityHeaders.FrameOptions,
+			ReferrerPolicy:     appCfg.Server.SecurityHeaders.ReferrerPolicy,
+			CSP:                appCfg.Server.SecurityHeaders.CSP,
+			PermissionsPolicy:  appCfg.Server.SecurityHeaders.PermissionsPolicy,
+		}))
+	}
 
 	// Register Internal Management API Routes (/internal/api/)
 	internalRoutes := make([]server.RouteInfo, 0)

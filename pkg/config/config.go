@@ -104,23 +104,47 @@ type AuthConfig struct {
 	Excluded []string        `yaml:"excluded" json:"excluded"`
 }
 
+// CORSConfig captures Cross-Origin Resource Sharing settings.
+type CORSConfig struct {
+	Enabled          bool     `yaml:"enabled" json:"enabled"`
+	AllowOrigins     []string `yaml:"allow_origins" json:"allow_origins"`
+	AllowMethods     []string `yaml:"allow_methods" json:"allow_methods"`
+	AllowHeaders     []string `yaml:"allow_headers" json:"allow_headers"`
+	ExposeHeaders    []string `yaml:"expose_headers" json:"expose_headers"`
+	AllowCredentials bool     `yaml:"allow_credentials" json:"allow_credentials"`
+	MaxAge           int      `yaml:"max_age" json:"max_age"`
+}
+
+// SecurityHeadersConfig captures HTTP browser security headers settings.
+type SecurityHeadersConfig struct {
+	Enabled            bool   `yaml:"enabled" json:"enabled"`
+	HSTS               string `yaml:"hsts" json:"hsts"`
+	ContentTypeOptions string `yaml:"content_type_options" json:"content_type_options"`
+	FrameOptions       string `yaml:"frame_options" json:"frame_options"`
+	ReferrerPolicy     string `yaml:"referrer_policy" json:"referrer_policy"`
+	CSP                string `yaml:"csp" json:"csp"`
+	PermissionsPolicy  string `yaml:"permissions_policy" json:"permissions_policy"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
-	Host           string            `yaml:"host" json:"host"`
-	Port           int               `yaml:"port" json:"port"`
-	WorkerPoolSize int               `yaml:"worker_pool_size" json:"worker_pool_size"`
-	ReadTimeout    time.Duration     `yaml:"read_timeout" json:"read_timeout"`
-	WriteTimeout   time.Duration     `yaml:"write_timeout" json:"write_timeout"`
-	IdleTimeout    time.Duration     `yaml:"idle_timeout" json:"idle_timeout"`
-	MaxHeaderBytes int               `yaml:"max_header_bytes" json:"max_header_bytes"`
-	MaxBodyBytes   int64             `yaml:"max_body_bytes" json:"max_body_bytes"`
-	HTTP2          HTTP2Config       `yaml:"http2" json:"http2"`
-	HTTP3          HTTP3Config       `yaml:"http3" json:"http3"`
-	TLS            TLSConfig         `yaml:"tls" json:"tls"`
-	ACME           ACMEConfig        `yaml:"acme" json:"acme"`
-	Compression    CompressionConfig `yaml:"compression" json:"compression"`
-	Cache          CacheConfig       `yaml:"cache" json:"cache"`
-	Auth           AuthConfig        `yaml:"auth" json:"auth"`
+	Host            string                `yaml:"host" json:"host"`
+	Port            int                   `yaml:"port" json:"port"`
+	WorkerPoolSize  int                   `yaml:"worker_pool_size" json:"worker_pool_size"`
+	ReadTimeout     time.Duration         `yaml:"read_timeout" json:"read_timeout"`
+	WriteTimeout    time.Duration         `yaml:"write_timeout" json:"write_timeout"`
+	IdleTimeout     time.Duration         `yaml:"idle_timeout" json:"idle_timeout"`
+	MaxHeaderBytes  int                   `yaml:"max_header_bytes" json:"max_header_bytes"`
+	MaxBodyBytes    int64                 `yaml:"max_body_bytes" json:"max_body_bytes"`
+	HTTP2           HTTP2Config           `yaml:"http2" json:"http2"`
+	HTTP3           HTTP3Config           `yaml:"http3" json:"http3"`
+	TLS             TLSConfig             `yaml:"tls" json:"tls"`
+	ACME            ACMEConfig            `yaml:"acme" json:"acme"`
+	Compression     CompressionConfig     `yaml:"compression" json:"compression"`
+	Cache           CacheConfig           `yaml:"cache" json:"cache"`
+	Auth            AuthConfig            `yaml:"auth" json:"auth"`
+	CORS            CORSConfig            `yaml:"cors" json:"cors"`
+	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -158,8 +182,10 @@ type ProxyRouteConfig struct {
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
 	RateLimit           string            `yaml:"rate_limit" json:"rate_limit"`
 	StickyCookieName    string            `yaml:"sticky_cookie_name" json:"sticky_cookie_name"`
-	Auth                AuthConfig        `yaml:"auth" json:"auth"`
-	TLS                 RouteTLSConfig    `yaml:"tls" json:"tls"`
+	Auth                AuthConfig            `yaml:"auth" json:"auth"`
+	TLS                 RouteTLSConfig        `yaml:"tls" json:"tls"`
+	CORS                CORSConfig            `yaml:"cors" json:"cors"`
+	SecurityHeaders     SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").
@@ -316,6 +342,21 @@ func DefaultAppConfig() *AppConfig {
 				DefaultTTL:     60 * time.Second,
 				MaxEntries:     1000,
 				MaxPayloadSize: 1024 * 1024, // 1 MB
+			},
+			CORS: CORSConfig{
+				Enabled:          false,
+				AllowOrigins:     []string{"*"},
+				AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"},
+				AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Requested-With"},
+				AllowCredentials: false,
+				MaxAge:           86400,
+			},
+			SecurityHeaders: SecurityHeadersConfig{
+				Enabled:            true,
+				HSTS:               "max-age=31536000; includeSubDomains",
+				ContentTypeOptions: "nosniff",
+				FrameOptions:       "DENY",
+				ReferrerPolicy:     "strict-origin-when-cross-origin",
 			},
 		},
 		Static: StaticConfig{

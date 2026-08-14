@@ -58,6 +58,14 @@ type CompressionConfig struct {
 	Types     []string `yaml:"types" json:"types"`
 }
 
+// CacheConfig captures in-memory HTTP response caching settings.
+type CacheConfig struct {
+	Enabled        bool          `yaml:"enabled" json:"enabled"`
+	DefaultTTL     time.Duration `yaml:"default_ttl" json:"default_ttl"`
+	MaxEntries     int           `yaml:"max_entries" json:"max_entries"`
+	MaxPayloadSize int           `yaml:"max_payload_size" json:"max_payload_size"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
 	Host           string            `yaml:"host" json:"host"`
@@ -73,6 +81,7 @@ type ServerConfig struct {
 	TLS            TLSConfig         `yaml:"tls" json:"tls"`
 	ACME           ACMEConfig        `yaml:"acme" json:"acme"`
 	Compression    CompressionConfig `yaml:"compression" json:"compression"`
+	Cache          CacheConfig       `yaml:"cache" json:"cache"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -258,6 +267,12 @@ func DefaultAppConfig() *AppConfig {
 					"application/xhtml+xml",
 					"image/svg+xml",
 				},
+			},
+			Cache: CacheConfig{
+				Enabled:        true,
+				DefaultTTL:     60 * time.Second,
+				MaxEntries:     1000,
+				MaxPayloadSize: 1024 * 1024, // 1 MB
 			},
 		},
 		Static: StaticConfig{

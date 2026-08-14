@@ -16,6 +16,7 @@
 * **Upstream Load Balancing & Sticky Sessions**: Multi-target load balancing (`round_robin`, `random`, `sticky_cookie`, `ip_hash`), cookie-based session affinity, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).
 * **Token Bucket Rate Limiting Middleware**: Route-level DDoS and abuse protection (`rate_limit: "100/min"`, `"10/sec"`) per client IP or `X-API-Key` header returning `429 Too Many Requests` and `Retry-After` headers.
 * **Streaming Response Compression (Gzip & Deflate)**: Transparent HTTP response compression middleware utilizing standard library `compress/gzip` and `compress/flate` with `sync.Pool` allocation reuse for high throughput and reduced bandwidth.
+* **In-Memory HTTP Response Caching & RFC 7234 Cache-Control**: Thread-safe in-memory caching for idempotent GET and HEAD requests with TTL expiration, `no-store` / `no-cache` compliance, `Age` calculation, and `X-Cache: HIT/MISS` diagnostics.
 * **Prometheus Metrics & W3C Tracing**: Standardized `/metrics` endpoint exporting Prometheus counters (`toron_http_requests_total`), latency histograms (`toron_http_request_duration_seconds`), QUIC stream gauges, and circuit breaker trip counters; automatic OpenTelemetry W3C `traceparent` context header propagation across upstream target microservices.
 * **Web Control Center & JSON Metrics API**: Mobile-first Web Dashboard UI served on `/internal/dashboard/` powered by internal management JSON API endpoints (`/internal/api/status`, `/internal/api/metrics`, `/internal/api/routes`, `/internal/api/upstreams/health`, `/internal/api/proxy-test`).
 * **Security & Path Traversal Guards**: Strict header (8 KB) and body (4 MB) size limits, socket read/write timeouts, path traversal sanitization, and panic recovery middleware.
@@ -93,6 +94,11 @@ server:
     encodings:
       - "gzip"
       - "deflate"
+  cache:
+    enabled: true             # Enable in-memory RFC 7234 response caching for GET/HEAD
+    default_ttl: 60s          # Default cache expiration time if max-age is omitted
+    max_entries: 1000         # Maximum number of response entries stored in RAM
+    max_payload_size: 1048576 # 1 MB maximum response body size per cached entry
 
 logging:
   level: "info"               # Logging level: debug, info, warn, error

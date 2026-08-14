@@ -77,6 +77,14 @@ func main() {
 	// Attach Middlewares
 	r.Use(router.LoggerMiddleware())
 	r.Use(router.RecoveryMiddleware())
+	if appCfg.Server.Cache.Enabled {
+		r.Use(router.NewCacheMiddleware(router.CacheConfig{
+			Enabled:        appCfg.Server.Cache.Enabled,
+			DefaultTTL:     appCfg.Server.Cache.DefaultTTL,
+			MaxEntries:     appCfg.Server.Cache.MaxEntries,
+			MaxPayloadSize: appCfg.Server.Cache.MaxPayloadSize,
+		}))
+	}
 	if appCfg.Server.Compression.Enabled {
 		r.Use(router.NewCompressionMiddleware(router.CompressionConfig{
 			Enabled:   appCfg.Server.Compression.Enabled,

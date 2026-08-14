@@ -50,6 +50,13 @@ server:
       - "gzip"
       - "deflate"
 
+  # In-Memory HTTP Response Caching Settings
+  cache:
+    enabled: true             # Enable in-memory RFC 7234 response caching for GET/HEAD
+    default_ttl: 60s          # Default cache expiration time if Cache-Control max-age is omitted
+    max_entries: 1000         # Maximum number of response entries stored in memory
+    max_payload_size: 1048576 # 1 MB maximum response body size per cached entry
+
 # Logging and Telemetry Output Settings
 logging:
   level: "info"

@@ -1,5 +1,16 @@
 # Release Notes
 
+## 2026-08-14 - Prototype 25 Release (In-Memory HTTP Response Caching & Cache-Control)
+
+### Added
+- **In-Memory Response Caching**: Added `ResponseCache` and `NewCacheMiddleware` in `pkg/router/cache.go` providing thread-safe in-memory caching for idempotent GET and HEAD requests (`TASK-035`, `REQ-035`).
+- **RFC 7234 Cache-Control Engine**: Parsed `max-age`, `no-store`, `no-cache`, `private`, and `public` directives; supported client refresh bypasses (`Cache-Control: no-cache`).
+- **Diagnostics & Age Headers**: Injected `X-Cache: HIT` / `X-Cache: MISS` telemetry indicators and calculated `Age: <seconds>` headers.
+- **Memory Bounding & Eviction**: Added memory bounds via `max_entries` and `max_payload_size` in `config.yaml` (`server.cache`).
+
+### Related Tasks
+- `TASK-035`: Implement In-Memory Response Caching Engine, Cache-Control Parser, and Diagnostics Headers
+
 ## 2026-08-14 - Prototype 24 Release (Streaming Response Compression: Gzip & Deflate)
 
 ### Added

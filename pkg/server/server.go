@@ -107,6 +107,16 @@ func (s *Server) Serve(ln net.Listener) error {
 	return s.reactor.Serve(ln)
 }
 
+// SNIRegistry returns the server's SNIRegistry instance, if configured.
+func (s *Server) SNIRegistry() *SNIRegistry {
+	return s.config.SNIRegistry
+}
+
+// SetSNIRegistry configures or updates the server's SNIRegistry.
+func (s *Server) SetSNIRegistry(r *SNIRegistry) {
+	s.config.SNIRegistry = r
+}
+
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.reactor.Shutdown(ctx)

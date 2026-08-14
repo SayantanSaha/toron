@@ -18,6 +18,7 @@ type Config struct {
 	TLSCertFile               string
 	TLSKeyFile                string
 	TLSAutoDevCert            bool
+	SNIRegistry               *SNIRegistry
 	HTTP3Enabled              bool
 	HTTP3Port                 int
 	HTTP3AltSvcHeader         bool

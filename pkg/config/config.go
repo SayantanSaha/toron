@@ -39,6 +39,15 @@ type HTTP3Config struct {
 	AltSvcHeader bool `yaml:"alt_svc_header" json:"alt_svc_header"`
 }
 
+// RouteTLSConfig captures per-host SSL/TLS and mutual TLS (mTLS) configuration.
+type RouteTLSConfig struct {
+	CertFile   string `yaml:"cert_file" json:"cert_file"`
+	KeyFile    string `yaml:"key_file" json:"key_file"`
+	CAFile     string `yaml:"ca_file" json:"ca_file"`
+	ClientAuth string `yaml:"client_auth" json:"client_auth"`
+	MinVersion string `yaml:"min_version" json:"min_version"`
+}
+
 // ACMEConfig captures zero-touch production SSL certificate settings.
 type ACMEConfig struct {
 	Enabled       bool     `yaml:"enabled" json:"enabled"`
@@ -150,6 +159,7 @@ type ProxyRouteConfig struct {
 	RateLimit           string            `yaml:"rate_limit" json:"rate_limit"`
 	StickyCookieName    string            `yaml:"sticky_cookie_name" json:"sticky_cookie_name"`
 	Auth                AuthConfig        `yaml:"auth" json:"auth"`
+	TLS                 RouteTLSConfig    `yaml:"tls" json:"tls"`
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").

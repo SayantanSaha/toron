@@ -88,12 +88,24 @@ routes:
     consecutive_failures: 3
     cooldown_period: 15s
 
-  # 10. Layer 4 TCP Socket Stream Proxy Route (Listen Port 8090 -> TCP Backend 9090)
+  # 10. Per-Host Dedicated SSL/TLS & Mutual TLS (mTLS) Virtual Host Route
+  - type: "upstream"
+    host: "secure.internal.local"
+    prefix: "/"
+    target: "http://localhost:9001"
+    tls:
+      cert_file: "./certs/server.crt"
+      key_file: "./certs/server.key"
+      ca_file: "./certs/ca.crt"
+      client_auth: "require_and_verify" # "no_client_cert", "request_client_cert", "require_any_client_cert", "verify_client_cert_if_given", "require_and_verify"
+      min_version: "tls1.3"
+
+  # 11. Layer 4 TCP Socket Stream Proxy Route (Listen Port 8090 -> TCP Backend 9090)
   - type: "tcp"
     listen_port: 8090
     target: "127.0.0.1:9090"
 
-  # 11. Layer 4 UDP Datagram Proxy Route (Listen Port 8091 -> UDP Backend 9091)
+  # 12. Layer 4 UDP Datagram Proxy Route (Listen Port 8091 -> UDP Backend 9091)
   - type: "udp"
     listen_port: 8091
     target: "127.0.0.1:9091"

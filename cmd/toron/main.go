@@ -170,6 +170,27 @@ func main() {
 		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
 	})
 
+	// Initialize SNIRegistry for dynamic per-host TLS & mTLS dispatching
+	sniRegistry := server.NewSNIRegistry(nil)
+	if appCfg.Proxy.Enabled {
+		for _, pr := range appCfg.Proxy.Routes {
+			if pr.TLS.CertFile != "" && pr.GetHost() != "" {
+				if err := sniRegistry.RegisterRouteTLS(pr.GetHost(), server.RouteTLSConfig{
+					CertFile:   pr.TLS.CertFile,
+					KeyFile:    pr.TLS.KeyFile,
+					CAFile:     pr.TLS.CAFile,
+					ClientAuth: pr.TLS.ClientAuth,
+					MinVersion: pr.TLS.MinVersion,
+				}); err != nil {
+					log.Printf("[TORON] Warning: failed to register TLS profile for host %q: %v", pr.GetHost(), err)
+				} else {
+					log.Printf("[TORON] Registered per-host TLS profile for host %q (client_auth: %s, min_version: %s)", pr.GetHost(), pr.TLS.ClientAuth, pr.TLS.MinVersion)
+				}
+			}
+		}
+	}
+	srvCfg.SNIRegistry = sniRegistry
+
 	// Register Routing Rules (Static site routes & Upstream reverse proxy routes) if enabled
 	if appCfg.Proxy.Enabled {
 		for _, pr := range appCfg.Proxy.Routes {

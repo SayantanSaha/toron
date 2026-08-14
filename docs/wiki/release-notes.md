@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-14 - Prototype 29 Release (Per-Host Dynamic SNI Certificate Mapping & mTLS Client Auth)
+
+### Added
+- **Dynamic SNI Multi-Certificate Registry**: Added `SNIRegistry` in `pkg/server/sni.go` with `tls.Config.GetConfigForClient` hook, dynamically mapping hostnames to dedicated X.509 certificate pairs (`TASK-039`, `REQ-039`).
+- **Mutual TLS (mTLS) Client Verification**: Added per-host client certificate verification with configurable policies (`require_and_verify`, `verify_client_cert_if_given`, `request_client_cert`) and custom client CA pools (`ca_file`).
+- **Per-Host Minimum TLS Version**: Supported enforcing `tls.min_version` (`tls1.2`, `tls1.3`) per route in `routes.yaml`.
+
+### Related Tasks
+- `TASK-039`: Implement Per-Host SNI Dynamic Certificate Dispatching and mTLS Client Auth
+
 ## 2026-08-14 - Prototype 28 Release (Native gRPC Health Checking Protocol & HTTP/2 Trailers Gateway)
 
 ### Added

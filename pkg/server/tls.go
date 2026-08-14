@@ -79,6 +79,11 @@ func CreateTLSConfig(cfg Config) (*tls.Config, error) {
 		NextProtos:   []string{"h2", "http/1.1"},
 	}
 
+	if cfg.SNIRegistry != nil {
+		cfg.SNIRegistry.SetFallbackConfig(tlsConfig)
+		tlsConfig.GetConfigForClient = cfg.SNIRegistry.GetConfigForClient
+	}
+
 	return tlsConfig, nil
 }
 

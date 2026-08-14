@@ -77,12 +77,62 @@ server:
     enabled: false            # Set true to enable HTTPS TLS listener
     cert_file: ""             # Path to TLS X.509 certificate file
     key_file: ""              # Path to TLS private key file
-    auto_dev_cert: true       # Auto-generate self-signed cert if cert_file/key_file are empty
+  acme:
+    enabled: false            # Enable ACME zero-touch production SSL issuance (Let's Encrypt / ZeroSSL)
+    directory_url: "https://acme-v02.api.letsencrypt.org/directory"
+    email: "admin@toron.local"
+    domains:
+      - "api.toron.local"
+    cache_dir: "./certs"
+    challenge_type: "http-01" # Challenge validation strategy: "http-01" or "tls-alpn-01"
 
 logging:
   level: "info"               # Logging level: debug, info, warn, error
   format: "text"              # Logging format: text or json
 ```
+
+#### TLS & ACME Certificate Configuration Patterns
+
+Toron resolves TLS certificates using a strict priority fallback chain:
+1. **ACME Managed Certificate (`acme.enabled: true`)**: Automated Let's Encrypt / ZeroSSL production certificate.
+2. **Static Certificate Files (`tls.cert_file` & `tls.key_file`)**: Custom corporate certificate files.
+3. **Auto Dev Certificate (`tls.auto_dev_cert: true`)**: Local self-signed ECDSA certificate fallback for local development.
+
+* **Pattern A: Local Development (Self-Signed HTTPS)**
+  ```yaml
+  server:
+    tls:
+      enabled: true
+      auto_dev_cert: true
+    acme:
+      enabled: false
+  ```
+
+* **Pattern B: Production Zero-Touch Automated SSL (Let's Encrypt)**
+  ```yaml
+  server:
+    tls:
+      enabled: true
+    acme:
+      enabled: true
+      email: "admin@mycompany.com"
+      domains:
+        - "api.mycompany.com"
+      cache_dir: "./certs"
+      challenge_type: "http-01"
+  ```
+
+* **Pattern C: Custom Corporate SSL Certificates**
+  ```yaml
+  server:
+    tls:
+      enabled: true
+      cert_file: "/etc/ssl/certs/custom.crt"
+      key_file: "/etc/ssl/private/custom.key"
+      auto_dev_cert: false
+    acme:
+      enabled: false
+  ```
 
 ---
 

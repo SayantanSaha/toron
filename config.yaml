@@ -23,6 +23,14 @@ server:
     cert_file: ""
     key_file: ""
     auto_dev_cert: true
+  acme:
+    enabled: false            # Enable ACME zero-touch production SSL issuance (Let's Encrypt / ZeroSSL)
+    directory_url: "https://acme-v02.api.letsencrypt.org/directory"
+    email: "admin@toron.local"
+    domains:
+      - "api.toron.local"
+    cache_dir: "./certs"
+    challenge_type: "http-01"
 
 logging:
   level: "info"

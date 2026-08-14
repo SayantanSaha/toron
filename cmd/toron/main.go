@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -140,6 +142,45 @@ func main() {
 				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{}); err != nil {
 					log.Fatalf("[TORON] Invalid static route configuration for prefix %q: %v", pr.Prefix, err)
 				}
+			} else if pr.IsTCP() {
+				port := pr.GetListenPort()
+				targets := pr.GetTargets()
+				log.Printf("[TORON] Configuring Layer 4 TCP Stream Proxy: listen_port %d -> targets %v", port, targets)
+				tcpProxy, err := proxy.NewTCPProxy(targets, 5*time.Second)
+				if err != nil {
+					log.Printf("[TORON] Failed to create TCP proxy for port %d: %v", port, err)
+					continue
+				}
+				ln, err := net.Listen("tcp", fmt.Sprintf(":%d", port))
+				if err != nil {
+					log.Printf("[TORON] Failed to listen TCP on port %d: %v", port, err)
+					continue
+				}
+				go func(p *proxy.TCPProxy, l net.Listener) {
+					_ = p.Serve(l)
+				}(tcpProxy, ln)
+			} else if pr.IsUDP() {
+				port := pr.GetListenPort()
+				targets := pr.GetTargets()
+				log.Printf("[TORON] Configuring Layer 4 UDP Datagram Proxy: listen_port %d -> targets %v", port, targets)
+				udpProxy, err := proxy.NewUDPProxy(targets, 5*time.Second)
+				if err != nil {
+					log.Printf("[TORON] Failed to create UDP proxy for port %d: %v", port, err)
+					continue
+				}
+				addr, err := net.ResolveUDPAddr("udp", fmt.Sprintf(":%d", port))
+				if err != nil {
+					log.Printf("[TORON] Failed to resolve UDP addr for port %d: %v", port, err)
+					continue
+				}
+				conn, err := net.ListenUDP("udp", addr)
+				if err != nil {
+					log.Printf("[TORON] Failed to listen UDP on port %d: %v", port, err)
+					continue
+				}
+				go func(p *proxy.UDPProxy, c *net.UDPConn) {
+					_ = p.Serve(c)
+				}(udpProxy, conn)
 			} else {
 				targets := pr.GetTargets()
 				algo := pr.GetAlgorithm()
@@ -152,6 +193,8 @@ func main() {
 					HealthCheckInterval: pr.HealthCheckInterval,
 					MaxFailures:         pr.ConsecutiveFailures,
 					CooldownPeriod:      pr.CooldownPeriod,
+					RateLimit:           pr.RateLimit,
+					StickyCookieName:    pr.StickyCookieName,
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)

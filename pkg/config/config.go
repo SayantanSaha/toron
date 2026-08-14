@@ -39,6 +39,16 @@ type HTTP3Config struct {
 	AltSvcHeader bool `yaml:"alt_svc_header" json:"alt_svc_header"`
 }
 
+// ACMEConfig captures zero-touch production SSL certificate settings.
+type ACMEConfig struct {
+	Enabled       bool     `yaml:"enabled" json:"enabled"`
+	DirectoryURL  string   `yaml:"directory_url" json:"directory_url"`
+	Email         string   `yaml:"email" json:"email"`
+	Domains       []string `yaml:"domains" json:"domains"`
+	CacheDir      string   `yaml:"cache_dir" json:"cache_dir"`
+	ChallengeType string   `yaml:"challenge_type" json:"challenge_type"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
 	Host           string        `yaml:"host" json:"host"`
@@ -52,6 +62,7 @@ type ServerConfig struct {
 	HTTP2          HTTP2Config   `yaml:"http2" json:"http2"`
 	HTTP3          HTTP3Config   `yaml:"http3" json:"http3"`
 	TLS            TLSConfig     `yaml:"tls" json:"tls"`
+	ACME           ACMEConfig    `yaml:"acme" json:"acme"`
 }
 
 // StaticConfig captures legacy static asset directory settings.

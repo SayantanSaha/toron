@@ -9,8 +9,163 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
+
 	"toron/pkg/httpparser"
 )
+
+func TestCompression_Brotli(t *testing.T) {
+	r := New()
+	cfg := DefaultCompressionConfig()
+	cfg.MinLength = 100
+	r.Use(NewCompressionMiddleware(cfg))
+
+	largeBody := strings.Repeat("Brotli compression algorithm verification for Toron HTTP router. ", 20)
+
+	r.GET("/brotli-data", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		_, _ = res.WriteString(largeBody)
+	})
+
+	req, _ := httpparser.NewRequest("GET", "/brotli-data", "HTTP/1.1")
+	req.Header.Set("Accept-Encoding", "br")
+	res := httpparser.NewResponse()
+
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", res.StatusCode)
+	}
+
+	if enc := res.Header.Get("Content-Encoding"); enc != "br" {
+		t.Fatalf("expected Content-Encoding 'br', got %q", enc)
+	}
+
+	if res.Body.Len() >= len(largeBody) {
+		t.Fatalf("expected compressed body (%d) to be smaller than original (%d)", res.Body.Len(), len(largeBody))
+	}
+
+	// Decompress Brotli
+	br := brotli.NewReader(res.Body)
+	decompressed, err := io.ReadAll(br)
+	if err != nil {
+		t.Fatalf("failed to read decompressed brotli data: %v", err)
+	}
+
+	if string(decompressed) != largeBody {
+		t.Fatalf("decompressed brotli content mismatch")
+	}
+}
+
+func TestCompression_Zstandard(t *testing.T) {
+	r := New()
+	cfg := DefaultCompressionConfig()
+	cfg.MinLength = 100
+	r.Use(NewCompressionMiddleware(cfg))
+
+	largeBody := strings.Repeat("Zstandard ultra-fast real-time compression engine in Toron. ", 20)
+
+	r.GET("/zstd-data", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString(largeBody)
+	})
+
+	req, _ := httpparser.NewRequest("GET", "/zstd-data", "HTTP/1.1")
+	req.Header.Set("Accept-Encoding", "zstd")
+	res := httpparser.NewResponse()
+
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", res.StatusCode)
+	}
+
+	if enc := res.Header.Get("Content-Encoding"); enc != "zstd" {
+		t.Fatalf("expected Content-Encoding 'zstd', got %q", enc)
+	}
+
+	// Decompress Zstandard
+	zr, err := zstd.NewReader(res.Body)
+	if err != nil {
+		t.Fatalf("failed to create zstd reader: %v", err)
+	}
+	defer zr.Close()
+
+	decompressed, err := io.ReadAll(zr)
+	if err != nil {
+		t.Fatalf("failed to read decompressed zstd data: %v", err)
+	}
+
+	if string(decompressed) != largeBody {
+		t.Fatalf("decompressed zstd content mismatch")
+	}
+}
+
+func TestCompression_QualityWeighting(t *testing.T) {
+	r := New()
+	cfg := DefaultCompressionConfig()
+	cfg.MinLength = 50
+	r.Use(NewCompressionMiddleware(cfg))
+
+	body := strings.Repeat("Testing Quality Factor Weighting in Accept-Encoding. ", 10)
+
+	r.GET("/quality-test", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString(body)
+	})
+
+	// Client explicitly prefers gzip (q=1.0) over br (q=0.5)
+	req, _ := httpparser.NewRequest("GET", "/quality-test", "HTTP/1.1")
+	req.Header.Set("Accept-Encoding", "gzip;q=1.0, br;q=0.5")
+	res := httpparser.NewResponse()
+
+	r.ServeHTTP(req, res)
+
+	if enc := res.Header.Get("Content-Encoding"); enc != "gzip" {
+		t.Fatalf("expected 'gzip' due to higher q value (1.0 vs 0.5), got %q", enc)
+	}
+}
+
+func TestCompression_PrecedenceOrder(t *testing.T) {
+	r := New()
+	cfg := DefaultCompressionConfig()
+	cfg.MinLength = 50
+	r.Use(NewCompressionMiddleware(cfg))
+
+	body := strings.Repeat("Testing Server Precedence Order for Compression. ", 10)
+
+	r.GET("/precedence-test", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		_, _ = res.WriteString(body)
+	})
+
+	// When all have equal q, zstd takes precedence over br, gzip, deflate
+	req, _ := httpparser.NewRequest("GET", "/precedence-test", "HTTP/1.1")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	res := httpparser.NewResponse()
+
+	r.ServeHTTP(req, res)
+
+	if enc := res.Header.Get("Content-Encoding"); enc != "zstd" {
+		t.Fatalf("expected 'zstd' precedence when all q values are equal, got %q", enc)
+	}
+
+	// When zstd not requested, br takes precedence over gzip
+	req2, _ := httpparser.NewRequest("GET", "/precedence-test", "HTTP/1.1")
+	req2.Header.Set("Accept-Encoding", "gzip, deflate, br")
+	res2 := httpparser.NewResponse()
+
+	r.ServeHTTP(req2, res2)
+
+	if enc2 := res2.Header.Get("Content-Encoding"); enc2 != "br" {
+		t.Fatalf("expected 'br' precedence over gzip, got %q", enc2)
+	}
+}
 
 func TestCompression_Gzip(t *testing.T) {
 	r := New()
@@ -147,7 +302,6 @@ func TestCompression_NoAcceptEncoding(t *testing.T) {
 	})
 
 	req, _ := httpparser.NewRequest("GET", "/no-compress", "HTTP/1.1")
-	// No Accept-Encoding header
 	res := httpparser.NewResponse()
 
 	r.ServeHTTP(req, res)

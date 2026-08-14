@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-14 - Prototype 27 Release (Next-Gen Response Compression: Brotli & Zstandard)
+
+### Added
+- **Brotli & Zstandard Compression**: Extended `CompressionMiddleware` in `pkg/router/compression.go` to support Brotli (`br`, RFC 7932) and Zstandard (`zstd`, RFC 8878) (`TASK-037`, `REQ-037`).
+- **Encoder Object Pooling**: Implemented `sync.Pool` allocation recycling for `brotli.Writer` and `zstd.Encoder`.
+- **Quality Factor Content Negotiation**: Added RFC 7231 quality factor weighting (`q=`) parsing and modern server ranking (`zstd` > `br` > `gzip` > `deflate`).
+
+### Related Tasks
+- `TASK-037`: Implement Brotli (`br`) and Zstandard (`zstd`) Response Compression with Encoders Pooling
+
 ## 2026-08-14 - Prototype 26 Release (Multi-Scheme Authentication: JWT, API Key, and Basic Auth)
 
 ### Added

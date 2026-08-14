@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/andybalholm/brotli"
+	"github.com/klauspost/compress/zstd"
+
 	"toron/pkg/httpparser"
 )
 
@@ -28,7 +31,7 @@ func DefaultCompressionConfig() CompressionConfig {
 		Enabled:   true,
 		MinLength: 512,
 		Level:     gzip.DefaultCompression,
-		Encodings: []string{"gzip", "deflate"},
+		Encodings: []string{"zstd", "br", "gzip", "deflate"},
 		Types: []string{
 			"text/",
 			"application/json",
@@ -41,9 +44,11 @@ func DefaultCompressionConfig() CompressionConfig {
 }
 
 type compressionManager struct {
-	config    CompressionConfig
-	gzipPool  sync.Pool
-	flatePool sync.Pool
+	config     CompressionConfig
+	zstdPool   sync.Pool
+	brotliPool sync.Pool
+	gzipPool   sync.Pool
+	flatePool  sync.Pool
 }
 
 func newCompressionManager(cfg CompressionConfig) *compressionManager {
@@ -51,7 +56,7 @@ func newCompressionManager(cfg CompressionConfig) *compressionManager {
 		cfg.MinLength = 512
 	}
 	if len(cfg.Encodings) == 0 {
-		cfg.Encodings = []string{"gzip", "deflate"}
+		cfg.Encodings = []string{"zstd", "br", "gzip", "deflate"}
 	}
 	if len(cfg.Types) == 0 {
 		cfg.Types = DefaultCompressionConfig().Types
@@ -59,6 +64,29 @@ func newCompressionManager(cfg CompressionConfig) *compressionManager {
 
 	cm := &compressionManager{
 		config: cfg,
+	}
+
+	cm.zstdPool = sync.Pool{
+		New: func() any {
+			level := zstd.SpeedDefault
+			if cfg.Level == 1 {
+				level = zstd.SpeedFastest
+			} else if cfg.Level == 9 {
+				level = zstd.SpeedBestCompression
+			}
+			enc, _ := zstd.NewWriter(io.Discard, zstd.WithEncoderLevel(level))
+			return enc
+		},
+	}
+
+	cm.brotliPool = sync.Pool{
+		New: func() any {
+			level := cfg.Level
+			if level < brotli.BestSpeed || level > brotli.BestCompression {
+				level = brotli.DefaultCompression
+			}
+			return brotli.NewWriterLevel(io.Discard, level)
+		},
 	}
 
 	cm.gzipPool = sync.Pool{
@@ -87,7 +115,7 @@ func newCompressionManager(cfg CompressionConfig) *compressionManager {
 }
 
 // NewCompressionMiddleware creates a middleware that automatically compresses HTTP responses
-// based on the client's Accept-Encoding header using gzip or deflate.
+// based on the client's Accept-Encoding header using zstd, brotli, gzip, or deflate.
 func NewCompressionMiddleware(cfg CompressionConfig) MiddlewareFunc {
 	cm := newCompressionManager(cfg)
 
@@ -147,6 +175,34 @@ func NewCompressionMiddleware(cfg CompressionConfig) MiddlewareFunc {
 			var compressedBuf bytes.Buffer
 
 			switch selected {
+			case "zstd":
+				zw := cm.zstdPool.Get().(*zstd.Encoder)
+				zw.Reset(&compressedBuf)
+				if _, err := zw.Write(rawBytes); err != nil {
+					cm.zstdPool.Put(zw)
+					return
+				}
+				if err := zw.Close(); err != nil {
+					cm.zstdPool.Put(zw)
+					return
+				}
+				cm.zstdPool.Put(zw)
+				res.Header.Set("Content-Encoding", "zstd")
+
+			case "br":
+				bw := cm.brotliPool.Get().(*brotli.Writer)
+				bw.Reset(&compressedBuf)
+				if _, err := bw.Write(rawBytes); err != nil {
+					cm.brotliPool.Put(bw)
+					return
+				}
+				if err := bw.Close(); err != nil {
+					cm.brotliPool.Put(bw)
+					return
+				}
+				cm.brotliPool.Put(bw)
+				res.Header.Set("Content-Encoding", "br")
+
 			case "gzip":
 				gw := cm.gzipPool.Get().(*gzip.Writer)
 				gw.Reset(&compressedBuf)
@@ -186,33 +242,101 @@ func NewCompressionMiddleware(cfg CompressionConfig) MiddlewareFunc {
 	}
 }
 
+func getEncodingServerRank(name string) int {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "zstd":
+		return 4
+	case "br":
+		return 3
+	case "gzip":
+		return 2
+	case "deflate":
+		return 1
+	default:
+		return 0
+	}
+}
+
+func isSupportedEncoding(name string, supported []string) bool {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, s := range supported {
+		if strings.ToLower(strings.TrimSpace(s)) == n {
+			return true
+		}
+	}
+	return false
+}
+
 func selectCompressionEncoding(acceptEncoding string, supported []string) string {
 	if strings.TrimSpace(acceptEncoding) == "" {
 		return ""
 	}
-	ae := strings.ToLower(acceptEncoding)
 
-	supportsGzip := false
-	supportsDeflate := false
-	for _, enc := range supported {
-		switch strings.ToLower(strings.TrimSpace(enc)) {
-		case "gzip":
-			supportsGzip = true
-		case "deflate":
-			supportsDeflate = true
+	clauses := strings.Split(acceptEncoding, ",")
+	type clientOption struct {
+		name string
+		q    float64
+		rank int
+	}
+
+	options := make([]clientOption, 0, len(clauses))
+
+	for _, clause := range clauses {
+		parts := strings.Split(strings.TrimSpace(clause), ";")
+		name := strings.ToLower(strings.TrimSpace(parts[0]))
+		if name == "" {
+			continue
+		}
+
+		q := 1.0
+		for _, param := range parts[1:] {
+			param = strings.TrimSpace(param)
+			if strings.HasPrefix(param, "q=") {
+				if parsedQ, err := strconv.ParseFloat(strings.TrimPrefix(param, "q="), 64); err == nil {
+					q = parsedQ
+				}
+			}
+		}
+
+		if q <= 0 {
+			continue
+		}
+
+		if name == "*" {
+			// Expand wildcard to supported encodings
+			for _, s := range []string{"zstd", "br", "gzip", "deflate"} {
+				if isSupportedEncoding(s, supported) {
+					options = append(options, clientOption{
+						name: s,
+						q:    q,
+						rank: getEncodingServerRank(s),
+					})
+				}
+			}
+		} else if isSupportedEncoding(name, supported) {
+			options = append(options, clientOption{
+				name: name,
+				q:    q,
+				rank: getEncodingServerRank(name),
+			})
 		}
 	}
 
-	canGzip := strings.Contains(ae, "gzip") || ae == "*"
-	canDeflate := strings.Contains(ae, "deflate")
+	if len(options) == 0 {
+		return ""
+	}
 
-	if canGzip && supportsGzip {
-		return "gzip"
+	// Pick highest quality factor; if equal, highest server rank
+	best := options[0]
+	for _, opt := range options[1:] {
+		if opt.q > best.q {
+			best = opt
+		} else if opt.q == best.q && opt.rank > best.rank {
+			best = opt
+		}
 	}
-	if canDeflate && supportsDeflate {
-		return "deflate"
-	}
-	return ""
+
+	return best.name
 }
 
 func isMIMECompressible(contentType string, allowedTypes []string) bool {

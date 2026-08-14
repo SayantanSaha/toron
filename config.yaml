@@ -47,6 +47,8 @@ server:
     min_length: 512           # Minimum response byte threshold for compression
     level: -1                 # Compression level (-1 = default, 1 = best speed, 9 = best compression)
     encodings:
+      - "zstd"
+      - "br"
       - "gzip"
       - "deflate"
 

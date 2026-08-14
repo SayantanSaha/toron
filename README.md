@@ -15,7 +15,7 @@
 * **Unified Routing Architecture**: Routing rules accept `type: "static"` or `type: "upstream"`, sharing identical domain host matching, header-conditional dispatching, and subpath prefix routing capabilities.
 * **Upstream Load Balancing & Sticky Sessions**: Multi-target load balancing (`round_robin`, `random`, `sticky_cookie`, `ip_hash`), cookie-based session affinity, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).
 * **Token Bucket Rate Limiting Middleware**: Route-level DDoS and abuse protection (`rate_limit: "100/min"`, `"10/sec"`) per client IP or `X-API-Key` header returning `429 Too Many Requests` and `Retry-After` headers.
-* **Streaming Response Compression (Gzip & Deflate)**: Transparent HTTP response compression middleware utilizing standard library `compress/gzip` and `compress/flate` with `sync.Pool` allocation reuse for high throughput and reduced bandwidth.
+* **Streaming Response Compression (Zstd, Brotli, Gzip & Deflate)**: High-performance response compression middleware utilizing Zstandard (RFC 8878), Brotli (RFC 7932), Gzip, and Deflate with `sync.Pool` allocation reuse, quality factor weighting (`q=`), and modern server precedence ranking.
 * **In-Memory HTTP Response Caching & RFC 7234 Cache-Control**: Thread-safe in-memory caching for idempotent GET and HEAD requests with TTL expiration, `no-store` / `no-cache` compliance, `Age` calculation, and `X-Cache: HIT/MISS` diagnostics.
 * **Multi-Scheme Authentication Middleware**: Built-in edge authentication supporting RFC 7519 JWT Bearer tokens (HS256/HS384/HS512), API keys, and RFC 7617 HTTP Basic authentication with timing-attack resistant comparisons (`crypto/subtle`) and upstream `X-Authenticated-User` context propagation.
 * **Prometheus Metrics & W3C Tracing**: Standardized `/metrics` endpoint exporting Prometheus counters (`toron_http_requests_total`), latency histograms (`toron_http_request_duration_seconds`), QUIC stream gauges, and circuit breaker trip counters; automatic OpenTelemetry W3C `traceparent` context header propagation across upstream target microservices.
@@ -89,10 +89,12 @@ server:
     cache_dir: "./certs"
     challenge_type: "http-01" # Challenge validation strategy: "http-01" or "tls-alpn-01"
   compression:
-    enabled: true             # Enable automatic gzip/deflate response compression
+    enabled: true             # Enable automatic gzip/deflate/br/zstd response compression
     min_length: 512           # Minimum response byte threshold
     level: -1                 # Compression level (-1 = default)
     encodings:
+      - "zstd"
+      - "br"
       - "gzip"
       - "deflate"
   cache:

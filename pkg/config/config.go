@@ -289,7 +289,7 @@ func DefaultAppConfig() *AppConfig {
 				Enabled:   true,
 				MinLength: 512,
 				Level:     -1,
-				Encodings: []string{"gzip", "deflate"},
+				Encodings: []string{"zstd", "br", "gzip", "deflate"},
 				Types: []string{
 					"text/",
 					"application/json",

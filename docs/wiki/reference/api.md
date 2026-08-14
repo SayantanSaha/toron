@@ -53,9 +53,18 @@ Built-in endpoint reference for Toron.
 }
 ```
 
-## 3. Internal Management API Endpoints
+## 3. Prometheus Metrics Endpoint
 
-- **`/internal/api/status`** (`GET`): Returns server runtime stats, port, and worker pool size.
+- **Path**: `/metrics`
+- **Method**: `GET`
+- **Response**: `200 OK`
+- **Content-Type**: `text/plain; version=0.0.4`
+- **Description**: Returns Prometheus exposition text format including request counters, latency histograms, QUIC stream gauges, and circuit breaker trips.
+
+## 4. Internal Control Plane API Endpoints
+
+- **`/internal/api/status`** (`GET`): Returns server runtime stats, port, worker pool size, and embedded JSON telemetry metrics.
+- **`/internal/api/metrics`** (`GET`): Returns structured JSON metrics summary (`total_requests`, `active_quic_streams`, `active_tcp_connections`, `circuit_breaker_trips`, status/method breakdowns).
 - **`/internal/api/routes`** (`GET`): Returns active proxy route configurations, headers, and load balancing target nodes.
 - **`/internal/api/upstreams/health`** (`GET`): Executes backend HTTP health probes against all upstream targets (`9001-9010`) and returns node statuses (`CLOSED`, `OPEN`, `UNREACHABLE`).
 - **`/internal/api/proxy-test`** (`POST`): Accepts JSON request body (`path`, `method`, `headers`), dispatches internal test request, and returns execution metrics (`status_code`, `latency_ms`, `headers`, `body`).

@@ -1,5 +1,78 @@
 # Release Notes
 
+## 2026-08-14 - Prototype 23 Release (ACME Zero-Touch Production SSL & TLS-ALPN-01)
+
+### Added
+- **ACME Engine**: Added `ACMEManager` in `pkg/acme/acme.go` for zero-touch SSL certificate issuance and background renewal (`TASK-033`, `REQ-033`).
+- **HTTP-01 & TLS-ALPN-01 Responders**: Implemented HTTP-01 token authorization responder (`/.well-known/acme-challenge/*`) and TLS-ALPN-01 responder (`acme-tls/1` ALPN negotiation with OID `1.3.6.1.5.5.7.1.31`).
+- **Disk Caching & Key Security**: Implemented secure disk certificate and key caching in `cache_dir` with `0600`/`0700` POSIX permissions.
+
+### Related Tasks
+- `TASK-033`: Implement ACME Engine, HTTP-01/TLS-ALPN-01 Responders, and Certificate Caching
+
+## 2026-08-13 - Prototype 22 Release (Telemetry Metrics in Control Plane JSON Endpoints)
+
+### Added
+- **JSON Telemetry Integration**: Added `GetSummaryJSON()` in `pkg/metrics/metrics.go` exporting total requests, active QUIC streams, active TCP connections, circuit breaker trips, and status/method breakdowns (`TASK-032`, `REQ-032`).
+- **Control Plane API**: Updated `GET /internal/api/status` and registered `GET /internal/api/metrics` returning structured JSON metrics.
+
+### Related Tasks
+- `TASK-032`: Expose Comprehensive Metrics in /internal/api/ Control Plane Endpoints
+
+## 2026-08-13 - Prototype 21 Release (Prometheus Metrics & W3C Traceparent Propagation)
+
+### Added
+- **Prometheus Metrics Exporter**: Implemented `/metrics` endpoint returning Prometheus exposition format (`text/plain; version=0.0.4`) with request counters, latency histograms, and QUIC stream gauges (`TASK-031`, `REQ-031`).
+- **W3C Distributed Tracing**: Added W3C `traceparent` context header extraction, generation, and upstream propagation in `pkg/metrics/tracing.go` and `pkg/proxy/proxy.go`.
+
+### Related Tasks
+- `TASK-031`: Implement Prometheus Metrics Registry and W3C Traceparent Header Propagation
+
+## 2026-08-13 - Prototype 20 Release (Sticky Session Load Balancing: sticky_cookie & ip_hash)
+
+### Added
+- **Session Affinity Balancers**: Added `StickyCookieBalancer` (cookie-based session affinity with `Set-Cookie` injection) and `IPHashBalancer` (client IP hash affinity) in `pkg/proxy/sticky.go` (`TASK-030`, `REQ-030`).
+- **Config & Router Integration**: Supported `algorithm: "sticky_cookie"` and `algorithm: "ip_hash"` in `routes.yaml` and `pkg/proxy/proxy.go`.
+
+### Related Tasks
+- `TASK-030`: Implement Sticky Session Load Balancing (sticky_cookie and ip_hash)
+
+## 2026-08-13 - Prototype 19 Release (Token Bucket Rate Limiting Middleware)
+
+### Added
+- **Token Bucket Rate Limiter**: Added `TokenBucket`, `RateLimiter`, and `NewRateLimitMiddleware` in `pkg/router/rate_limiter.go` for route-level DDoS protection (`TASK-029`, `REQ-029`).
+- **Client Key Extraction**: Extracted client identity via `X-API-Key`, `Authorization`, `X-Forwarded-For`, or remote IP with `429 Too Many Requests` and `Retry-After` header returns.
+
+### Related Tasks
+- `TASK-029`: Implement Token Bucket Rate Limiting Middleware per Client IP and API Key
+
+## 2026-08-13 - Prototype 18 Release (Dynamic Route Hot Reloading via fsnotify)
+
+### Added
+- **Route Hot Reloading**: Integrated `github.com/fsnotify/fsnotify` in `pkg/config/watcher.go` (`RouteWatcher`) to automatically watch `routes.yaml` edits and update routing tables dynamically without dropping socket connections (`TASK-028`, `REQ-028`).
+- **Atomic Router Reset**: Added `Router.Reset()` in `pkg/router/router.go` for zero-downtime routing table reloading under write lock.
+
+### Related Tasks
+- `TASK-028`: Implement Hot Reloading of Routes via File-Watch Worker (fsnotify)
+
+## 2026-08-13 - Prototype 17 Release (HTTP/3 Protocol Engine & QUIC Transport)
+
+### Added
+- **HTTP/3 QUIC Transport**: Integrated `github.com/quic-go/quic-go/http3` engine into `pkg/server/server.go` (`TASK-027`, `REQ-027`).
+- **Alt-Svc Protocol Advertising**: Injected `Alt-Svc: h3=":8443"` headers on HTTP/1.1 and HTTP/2 response headers for automatic browser HTTP/3 upgrades.
+
+### Related Tasks
+- `TASK-027`: Implement HTTP/3 Protocol Engine and QUIC Transport Handler
+
+## 2026-08-13 - Prototype 16 Release (Layer 4 TCP & UDP Transport Proxying)
+
+### Added
+- **L4 TCP Socket Proxy**: Added `TCPProxy` in `pkg/proxy/tcp.go` for raw socket stream forwarding and round-robin load balancing (`TASK-026`, `REQ-026`).
+- **L4 UDP Datagram Proxy**: Added `UDPProxy` in `pkg/proxy/udp.go` for connectionless datagram packet proxying.
+
+### Related Tasks
+- `TASK-026`: Implement Layer 4 TCP and UDP Transport Proxying
+
 ## 2026-08-12 - Prototype 15 Release (HTTPS TLS Encryption & Dev Certificate Generator)
 
 ### Added

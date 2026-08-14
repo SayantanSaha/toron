@@ -1,140 +1,206 @@
-# Toron Web Server - REST Client HTTP Test Suite
+# ===============================================================================
+# 👑 Toron Web Server & Edge Gateway - Master HTTP Test Suite
 # Use with VS Code REST Client, Antigravity, JetBrains HTTP Client, or curl.
+# ===============================================================================
 
 @baseUrl = http://localhost:8080
+@httpsUrl = https://localhost:8443
 
 ###############################################################################
-# 1. Native Server Endpoints
+# 1. Native Server & Health Endpoints
 ###############################################################################
 
-### 1.1 Health Check Endpoint
+### 1.1 Server Health Check Endpoint
 GET {{baseUrl}}/health
 Accept: application/json
 
-### 1.2 Toron Engine Status Endpoint
+### 1.2 Toron Engine Status
 GET {{baseUrl}}/api/status
 Accept: application/json
 
 
 ###############################################################################
-# 2. Static Site File Serving Endpoints
+# 2. Internal Management & Telemetry API (/internal/api/)
 ###############################################################################
 
-### 2.1 Static Site Home Page (index.html)
-GET {{baseUrl}}/
+### 2.1 Engine Status & Runtime Summary
+GET {{baseUrl}}/internal/api/status
+Accept: application/json
 
-### 2.2 Static CSS File
-GET {{baseUrl}}/style.css
+### 2.2 System Resource & Performance Metrics
+GET {{baseUrl}}/internal/api/metrics
+Accept: application/json
 
-### 2.3 Static JavaScript File
-GET {{baseUrl}}/app.js
+### 2.3 Active Routing Rules & Config Dump
+GET {{baseUrl}}/internal/api/routes
+Accept: application/json
+
+### 2.4 Upstream Microservices Health & Circuit Breaker States
+GET {{baseUrl}}/internal/api/upstreams/health
+Accept: application/json
+
+### 2.5 Dynamic Proxy Connectivity Test
+POST {{baseUrl}}/internal/api/proxy-test
+Content-Type: application/json
+
+{
+  "target": "http://localhost:9001",
+  "method": "GET"
+}
+
+### 2.6 Prometheus Metrics Scraping Endpoint
+GET {{baseUrl}}/metrics
 
 
 ###############################################################################
-# 3. Header-Based Proxy Routing Endpoints
+# 3. Static Site & Web Control Center UI
 ###############################################################################
 
-### 3.1 Header Routing v2 (Round-Robin Load Balanced across Ports 9001, 9002, 9003)
-# Execute this request multiple times to observe round-robin rotation in JSON response
+### 3.1 Web Dashboard Control Center Home
+GET {{baseUrl}}/internal/dashboard/
+Accept: text/html
+
+### 3.2 Dashboard CSS Stylesheet
+GET {{baseUrl}}/internal/dashboard/style.css
+
+### 3.3 Dashboard Application Logic
+GET {{baseUrl}}/internal/dashboard/app.js
+
+
+###############################################################################
+# 4. Upstream Load Balancing & Failover
+###############################################################################
+
+### 4.1 Round-Robin Cluster (Rotates across Ports 9005, 9006, 9007)
+# Execute multiple times to observe target rotation in the response payload
+GET {{baseUrl}}/services/cluster/info
+Accept: application/json
+
+### 4.2 Cookie-Based Sticky Session Affinity (Sets TORON_STICKY cookie)
+GET {{baseUrl}}/services/analytics/report
+Accept: application/json
+
+### 4.3 IP Hash Load Balancer (Consistently hashes client IP to same backend)
+GET {{baseUrl}}/services/sockets
+Accept: application/json
+
+
+###############################################################################
+# 5. Token Bucket Rate Limiting (429 Too Many Requests)
+###############################################################################
+
+### 5.1 Rate Limited Route (100 req/min limit)
+# Sending rapid bursts will yield 429 Too Many Requests with Retry-After header
 GET {{baseUrl}}/api/users
 X-Version: v2
 Accept: application/json
 
-### 3.2 Header Routing v1 (Single Target on Port 9004)
+
+###############################################################################
+# 6. Header-Based & Domain Virtual Host Routing
+###############################################################################
+
+### 6.1 Header Routing: Route to v2 Cluster (Ports 9001, 9002, 9003)
+GET {{baseUrl}}/api/users
+X-Version: v2
+Accept: application/json
+
+### 6.2 Header Routing: Route to v1 Single Target (Port 9004)
 GET {{baseUrl}}/api/users
 X-Version: v1
 Accept: application/json
 
-
-###############################################################################
-# 4. Path Prefix Proxy Routing & Load Balancing Endpoints
-###############################################################################
-
-### 4.1 Path Cluster Route (Round-Robin Load Balanced across Ports 9005, 9006, 9007)
-# Execute this request multiple times to observe round-robin rotation in JSON response
-GET {{baseUrl}}/services/cluster/info
-Accept: application/json
-
-### 4.2 Path Auth Route (Single Target on Port 9008)
-GET {{baseUrl}}/services/auth/login
-Accept: application/json
-
-### 4.3 Path Analytics Route (Round-Robin Load Balanced across Ports 9009, 9010)
-GET {{baseUrl}}/services/analytics/report
-Accept: application/json
-
-
-###############################################################################
-# 5. HTTP Method Dispatching & POST Requests
-###############################################################################
-
-### 5.1 POST Request to Auth Upstream (Port 9008)
-POST {{baseUrl}}/services/auth/login
-Content-Type: application/json
-
-{
-  "username": "admin",
-  "password": "secretpassword123"
-}
-
-### 5.2 POST Request to Cluster Upstream (Ports 9005, 9006, 9007)
-POST {{baseUrl}}/services/cluster/submit
-Content-Type: application/json
-X-Version: v2
-
-{
-  "action": "process_batch",
-  "items": [101, 102, 103]
-}
-
-
-###############################################################################
-# 6. Domain-Based Virtual Host Proxy Routing Endpoints
-###############################################################################
-
-### 6.1 Domain Routing (Host: api.toron.local -> Ports 9001, 9002, 9003)
+### 6.3 Virtual Host Domain Routing (Host: api.toron.local)
 GET {{baseUrl}}/
 Host: api.toron.local
 Accept: application/json
 
 
 ###############################################################################
-# 7. Streaming Response Compression (Gzip & Deflate)
+# 7. Next-Gen Streaming Response Compression (Zstd, Brotli, Gzip, Deflate)
 ###############################################################################
 
-### 7.1 Gzip Encoded Response
-GET {{baseUrl}}/health
+### 7.1 Zstandard Encoded Response (Content-Encoding: zstd)
+GET {{baseUrl}}/services/cluster/large
+Accept-Encoding: zstd
+
+### 7.2 Brotli Encoded Response (Content-Encoding: br)
+GET {{baseUrl}}/services/cluster/large
+Accept-Encoding: br
+
+### 7.3 Gzip Encoded Response (Content-Encoding: gzip)
+GET {{baseUrl}}/services/cluster/large
 Accept-Encoding: gzip
 
-### 7.2 Deflate Encoded Response
-GET {{baseUrl}}/api/status
+### 7.4 Deflate Encoded Response (Content-Encoding: deflate)
+GET {{baseUrl}}/services/cluster/large
 Accept-Encoding: deflate
+
+### 7.5 Quality Factor Content Negotiation (q= weight preference)
+GET {{baseUrl}}/services/cluster/large
+Accept-Encoding: gzip;q=1.0, br;q=0.5
 
 
 ###############################################################################
 # 8. In-Memory HTTP Response Caching (RFC 7234)
 ###############################################################################
 
-### 8.1 First Request (Expect X-Cache: MISS)
-GET {{baseUrl}}/api/status
+### 8.1 Initial Request (Expect X-Cache: MISS)
+GET {{baseUrl}}/services/cluster/cacheable
 
-### 8.2 Subsequent Request (Expect X-Cache: HIT and Age header)
-GET {{baseUrl}}/api/status
+### 8.2 Cached Request (Expect X-Cache: HIT and Age header)
+GET {{baseUrl}}/services/cluster/cacheable
 
-### 8.3 Cache Bypass with Client no-cache
-GET {{baseUrl}}/api/status
+### 8.3 Client Cache Bypass with no-cache directive
+GET {{baseUrl}}/services/cluster/cacheable
 Cache-Control: no-cache
 
 
 ###############################################################################
-# 9. Multi-Scheme Authentication Endpoints (API Key, JWT, Basic Auth)
+# 9. Multi-Scheme Edge Authentication (API Key, JWT, Basic Auth)
 ###############################################################################
 
 ### 9.1 Protected Route with Valid API Key Header
 GET {{baseUrl}}/services/auth
 X-API-Key: demo-api-key-12345
 
-### 9.2 Protected Route with Missing / Invalid API Key (Expect 401 Unauthorized)
+### 9.2 Protected Route with Missing API Key (Expect 401 Unauthorized)
 GET {{baseUrl}}/services/auth
 
 
+###############################################################################
+# 10. Cross-Origin Resource Sharing (CORS) & Preflight Handling
+###############################################################################
+
+### 10.1 CORS Preflight OPTIONS Request (Expect 204 No Content & CORS Headers)
+OPTIONS {{baseUrl}}/api/data
+Origin: https://app.example.com
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: Content-Type, Authorization
+
+### 10.2 Cross-Origin GET Request (Expect Access-Control-Allow-Origin & Vary)
+GET {{baseUrl}}/health
+Origin: https://app.example.com
+
+
+###############################################################################
+# 11. Enterprise Browser Security Headers
+###############################################################################
+
+### 11.1 Security Headers Inspection (Expect HSTS, nosniff, DENY, Referrer-Policy)
+GET {{baseUrl}}/health
+
+
+###############################################################################
+# 12. Native gRPC Service & Health Probing
+###############################################################################
+
+### 12.1 gRPC Service Route Call
+POST {{baseUrl}}/order.OrderService/PlaceOrder
+Content-Type: application/grpc
+TE: trailers
+
+### 12.2 gRPC Native Health Check Probe (/grpc.health.v1.Health/Check)
+POST {{baseUrl}}/grpc.health.v1.Health/Check
+Content-Type: application/grpc
+TE: trailers

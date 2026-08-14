@@ -97,3 +97,44 @@ GET {{baseUrl}}/
 Host: api.toron.local
 Accept: application/json
 
+
+###############################################################################
+# 7. Streaming Response Compression (Gzip & Deflate)
+###############################################################################
+
+### 7.1 Gzip Encoded Response
+GET {{baseUrl}}/health
+Accept-Encoding: gzip
+
+### 7.2 Deflate Encoded Response
+GET {{baseUrl}}/api/status
+Accept-Encoding: deflate
+
+
+###############################################################################
+# 8. In-Memory HTTP Response Caching (RFC 7234)
+###############################################################################
+
+### 8.1 First Request (Expect X-Cache: MISS)
+GET {{baseUrl}}/api/status
+
+### 8.2 Subsequent Request (Expect X-Cache: HIT and Age header)
+GET {{baseUrl}}/api/status
+
+### 8.3 Cache Bypass with Client no-cache
+GET {{baseUrl}}/api/status
+Cache-Control: no-cache
+
+
+###############################################################################
+# 9. Multi-Scheme Authentication Endpoints (API Key, JWT, Basic Auth)
+###############################################################################
+
+### 9.1 Protected Route with Valid API Key Header
+GET {{baseUrl}}/services/auth
+X-API-Key: demo-api-key-12345
+
+### 9.2 Protected Route with Missing / Invalid API Key (Expect 401 Unauthorized)
+GET {{baseUrl}}/services/auth
+
+

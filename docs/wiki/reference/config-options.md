@@ -4,11 +4,17 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-14
 
 depends_on:
   - REQ-007
+  - REQ-034
+  - REQ-035
+  - REQ-036
   - TASK-007
+  - TASK-034
+  - TASK-035
+  - TASK-036
 
 derived_from:
   - REQ-007
@@ -23,7 +29,7 @@ related_to:
 
 # Configuration Options Reference
 
-Complete parameter reference for `config.yaml`.
+Complete parameter reference for `config.yaml` and `routes.yaml`.
 
 ## Section: `server`
 
@@ -74,6 +80,36 @@ Complete parameter reference for `config.yaml`.
 | `cache_dir` | `string` | `"./certs"` | Local directory path for caching keys and certs |
 | `challenge_type` | `string` | `"http-01"` | Challenge validation strategy (`"http-01"` or `"tls-alpn-01"`) |
 
+## Section: `server.compression`
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `enabled` | `boolean` | `true` | Enable transparent response compression (Gzip & Deflate) |
+| `min_length` | `integer` | `512` | Minimum response byte threshold for compression |
+| `level` | `integer` | `-1` | Compression level (-1 = default, 1 = best speed, 9 = best compression) |
+| `encodings` | `list` | `["gzip", "deflate"]` | Supported compression encoding algorithms |
+
+## Section: `server.cache`
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `enabled` | `boolean` | `true` | Enable in-memory RFC 7234 HTTP response caching |
+| `default_ttl` | `duration` | `"60s"` | Default TTL if `Cache-Control: max-age` is omitted |
+| `max_entries` | `integer` | `1000` | Maximum number of cached responses in memory |
+| `max_payload_size` | `integer` | `1048576` (1 MB) | Maximum body size eligible for caching |
+
+## Section: `server.auth` / `routes[].auth`
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `type` | `string` | `""` | Authentication scheme (`"jwt"`, `"api_key"`, `"basic"`, `""`) |
+| `jwt.secret` | `string` | `""` | HMAC secret for JWT verification |
+| `jwt.issuer` | `string` | `""` | Expected JWT `iss` claim |
+| `jwt.audience` | `string` | `""` | Expected JWT `aud` claim |
+| `api_key.keys` | `list` | `[]` | Allowlist of valid API keys |
+| `basic.users` | `map` | `{}` | Map of valid username to password pairs |
+| `excluded` | `list` | `[]` | List of public paths exempt from authentication |
+
 ## Section: `logging`
 
 | Parameter | Type | Default | Description |
@@ -84,3 +120,4 @@ Complete parameter reference for `config.yaml`.
 ## Related Pages
 
 - [Configuration Guide](../configuration.md)
+- [CLI Reference](./cli.md)

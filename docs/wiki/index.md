@@ -4,27 +4,20 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-08-14
 
 depends_on:
   - REQ-001
-  - REQ-002
-  - REQ-003
-  - REQ-004
-  - REQ-005
-  - REQ-006
   - REQ-007
-  - REQ-008
-  - REQ-009
-  - REQ-010
+  - REQ-019
+  - REQ-033
+  - REQ-034
+  - REQ-035
+  - REQ-036
 
 derived_from:
   - PRD.md
   - ADR-001
-  - ADR-002
-  - ADR-003
-  - ADR-004
-  - ADR-005
 
 documents:
   - TORON-DOCUMENTATION-INDEX
@@ -37,27 +30,41 @@ related_to:
 
 # Toron Documentation Wiki
 
-Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, modular web server written in Go.
+Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, modular web server and API gateway written in Go.
 
 ## Wiki Navigation
 
-### 🚀 Getting Started & Installation
-- [Getting Started](./getting-started.md) – Quickstart guide for running Toron.
-- [Configuration Guide](./configuration.md) – Overview of configuring Toron via YAML or CLI flags.
+### 🚀 Getting Started & Operations
+- [Getting Started](./getting-started.md) – Quickstart guide for building and running Toron.
+- [Configuration Guide](./configuration.md) – Dual-file YAML configuration guide (`config.yaml` & `routes.yaml`).
 
-### ⚙️ Features & Architecture
+### ⚙️ Core Architecture & Protocols
 - [Event Reactor Core](./features/event-reactor.md) – Event-driven concurrency, non-blocking I/O, and worker pool.
-- [Static File Serving](./features/static-file-serving.md) – Hosting web applications, MIME type resolution, and security.
-- [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding and proxy header injection.
-- [Header-Based HTTP Routing](./features/header-routing.md) – API versioning, canary routing, and header-conditional dispatching.
+- [HTTP/2 Engine](./features/http2.md) – Cleartext `h2c` prior-knowledge and stream multiplexing.
+- [HTTPS TLS & Auto Dev Certs](./features/tls-https.md) – TLS 1.2/1.3 encryption and ECDSA dev certificate generation.
+- [WebSocket Tunneling](./features/websocket.md) – RFC 6455 and RFC 8441 Extended CONNECT bi-directional stream tunneling.
+- [Static File Serving](./features/static-file-serving.md) – Hosting web apps, MIME resolution, and directory index handling.
+
+### 🌐 Routing, Proxying & Resilience
+- [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding and proxy headers.
+- [Load Balancing & Session Affinity](./features/load-balancing.md) – Round-robin, random, sticky cookie, and IP hash balancers.
+- [Circuit Breaker & Health Checks](./features/circuit-breaker.md) – 3-state circuit breaker and active upstream health probing.
+- [Header-Based HTTP Routing](./features/header-routing.md) – API versioning and conditional header routing.
+- [Domain-Based Virtual Host Routing](./features/domain-routing.md) – Multi-tenant host header dispatching.
+
+### 🛡️ Traffic Control, Performance & Security
+- [Transparent Response Compression](./features/compression.md) – Streaming Gzip & Deflate response compression.
+- [In-Memory Response Caching](./features/response-caching.md) – RFC 7234 HTTP response caching and telemetry headers.
+- [Multi-Scheme Authentication](./features/authentication.md) – JWT (HS256), API Key, and HTTP Basic authentication.
 - [Native Go Benchmarking](./features/benchmarking.md) – Performance benchmarks and allocation metrics.
+- [Dummy Microservices Suite](./features/dummy-services.md) – Cluster of 10 test microservices.
 
 ### 📖 References
 - [CLI Reference](./reference/cli.md) – Command-line interface options and usage flags.
-- [Configuration Options Reference](./reference/config-options.md) – Complete reference for `config.yaml` parameters.
-- [HTTP API Reference](./reference/api.md) – Built-in health and status HTTP endpoints.
+- [Configuration Options Reference](./reference/config-options.md) – Complete reference for YAML configuration settings.
+- [HTTP API Reference](./reference/api.md) – Built-in health, metrics, and internal management endpoints.
 
 ### 💡 Help & Support
-- [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues, 404 errors, and solutions.
+- [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog generated from completed task documents.
+- [Release Notes](./release-notes.md) – Changelog and release milestones (Prototypes 1–26).

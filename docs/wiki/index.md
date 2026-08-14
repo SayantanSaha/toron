@@ -47,6 +47,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 
 ### 🌐 Routing, Proxying & Resilience
 - [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding and proxy headers.
+- [gRPC Edge Gateway & Health Probing](./features/grpc-gateway.md) – Native `grpc.health.v1` probing and HTTP/2 trailers preservation.
 - [Load Balancing & Session Affinity](./features/load-balancing.md) – Round-robin, random, sticky cookie, and IP hash balancers.
 - [Circuit Breaker & Health Checks](./features/circuit-breaker.md) – 3-state circuit breaker and active upstream health probing.
 - [Header-Based HTTP Routing](./features/header-routing.md) – API versioning and conditional header routing.

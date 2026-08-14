@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,7 +42,9 @@ var (
 // UpstreamTarget tracks the URL, health check configuration, and circuit breaker state for a backend server.
 type UpstreamTarget struct {
 	URL                 *url.URL
+	HealthCheckType     string
 	HealthCheckPath     string
+	HealthCheckService  string
 	HealthCheckInterval time.Duration
 	ConsecutiveFailures int32
 	MaxFailures         int32
@@ -54,20 +57,30 @@ type UpstreamTarget struct {
 
 // NewUpstreamTarget constructs a target node with circuit breaker defaults.
 func NewUpstreamTarget(targetURL *url.URL, healthPath string, maxFailures int, cooldown time.Duration) *UpstreamTarget {
+	return NewUpstreamTargetWithHealth(targetURL, "http", healthPath, "", maxFailures, cooldown)
+}
+
+// NewUpstreamTargetWithHealth constructs a target node supporting HTTP and gRPC health checks.
+func NewUpstreamTargetWithHealth(targetURL *url.URL, healthType, healthPath, healthService string, maxFailures int, cooldown time.Duration) *UpstreamTarget {
 	if maxFailures <= 0 {
 		maxFailures = 3
 	}
 	if cooldown <= 0 {
 		cooldown = 10 * time.Second
 	}
+	if healthType == "" {
+		healthType = "http"
+	}
 
 	return &UpstreamTarget{
-		URL:             targetURL,
-		HealthCheckPath: healthPath,
-		MaxFailures:     int32(maxFailures),
-		State:           StateClosed,
-		LastStateChange: time.Now(),
-		CooldownPeriod:  cooldown,
+		URL:                targetURL,
+		HealthCheckType:    strings.ToLower(strings.TrimSpace(healthType)),
+		HealthCheckPath:    healthPath,
+		HealthCheckService: healthService,
+		MaxFailures:        int32(maxFailures),
+		State:              StateClosed,
+		LastStateChange:    time.Now(),
+		CooldownPeriod:     cooldown,
 	}
 }
 
@@ -108,9 +121,9 @@ func (t *UpstreamTarget) RecordFailure() {
 	}
 }
 
-// StartActiveHealthCheck starts a background prober if HealthCheckPath is set.
+// StartActiveHealthCheck starts a background prober if HealthCheckPath or gRPC probing is set.
 func (t *UpstreamTarget) StartActiveHealthCheck(client *http.Client, interval time.Duration) {
-	if t.HealthCheckPath == "" {
+	if t.HealthCheckPath == "" && t.HealthCheckType != "grpc" {
 		return
 	}
 	if interval <= 0 {
@@ -122,7 +135,9 @@ func (t *UpstreamTarget) StartActiveHealthCheck(client *http.Client, interval ti
 	t.cancelProbe = cancel
 
 	probeURL := *t.URL
-	probeURL.Path = singleJoiningSlash(t.URL.Path, t.HealthCheckPath)
+	if t.HealthCheckPath != "" {
+		probeURL.Path = singleJoiningSlash(t.URL.Path, t.HealthCheckPath)
+	}
 
 	go func() {
 		ticker := time.NewTicker(interval)
@@ -133,23 +148,32 @@ func (t *UpstreamTarget) StartActiveHealthCheck(client *http.Client, interval ti
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				req, err := http.NewRequestWithContext(ctx, "GET", probeURL.String(), nil)
-				if err != nil {
-					t.RecordFailure()
-					continue
-				}
-
-				resp, err := client.Do(req)
-				if err != nil {
-					t.RecordFailure()
-					continue
-				}
-				_ = resp.Body.Close()
-
-				if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-					t.RecordSuccess()
+				if t.HealthCheckType == "grpc" {
+					ok, err := ProbeGRPCHealth(ctx, t.URL.String(), t.HealthCheckService, interval)
+					if ok && err == nil {
+						t.RecordSuccess()
+					} else {
+						t.RecordFailure()
+					}
 				} else {
-					t.RecordFailure()
+					req, err := http.NewRequestWithContext(ctx, "GET", probeURL.String(), nil)
+					if err != nil {
+						t.RecordFailure()
+						continue
+					}
+
+					resp, err := client.Do(req)
+					if err != nil {
+						t.RecordFailure()
+						continue
+					}
+					_ = resp.Body.Close()
+
+					if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+						t.RecordSuccess()
+					} else {
+						t.RecordFailure()
+					}
 				}
 			}
 		}

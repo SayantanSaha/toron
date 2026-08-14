@@ -133,7 +133,9 @@ type ProxyOptions struct {
 	Targets             []string
 	Algorithm           Algorithm
 	Timeout             time.Duration
+	HealthCheckType     string
 	HealthCheckPath     string
+	HealthCheckService  string
 	HealthCheckInterval time.Duration
 	MaxFailures         int
 	CooldownPeriod      time.Duration
@@ -175,8 +177,8 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 			return nil, fmt.Errorf("proxy: invalid target URL %q: %w", targetStr, err)
 		}
 
-		targetNode := NewUpstreamTarget(parsedURL, opts.HealthCheckPath, opts.MaxFailures, opts.CooldownPeriod)
-		if opts.HealthCheckPath != "" {
+		targetNode := NewUpstreamTargetWithHealth(parsedURL, opts.HealthCheckType, opts.HealthCheckPath, opts.HealthCheckService, opts.MaxFailures, opts.CooldownPeriod)
+		if opts.HealthCheckPath != "" || strings.ToLower(opts.HealthCheckType) == "grpc" {
 			targetNode.StartActiveHealthCheck(client, opts.HealthCheckInterval)
 		}
 		upstreamTargets = append(upstreamTargets, targetNode)
@@ -316,6 +318,13 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	// Copy upstream body
 	if outResp.Body != nil {
 		_, _ = io.Copy(res.Body, outResp.Body)
+	}
+
+	// Copy upstream trailers after reading body (e.g. grpc-status, grpc-message)
+	for key, values := range outResp.Trailer {
+		for _, val := range values {
+			res.Header.Add(key, val)
+		}
 	}
 }
 

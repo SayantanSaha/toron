@@ -141,7 +141,9 @@ type ProxyRouteConfig struct {
 	Target              string            `yaml:"target" json:"target"`
 	Targets             []string          `yaml:"targets" json:"targets"`
 	Algorithm           string            `yaml:"algorithm" json:"algorithm"`
+	HealthCheckType     string            `yaml:"health_check_type" json:"health_check_type"`
 	HealthCheckPath     string            `yaml:"health_check_path" json:"health_check_path"`
+	HealthCheckService  string            `yaml:"health_check_service" json:"health_check_service"`
 	HealthCheckInterval time.Duration     `yaml:"health_check_interval" json:"health_check_interval"`
 	ConsecutiveFailures int               `yaml:"consecutive_failures" json:"consecutive_failures"`
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`

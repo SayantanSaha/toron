@@ -75,12 +75,25 @@ routes:
         keys:
           - "demo-api-key-12345"
 
-  # 9. Layer 4 TCP Socket Stream Proxy Route (Listen Port 8090 -> TCP Backend 9090)
+  # 9. gRPC Service Route + Native grpc.health.v1 Health Prober
+  - type: "upstream"
+    prefix: "/order.OrderService"
+    algorithm: "round_robin"
+    targets:
+      - "http://localhost:9005"
+      - "http://localhost:9006"
+    health_check_type: "grpc"
+    health_check_service: "OrderService"
+    health_check_interval: 5s
+    consecutive_failures: 3
+    cooldown_period: 15s
+
+  # 10. Layer 4 TCP Socket Stream Proxy Route (Listen Port 8090 -> TCP Backend 9090)
   - type: "tcp"
     listen_port: 8090
     target: "127.0.0.1:9090"
 
-  # 10. Layer 4 UDP Datagram Proxy Route (Listen Port 8091 -> UDP Backend 9091)
+  # 11. Layer 4 UDP Datagram Proxy Route (Listen Port 8091 -> UDP Backend 9091)
   - type: "udp"
     listen_port: 8091
     target: "127.0.0.1:9091"

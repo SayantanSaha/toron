@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-14 - Prototype 28 Release (Native gRPC Health Checking Protocol & HTTP/2 Trailers Gateway)
+
+### Added
+- **Native `grpc.health.v1.Health` Prober**: Added binary Protobuf frame encoder/decoder in `pkg/proxy/grpc_health.go` supporting active `grpc.health.v1.Health/Check` background health probing over HTTP/2 (`TASK-038`, `REQ-038`).
+- **HTTP/2 Trailers Gateway Preservation**: Forwarded upstream trailing headers (`grpc-status`, `grpc-message`, `grpc-status-details-bin`) through the reverse proxy to downstream clients.
+- **gRPC Route Configuration**: Added `health_check_type: "grpc"` and `health_check_service: "<name>"` options to `routes.yaml` and `ProxyRouteConfig`.
+
+### Related Tasks
+- `TASK-038`: Implement Native gRPC Health Checking Prober and HTTP/2 Trailers Preservation
+
 ## 2026-08-14 - Prototype 27 Release (Next-Gen Response Compression: Brotli & Zstandard)
 
 ### Added

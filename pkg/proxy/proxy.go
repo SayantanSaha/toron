@@ -139,6 +139,7 @@ type ProxyOptions struct {
 	CooldownPeriod      time.Duration
 	RateLimit           string
 	StickyCookieName    string
+	Auth                any
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.

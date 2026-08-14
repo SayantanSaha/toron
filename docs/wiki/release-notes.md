@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-14 - Prototype 26 Release (Multi-Scheme Authentication: JWT, API Key, and Basic Auth)
+
+### Added
+- **Multi-Scheme Auth Middleware**: Added `AuthMiddleware` in `pkg/router/auth.go` supporting RFC 7519 JWT verification (HS256/HS384/HS512), API key authentication, and RFC 7617 HTTP Basic authentication (`TASK-036`, `REQ-036`).
+- **Timing Attack Resistance**: Used `crypto/subtle.ConstantTimeCompare` across all signature and credential comparisons.
+- **Route & Global Integration**: Supported configuring authentication per route rule in `routes.yaml` or globally in `config.yaml`, injecting `X-Authenticated-User` headers into upstream requests.
+
+### Related Tasks
+- `TASK-036`: Implement Multi-Scheme Authentication Middleware (JWT HS256, API Key, and HTTP Basic Auth)
+
 ## 2026-08-14 - Prototype 25 Release (In-Memory HTTP Response Caching & Cache-Control)
 
 ### Added

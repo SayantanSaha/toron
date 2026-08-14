@@ -94,6 +94,26 @@ func main() {
 			Types:     appCfg.Server.Compression.Types,
 		}))
 	}
+	if appCfg.Server.Auth.Type != "" {
+		r.Use(router.NewAuthMiddleware(router.AuthConfig{
+			Type: router.AuthType(appCfg.Server.Auth.Type),
+			JWT: router.JWTConfig{
+				Secret:   appCfg.Server.Auth.JWT.Secret,
+				Issuer:   appCfg.Server.Auth.JWT.Issuer,
+				Audience: appCfg.Server.Auth.JWT.Audience,
+			},
+			APIKey: router.APIKeyConfig{
+				Keys:   appCfg.Server.Auth.APIKey.Keys,
+				Header: appCfg.Server.Auth.APIKey.Header,
+				Query:  appCfg.Server.Auth.APIKey.Query,
+			},
+			Basic: router.BasicAuthConfig{
+				Users: appCfg.Server.Auth.Basic.Users,
+				Realm: appCfg.Server.Auth.Basic.Realm,
+			},
+			Excluded: appCfg.Server.Auth.Excluded,
+		}))
+	}
 
 	// Register Internal Management API Routes (/internal/api/)
 	internalRoutes := make([]server.RouteInfo, 0)
@@ -156,7 +176,25 @@ func main() {
 			host := pr.GetHost()
 			if pr.IsStatic() {
 				log.Printf("[TORON] Configuring Static Route: host %q, prefix %q (headers: %v) -> dir %q", host, pr.Prefix, pr.Headers, pr.GetDir())
-				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{}); err != nil {
+				authCfg := router.AuthConfig{
+					Type: router.AuthType(pr.Auth.Type),
+					JWT: router.JWTConfig{
+						Secret:   pr.Auth.JWT.Secret,
+						Issuer:   pr.Auth.JWT.Issuer,
+						Audience: pr.Auth.JWT.Audience,
+					},
+					APIKey: router.APIKeyConfig{
+						Keys:   pr.Auth.APIKey.Keys,
+						Header: pr.Auth.APIKey.Header,
+						Query:  pr.Auth.APIKey.Query,
+					},
+					Basic: router.BasicAuthConfig{
+						Users: pr.Auth.Basic.Users,
+						Realm: pr.Auth.Basic.Realm,
+					},
+					Excluded: pr.Auth.Excluded,
+				}
+				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{RateLimit: pr.RateLimit, Auth: authCfg}); err != nil {
 					log.Fatalf("[TORON] Invalid static route configuration for prefix %q: %v", pr.Prefix, err)
 				}
 			} else if pr.IsTCP() {
@@ -202,6 +240,24 @@ func main() {
 				targets := pr.GetTargets()
 				algo := pr.GetAlgorithm()
 				log.Printf("[TORON] Configuring Reverse Proxy Route: host %q, prefix %q (headers: %v) -> targets %v [algo: %s, healthCheck: %q]", host, pr.Prefix, pr.Headers, targets, algo, pr.HealthCheckPath)
+				authCfg := router.AuthConfig{
+					Type: router.AuthType(pr.Auth.Type),
+					JWT: router.JWTConfig{
+						Secret:   pr.Auth.JWT.Secret,
+						Issuer:   pr.Auth.JWT.Issuer,
+						Audience: pr.Auth.JWT.Audience,
+					},
+					APIKey: router.APIKeyConfig{
+						Keys:   pr.Auth.APIKey.Keys,
+						Header: pr.Auth.APIKey.Header,
+						Query:  pr.Auth.APIKey.Query,
+					},
+					Basic: router.BasicAuthConfig{
+						Users: pr.Auth.Basic.Users,
+						Realm: pr.Auth.Basic.Realm,
+					},
+					Excluded: pr.Auth.Excluded,
+				}
 				opts := proxy.ProxyOptions{
 					Targets:             targets,
 					Algorithm:           proxy.Algorithm(algo),
@@ -212,6 +268,7 @@ func main() {
 					CooldownPeriod:      pr.CooldownPeriod,
 					RateLimit:           pr.RateLimit,
 					StickyCookieName:    pr.StickyCookieName,
+					Auth:                authCfg,
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)

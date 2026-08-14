@@ -66,6 +66,35 @@ type CacheConfig struct {
 	MaxPayloadSize int           `yaml:"max_payload_size" json:"max_payload_size"`
 }
 
+// JWTConfig captures JWT authentication settings.
+type JWTConfig struct {
+	Secret   string `yaml:"secret" json:"secret"`
+	Issuer   string `yaml:"issuer" json:"issuer"`
+	Audience string `yaml:"audience" json:"audience"`
+}
+
+// APIKeyConfig captures API key authentication settings.
+type APIKeyConfig struct {
+	Keys   []string `yaml:"keys" json:"keys"`
+	Header string   `yaml:"header" json:"header"`
+	Query  string   `yaml:"query" json:"query"`
+}
+
+// BasicAuthConfig captures HTTP Basic authentication settings.
+type BasicAuthConfig struct {
+	Users map[string]string `yaml:"users" json:"users"`
+	Realm string            `yaml:"realm" json:"realm"`
+}
+
+// AuthConfig captures multi-scheme authentication settings.
+type AuthConfig struct {
+	Type     string          `yaml:"type" json:"type"`
+	JWT      JWTConfig       `yaml:"jwt" json:"jwt"`
+	APIKey   APIKeyConfig    `yaml:"api_key" json:"api_key"`
+	Basic    BasicAuthConfig `yaml:"basic" json:"basic"`
+	Excluded []string        `yaml:"excluded" json:"excluded"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
 	Host           string            `yaml:"host" json:"host"`
@@ -82,6 +111,7 @@ type ServerConfig struct {
 	ACME           ACMEConfig        `yaml:"acme" json:"acme"`
 	Compression    CompressionConfig `yaml:"compression" json:"compression"`
 	Cache          CacheConfig       `yaml:"cache" json:"cache"`
+	Auth           AuthConfig        `yaml:"auth" json:"auth"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -117,6 +147,7 @@ type ProxyRouteConfig struct {
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
 	RateLimit           string            `yaml:"rate_limit" json:"rate_limit"`
 	StickyCookieName    string            `yaml:"sticky_cookie_name" json:"sticky_cookie_name"`
+	Auth                AuthConfig        `yaml:"auth" json:"auth"`
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").

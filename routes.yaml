@@ -65,10 +65,15 @@ routes:
       - "http://localhost:9001"
       - "http://localhost:9002"
 
-  # 8. Single Target Upstream Route
+  # 8. Single Target Upstream Route + API Key Authentication
   - type: "upstream"
     prefix: "/services/auth"
     target: "http://localhost:9008"
+    auth:
+      type: "api_key"
+      api_key:
+        keys:
+          - "demo-api-key-12345"
 
   # 9. Layer 4 TCP Socket Stream Proxy Route (Listen Port 8090 -> TCP Backend 9090)
   - type: "tcp"

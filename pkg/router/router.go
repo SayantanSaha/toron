@@ -193,6 +193,12 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 		handler = rlMw(handler)
 	}
 
+	if opts.Auth != nil {
+		if authCfg, ok := opts.Auth.(AuthConfig); ok && authCfg.Type != "" {
+			handler = NewAuthMiddleware(authCfg)(handler)
+		}
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{

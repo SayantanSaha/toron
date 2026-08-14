@@ -7,31 +7,41 @@ server:
   read_timeout: 5s
   write_timeout: 5s
   idle_timeout: 30s
-  max_header_bytes: 8192      # 8 KB
-  max_body_bytes: 4194304     # 4 MB
+  max_header_bytes: 8192      # 8 KB limit on HTTP request headers
+  max_body_bytes: 4194304     # 4 MB limit on HTTP request payload body
+
+  # HTTP/2 Stream Multiplexing & Cleartext h2c Engine Settings
   http2:
     enabled: true
     max_concurrent_streams: 250
     max_frame_size: 16384
-    allow_h2c: true
+    allow_h2c: true           # Allow HTTP/2 Cleartext (h2c) upgrade connections
+
+  # HTTP/3 QUIC (UDP) Protocol Engine Settings
   http3:
-    enabled: true             # Enable HTTP/3 QUIC (UDP) protocol engine
+    enabled: true             # Enable HTTP/3 QUIC protocol engine over UDP
     port: 8443                # HTTP/3 QUIC UDP listener port
     alt_svc_header: true      # Automatically advertise Alt-Svc: h3=":8443" headers
+
+  # HTTPS TLS Encryption & ALPN Protocol Negotiation Settings
   tls:
     enabled: false
     cert_file: ""
     key_file: ""
-    auto_dev_cert: true
+    auto_dev_cert: true       # Auto-generate self-signed ECDSA certificate for development if TLS enabled
+
+  # ACME Zero-Touch Production SSL Certificate Management (Let's Encrypt / ZeroSSL)
   acme:
-    enabled: false            # Enable ACME zero-touch production SSL issuance (Let's Encrypt / ZeroSSL)
+    enabled: false            # Enable ACME automated SSL certificate issuance and background renewal
     directory_url: "https://acme-v02.api.letsencrypt.org/directory"
     email: "admin@toron.local"
     domains:
       - "api.toron.local"
+      - "toron.local"
     cache_dir: "./certs"
-    challenge_type: "http-01"
+    challenge_type: "http-01" # Challenge validation strategy: "http-01" or "tls-alpn-01"
 
+# Logging and Telemetry Output Settings
 logging:
   level: "info"
   format: "text"

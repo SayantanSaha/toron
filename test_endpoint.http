@@ -204,3 +204,37 @@ TE: trailers
 POST {{baseUrl}}/grpc.health.v1.Health/Check
 Content-Type: application/grpc
 TE: trailers
+
+
+###############################################################################
+# 13. Web Application Firewall (WAF) & Protocol Integrity Guard (OWASP Top 10)
+###############################################################################
+
+### 13.1 WAF SQL Injection (SQLi) Block (Expect 403 Forbidden with SQLI-001 rule)
+GET {{baseUrl}}/health?q=1'+UNION+SELECT+null,username,password+FROM+users--
+Accept: application/json
+
+### 13.2 WAF Cross-Site Scripting (XSS) Block (Expect 403 Forbidden with XSS-001 rule)
+GET {{baseUrl}}/health?q=<script>alert('xss')</script>
+Accept: application/json
+
+### 13.3 WAF Path Traversal / LFI Block (Expect 403 Forbidden with TRAVERSAL-001 rule)
+GET {{baseUrl}}/health?file=../../../../etc/passwd
+Accept: application/json
+
+### 13.4 WAF Command Injection / RCE Block (Expect 403 Forbidden with RCE-001 rule)
+GET {{baseUrl}}/health?cmd=ping+127.0.0.1;+/bin/sh
+Accept: application/json
+
+### 13.5 Protocol Integrity: Request Smuggling Prevention (Expect 400 Bad Request)
+# Reject ambiguous requests containing both Content-Length and Transfer-Encoding
+POST {{baseUrl}}/health
+Content-Length: 10
+Transfer-Encoding: chunked
+
+0
+
+### 13.6 Protocol Integrity: Control Character Filter (Expect 400 Bad Request)
+GET {{baseUrl}}/health?param=val%07ue
+Accept: application/json
+

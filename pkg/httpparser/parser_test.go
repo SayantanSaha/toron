@@ -55,6 +55,16 @@ func TestParseRequest_ValidPOSTWithBody(t *testing.T) {
 	}
 }
 
+func TestParseRequest_SmugglingRejection(t *testing.T) {
+	rawReq := "POST /submit HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+	opts := httpparser.DefaultParserOptions()
+
+	_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+	if err == nil {
+		t.Fatal("expected error parsing request with conflicting Content-Length and Transfer-Encoding headers")
+	}
+}
+
 func TestParseRequest_HeaderLimits(t *testing.T) {
 	hugeHeader := "GET / HTTP/1.1\r\nHost: localhost\r\nX-Large-Header: " + string(make([]byte, 10000)) + "\r\n\r\n"
 	opts := httpparser.ParserOptions{MaxHeaderBytes: 1024, MaxBodyBytes: 1024}

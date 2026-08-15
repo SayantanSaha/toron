@@ -94,6 +94,11 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 		req.Header.Add(k, v)
 	}
 
+	// HTTP Request Smuggling Prevention (RFC 7230 §3.3.3)
+	if req.Header.Get("Content-Length") != "" && req.Header.Get("Transfer-Encoding") != "" {
+		return nil, fmt.Errorf("%w: conflicting Content-Length and Transfer-Encoding headers", ErrBadRequest)
+	}
+
 	// Determine Body Length
 	if contentLengthStr := req.Header.Get("Content-Length"); contentLengthStr != "" {
 		cl, err := strconv.ParseInt(contentLengthStr, 10, 64)

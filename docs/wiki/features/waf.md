@@ -40,7 +40,11 @@ Toron includes a native, high-throughput **Web Application Firewall (WAF)** midd
 2. **Flexible Evaluation Modes**:
    - `enforce`: Immediately blocks malicious requests with HTTP `403 Forbidden` and a structured JSON error response.
    - `detection`: Passes requests through to application handlers while logging anomaly threat scores and attaching `X-Toron-WAF-Anomaly-Score` headers.
-3. **Multi-Location & Bounded Inspection**:
+3. **Protocol Integrity & HTTP Request Smuggling Guard**:
+   - **Request Smuggling Prevention**: Rejects requests containing both `Content-Length` and `Transfer-Encoding` headers or mismatched duplicate `Content-Length` header values with `400 Bad Request`.
+   - **Control Character Filtering**: Rejects non-printable ASCII control characters (`0x00–0x1F`, `0x7F`) in paths, query parameters, or header fields.
+   - **Payload Size Limits**: Enforces strict byte limits on single header values (4 KB), query strings (4 KB), and parameters (2 KB) returning `413 Payload Too Large`.
+4. **Multi-Location & Bounded Inspection**:
    - Scans URL paths, raw query strings, HTTP headers, and request body payloads up to a configurable maximum size (`max_inspect_body_size`), preserving payload streams for downstream handlers.
 
 ## Configuration in `config.yaml`

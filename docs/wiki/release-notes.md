@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-15 - Prototype 32 Release (Protocol Integrity & HTTP Request Smuggling Guard)
+
+### Added
+- **HTTP Request Smuggling Prevention (CL.TE / TE.CL)**: Implemented dual-layer detection in `pkg/httpparser/parser.go` and `pkg/waf/protocol.go` rejecting requests with conflicting `Content-Length` and `Transfer-Encoding` headers or mismatched multiple `Content-Length` header values (`TASK-042`, `REQ-042`).
+- **Malformed Request Control Character Guard**: Added non-printable control character filtering (`0x00–0x1F` except `\t`, `0x7F DEL`) in URL paths, query strings, and header keys/values returning `400 Bad Request`.
+- **Payload Size Bounding**: Added strict boundary limits on single header values (`max_header_value_bytes`, 4 KB), query strings (`max_query_size`, 4 KB), and parameters (`max_param_size`, 2 KB) returning `413 Payload Too Large`.
+
+### Related Tasks
+- `TASK-042`: Implement Protocol Integrity and Request Smuggling Guard
+
 ## 2026-08-15 - Prototype 31 Release (Core Web Application Firewall Engine & OWASP Injection Protection)
 
 ### Added

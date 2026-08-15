@@ -113,10 +113,11 @@ How Toron compares to industry standards:
 
 ## 4. ⚠️ Honest PO Critique: Strategic Horizons & Technical Debt
 
-With Prototypes 30 through 35 implementing CORS, Security Headers, WAF, Request Smuggling Guards, CIDR IP ACLs, Custom Regex Rules, and Security Telemetry UI, remaining strategic horizons focus on cluster scaling and cloud-native integration:
+With Prototypes 30 through 35 implementing CORS, Security Headers, WAF, Request Smuggling Guards, CIDR IP ACLs, Custom Regex Rules, and Security Telemetry UI, remaining strategic horizons focus on dynamic container discovery, cluster scaling, and cloud-native integration:
 
 | Horizon Area | Impact | Description | PO Priority |
 | :--- | :--- | :--- | :--- |
+| **Container Auto-Discovery Provider** | High | Dynamic Docker socket (`/var/run/docker.sock`) & container engine event watcher. Automatically discovers container start/stop events and container labels (`toron.host`, `toron.port`, `toron.path`) to dynamically register/deregister upstream targets without manual YAML editing. | **High** (Prototype 36) |
 | **Distributed / Redis Cache Backend** | Medium | In-memory response cache is node-local. Clustered Toron instances require a Redis or Memcached backend option to share cached HTTP responses across nodes. | **High** |
 | **REST/JSON to gRPC Transcoding** | Low | Direct transcoding from REST JSON (`GET /v1/users/123`) to binary Protobuf gRPC RPCs (`GetUserRequest`) via `.proto` definitions. | **Medium** |
 | **Kubernetes Ingress Controller** | High | Custom Resource Definitions (CRDs) and ingress controller runtime for Kubernetes cluster edge routing. | **Medium** |
@@ -130,14 +131,18 @@ With Prototypes 30 through 35 implementing CORS, Security Headers, WAF, Request 
 timeline
     title Toron Product Horizons
     Current (v1.0.0-p35) : Event Reactor Core : HTTP/2 & HTTP/3 QUIC : L4/L7 Routing : ACME SSL : Rate Limiting : Zstd/Brotli Compression : gRPC Probing & Trailers : Per-Host SNI & mTLS : CORS & Security Headers : WAF Engine & OWASP Rules : Request Smuggling Guard : CIDR IP ACLs : Custom WAF Regex & Hot Reload : Read-Only Security Control Center
-    Horizon 1 (Cluster & State) : Distributed Shared Cache (Redis) : Dynamic REST-to-gRPC Transcoding Engine
-    Horizon 2 (Cloud-Native Ecosystem) : Kubernetes Ingress Controller CRDs : Service Mesh Sidecar Mode : Let's Encrypt DNS-01 Provider Plugins
+    Horizon 1 (Container & State) : Container Auto-Discovery (Docker Socket Watcher) : Distributed Shared Cache (Redis)
+    Horizon 2 (Cloud-Native Ecosystem) : Dynamic REST-to-gRPC Transcoding : Kubernetes Ingress Controller CRDs : Service Mesh Sidecar Mode : Let's Encrypt DNS-01 Provider Plugins
 ```
 
 ### Immediate Next Steps Recommended:
-1. **Prototype 36 — Distributed Shared Cache Backend (Redis)**:
+1. **Prototype 36 — Container Auto-Discovery & Docker Provider (`pkg/discovery`)**:
+   * Listen to Docker daemon event stream (`/var/run/docker.sock` Unix domain socket).
+   * Automatically extract container labels (`toron.enable=true`, `toron.rule=Host('api.example.com')`, `toron.port=8080`).
+   * Dynamically add/remove upstream targets to the routing matrix with zero-downtime hot reloading.
+2. **Prototype 37 — Distributed Shared Cache Backend (Redis)**:
    * Extend `ResponseCache` with a Redis backend option for multi-node cluster caching.
-2. **Prototype 37 — REST-to-gRPC Transcoding Engine**:
+3. **Prototype 38 — REST-to-gRPC Transcoding Engine**:
    * Add JSON-to-Protobuf gRPC transcoding based on `.proto` service descriptors.
 
 ---
@@ -151,5 +156,5 @@ timeline
 > * **Stability**: Configuration dry-run validation, zero-downtime hot reload, thread-safe memory management, and robust panic recovery.
 > * **Positioning**: A standalone, ultra-high-performance, developer-friendly, zero-license alternative to NGINX, Traefik, and Caddy.
 >
-> **Status**: Production-ready for enterprise edge proxy deployments, multi-tenant security gateways, high-throughput gRPC routers, and continued roadmap expansion.
+> **Status**: Production-ready for enterprise edge proxy deployments, multi-tenant security gateways, high-throughput gRPC routers, and continued roadmap expansion into Container Auto-Discovery.
 

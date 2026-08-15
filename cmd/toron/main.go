@@ -79,7 +79,17 @@ func main() {
 	r.Use(router.LoggerMiddleware())
 	r.Use(router.RecoveryMiddleware())
 	if appCfg.Server.WAF.Enabled {
-		if wafEngine, wafErr := waf.NewEngine(appCfg.Server.WAF); wafErr == nil {
+		globalWafCfg := appCfg.Server.WAF
+		if appCfg.Proxy.Enabled {
+			for _, pr := range appCfg.Proxy.Routes {
+				if pr.WAF.Enabled || len(pr.WAF.AllowedIPs) > 0 || len(pr.WAF.DeniedIPs) > 0 || len(pr.WAF.DisabledRules) > 0 || pr.WAF.Mode != "" {
+					if pr.Prefix != "" {
+						globalWafCfg.Excluded = append(globalWafCfg.Excluded, pr.Prefix)
+					}
+				}
+			}
+		}
+		if wafEngine, wafErr := waf.NewEngine(globalWafCfg); wafErr == nil {
 			wafMw := waf.NewWAFMiddleware(wafEngine)
 			r.Use(func(next router.HandlerFunc) router.HandlerFunc {
 				return func(req *httpparser.Request, res *httpparser.Response) {

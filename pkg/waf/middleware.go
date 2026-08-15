@@ -2,6 +2,7 @@ package waf
 
 import (
 	"bytes"
+	"strings"
 
 	"toron/pkg/httpparser"
 )
@@ -21,6 +22,14 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 			if engine == nil || !engine.Config().Enabled {
 				next(req, res)
 				return
+			}
+
+			// Check path exclusions (e.g. routes with dedicated route-level WAF policies)
+			for _, p := range engine.Config().Excluded {
+				if req.Path == p || strings.HasPrefix(req.Path, strings.TrimSuffix(p, "/")+"/") {
+					next(req, res)
+					return
+				}
 			}
 
 			// 0. Fast-Path CIDR IP Access Control Check

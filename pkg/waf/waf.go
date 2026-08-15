@@ -52,6 +52,7 @@ type WAFConfig struct {
 	DisabledRules      []string `json:"disabled_rules" yaml:"disabled_rules"`
 	AllowedIPs         []string `json:"allowed_ips" yaml:"allowed_ips"`
 	DeniedIPs          []string `json:"denied_ips" yaml:"denied_ips"`
+	Excluded           []string `json:"excluded" yaml:"excluded"`
 }
 
 // DefaultConfig returns safe default WAF settings.
@@ -64,6 +65,7 @@ func DefaultConfig() WAFConfig {
 		DisabledRules:      nil,
 		AllowedIPs:         nil,
 		DeniedIPs:          nil,
+		Excluded:           nil,
 	}
 }
 

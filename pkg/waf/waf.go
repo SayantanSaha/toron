@@ -50,6 +50,8 @@ type WAFConfig struct {
 	AnomalyThreshold   int      `json:"anomaly_threshold" yaml:"anomaly_threshold"`
 	MaxInspectBodySize int64    `json:"max_inspect_body_size" yaml:"max_inspect_body_size"`
 	DisabledRules      []string `json:"disabled_rules" yaml:"disabled_rules"`
+	AllowedIPs         []string `json:"allowed_ips" yaml:"allowed_ips"`
+	DeniedIPs          []string `json:"denied_ips" yaml:"denied_ips"`
 }
 
 // DefaultConfig returns safe default WAF settings.
@@ -60,6 +62,8 @@ func DefaultConfig() WAFConfig {
 		AnomalyThreshold:   5,
 		MaxInspectBodySize: 64 * 1024, // 64 KB
 		DisabledRules:      nil,
+		AllowedIPs:         nil,
+		DeniedIPs:          nil,
 	}
 }
 
@@ -67,10 +71,11 @@ func DefaultConfig() WAFConfig {
 type WAFEngine struct {
 	config WAFConfig
 	rules  []WAFRule
+	ipACL  *IPAccessList
 	mu     sync.RWMutex
 }
 
-// NewEngine initializes a WAFEngine with default OWASP rules and configuration.
+// NewEngine initializes a WAFEngine with default OWASP rules, IP ACLs, and configuration.
 func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 	if cfg.AnomalyThreshold <= 0 {
 		cfg.AnomalyThreshold = 5
@@ -80,6 +85,11 @@ func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 	}
 	if cfg.Mode == "" {
 		cfg.Mode = "enforce"
+	}
+
+	acl, err := NewIPAccessList(cfg.AllowedIPs, cfg.DeniedIPs)
+	if err != nil {
+		return nil, err
 	}
 
 	disabledMap := make(map[string]bool)
@@ -98,6 +108,7 @@ func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 	return &WAFEngine{
 		config: cfg,
 		rules:  activeRules,
+		ipACL:  acl,
 	}, nil
 }
 
@@ -241,3 +252,14 @@ func (e *WAFEngine) Config() WAFConfig {
 	defer e.mu.RUnlock()
 	return e.config
 }
+
+// IPAccessList returns the compiled IP access list associated with the engine.
+func (e *WAFEngine) IPAccessList() *IPAccessList {
+	if e == nil {
+		return nil
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.ipACL
+}
+

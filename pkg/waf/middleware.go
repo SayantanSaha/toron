@@ -4,18 +4,41 @@ import (
 	"bytes"
 
 	"toron/pkg/httpparser"
-	"toron/pkg/router"
 )
 
+// HandlerFunc describes an HTTP request handler function.
+type HandlerFunc func(req *httpparser.Request, res *httpparser.Response)
+
+// MiddlewareFunc describes middleware wrapping a HandlerFunc.
+type MiddlewareFunc func(next HandlerFunc) HandlerFunc
+
 // NewWAFMiddleware constructs router middleware using a WAFEngine.
-func NewWAFMiddleware(engine *WAFEngine) router.MiddlewareFunc {
+func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 	protocolCfg := DefaultProtocolConfig()
 
-	return func(next router.HandlerFunc) router.HandlerFunc {
+	return func(next HandlerFunc) HandlerFunc {
 		return func(req *httpparser.Request, res *httpparser.Response) {
 			if engine == nil || !engine.Config().Enabled {
 				next(req, res)
 				return
+			}
+
+			// 0. Fast-Path CIDR IP Access Control Check
+			if acl := engine.IPAccessList(); acl != nil && acl.HasRules() {
+				clientIP := ExtractClientIP(req)
+				if clientIP != nil {
+					allowed, reason := acl.CheckIP(clientIP)
+					if !allowed {
+						if res.Body == nil {
+							res.Body = bytes.NewBuffer(nil)
+						}
+						res.Body.Reset()
+						res.Header.Set("Content-Type", "application/json")
+						res.SetStatus(403)
+						_, _ = res.WriteString(`{"error":"Forbidden","message":"` + reason + `"}`)
+						return
+					}
+				}
 			}
 
 			// 1. Protocol Integrity & Request Smuggling Guard

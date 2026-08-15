@@ -14,6 +14,7 @@ import (
 	"toron/pkg/httpparser"
 	"toron/pkg/metrics"
 	"toron/pkg/proxy"
+	"toron/pkg/waf"
 )
 
 // RouteType specifies whether a route handler serves static site assets or proxies requests upstream.
@@ -196,6 +197,18 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 	if opts.Auth != nil {
 		if authCfg, ok := opts.Auth.(AuthConfig); ok && authCfg.Type != "" {
 			handler = NewAuthMiddleware(authCfg)(handler)
+		}
+	}
+
+	if opts.WAF != nil {
+		if wafCfg, ok := opts.WAF.(waf.WAFConfig); ok && (wafCfg.Enabled || len(wafCfg.AllowedIPs) > 0 || len(wafCfg.DeniedIPs) > 0 || len(wafCfg.DisabledRules) > 0 || wafCfg.Mode != "") {
+			if routeWafEngine, err := waf.NewEngine(wafCfg); err == nil {
+				nextHandler := handler
+				wafMw := waf.NewWAFMiddleware(routeWafEngine)
+				handler = func(req *httpparser.Request, res *httpparser.Response) {
+					wafMw(waf.HandlerFunc(nextHandler))(req, res)
+				}
+			}
 		}
 	}
 

@@ -104,3 +104,127 @@ func TestWAFMiddleware_BenignPassThrough(t *testing.T) {
 		t.Errorf("got status %d, want 200", res.StatusCode)
 	}
 }
+
+func TestWAFMiddleware_IPACL(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.DeniedIPs = []string{"198.51.100.0/24"}
+	cfg.AllowedIPs = []string{"10.0.0.0/8", "127.0.0.1"}
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+
+	mw := NewWAFMiddleware(engine)
+	nextCalled := false
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		nextCalled = true
+		res.SetStatus(200)
+	})
+
+	// 1. Test Denied IP
+	u, _ := url.Parse("http://localhost/test")
+	reqDenied := &httpparser.Request{
+		Method: "GET",
+		Path:   u.Path,
+		URL:    u,
+		Header: make(httpparser.Header),
+	}
+	reqDenied.Header.Set("X-Forwarded-For", "198.51.100.45")
+	resDenied := &httpparser.Response{
+		Header: make(httpparser.Header),
+		Body:   bytes.NewBuffer(nil),
+	}
+	handler(reqDenied, resDenied)
+
+	if nextCalled {
+		t.Error("expected denied IP to be blocked")
+	}
+	if resDenied.StatusCode != 403 {
+		t.Errorf("expected status 403, got %d", resDenied.StatusCode)
+	}
+	if !strings.Contains(resDenied.Body.String(), "denied") {
+		t.Errorf("expected body to mention denied reason, got: %s", resDenied.Body.String())
+	}
+
+	// 2. Test Allowed IP
+	nextCalled = false
+	reqAllowed := &httpparser.Request{
+		Method: "GET",
+		Path:   u.Path,
+		URL:    u,
+		Header: make(httpparser.Header),
+	}
+	reqAllowed.Header.Set("X-Forwarded-For", "10.1.2.3")
+	resAllowed := &httpparser.Response{
+		Header: make(httpparser.Header),
+		Body:   bytes.NewBuffer(nil),
+	}
+	handler(reqAllowed, resAllowed)
+
+	if !nextCalled {
+		t.Error("expected allowed IP to pass")
+	}
+	if resAllowed.StatusCode != 200 {
+		t.Errorf("expected status 200, got %d", resAllowed.StatusCode)
+	}
+
+	// 3. Test Disallowed IP (not in allowlist)
+	nextCalled = false
+	reqDisallowed := &httpparser.Request{
+		Method: "GET",
+		Path:   u.Path,
+		URL:    u,
+		Header: make(httpparser.Header),
+	}
+	reqDisallowed.Header.Set("X-Forwarded-For", "172.16.0.1")
+	resDisallowed := &httpparser.Response{
+		Header: make(httpparser.Header),
+		Body:   bytes.NewBuffer(nil),
+	}
+	handler(reqDisallowed, resDisallowed)
+
+	if nextCalled {
+		t.Error("expected disallowed IP to be blocked")
+	}
+	if resDisallowed.StatusCode != 403 {
+		t.Errorf("expected status 403, got %d", resDisallowed.StatusCode)
+	}
+}
+
+func TestWAFMiddleware_DisabledRules(t *testing.T) {
+	// Engine with SQLI-001 disabled
+	cfg := DefaultConfig()
+	cfg.DisabledRules = []string{"SQLI-001"}
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+
+	mw := NewWAFMiddleware(engine)
+	nextCalled := false
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		nextCalled = true
+		res.SetStatus(200)
+	})
+
+	u, _ := url.Parse("http://localhost/api?q=UNION+SELECT+1,2,3")
+	req := &httpparser.Request{
+		Method: "GET",
+		Path:   u.Path,
+		URL:    u,
+		Header: make(httpparser.Header),
+	}
+	res := &httpparser.Response{
+		Header: make(httpparser.Header),
+		Body:   bytes.NewBuffer(nil),
+	}
+	handler(req, res)
+
+	if !nextCalled {
+		t.Error("expected disabled rule payload to pass through")
+	}
+	if res.StatusCode != 200 {
+		t.Errorf("expected status 200, got %d", res.StatusCode)
+	}
+}
+

@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-15 - Prototype 33 Release (Route-Level WAF Overrides & CIDR IP Access Control Lists)
+
+### Added
+- **CIDR-Based IP Access Control Lists (ACLs)**: Implemented fast-path $O(1)$ IP allow/deny list filtering in `pkg/waf/ip_acl.go` supporting IPv4/IPv6 CIDR subnets (`allowed_ips`, `denied_ips`) and single IP addresses with automatic port stripping and proxy header (`X-Forwarded-For`, `X-Real-IP`) parsing (`TASK-043`, `REQ-043`).
+- **Per-Route WAF Configuration & Overrides**: Extended `routes.yaml` and `pkg/router/router.go` (`RoutePrefix`) to allow routes to independently configure dedicated `WAFEngine` instances with custom `mode`, `anomaly_threshold`, `disabled_rules`, and IP access lists.
+- **Selective OWASP Rule Tuning**: Enabled disabling individual threat rules (e.g. `SQLI-001`) on legacy backends without weakening gateway-wide security.
+
+### Related Tasks
+- `TASK-043`: Implement Route-Level WAF Overrides and CIDR IP Access Lists
+
 ## 2026-08-15 - Prototype 32 Release (Protocol Integrity & HTTP Request Smuggling Guard)
 
 ### Added

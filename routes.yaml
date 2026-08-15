@@ -109,3 +109,27 @@ routes:
   - type: "udp"
     listen_port: 8091
     target: "127.0.0.1:9091"
+
+  # 13. Route-Level WAF Override & CIDR IP Access Control List (Allowlist & Denylist)
+  - type: "upstream"
+    prefix: "/services/secure-admin"
+    target: "http://localhost:9001"
+    waf:
+      enabled: true
+      mode: "enforce"
+      allowed_ips:
+        - "10.0.0.0/8"
+        - "127.0.0.1"
+      denied_ips:
+        - "10.99.0.0/16"
+
+  # 14. Route-Level WAF Rule Tuning (Legacy API with SQLI-001 disabled)
+  - type: "upstream"
+    prefix: "/services/legacy-api"
+    target: "http://localhost:9002"
+    waf:
+      enabled: true
+      mode: "enforce"
+      disabled_rules:
+        - "SQLI-001"
+

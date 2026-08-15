@@ -142,6 +142,7 @@ type ProxyOptions struct {
 	RateLimit           string
 	StickyCookieName    string
 	Auth                any
+	WAF                 any
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.

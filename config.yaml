@@ -98,6 +98,10 @@ server:
     mode: "enforce"           # Evaluation mode: "enforce" (403 block) or "detection" (log-only score)
     anomaly_threshold: 5      # Threat score limit above which request is blocked
     max_inspect_body_size: 65536 # Maximum payload body bytes scanned (64 KB)
+    # allowed_ips:            # Global CIDR IP allowlist (when set, non-matching IPs get 403)
+    #   - "10.0.0.0/8"
+    # denied_ips:             # Global CIDR IP denylist (matching IPs get 403)
+    #   - "198.51.100.0/24"
 
 # Logging and Telemetry Output Settings
 logging:

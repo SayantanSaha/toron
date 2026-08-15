@@ -80,7 +80,12 @@ func main() {
 	r.Use(router.RecoveryMiddleware())
 	if appCfg.Server.WAF.Enabled {
 		if wafEngine, wafErr := waf.NewEngine(appCfg.Server.WAF); wafErr == nil {
-			r.Use(waf.NewWAFMiddleware(wafEngine))
+			wafMw := waf.NewWAFMiddleware(wafEngine)
+			r.Use(func(next router.HandlerFunc) router.HandlerFunc {
+				return func(req *httpparser.Request, res *httpparser.Response) {
+					wafMw(waf.HandlerFunc(next))(req, res)
+				}
+			})
 		}
 	}
 	if appCfg.Server.Cache.Enabled {
@@ -243,7 +248,7 @@ func main() {
 					},
 					Excluded: pr.Auth.Excluded,
 				}
-				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{RateLimit: pr.RateLimit, Auth: authCfg}); err != nil {
+				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{RateLimit: pr.RateLimit, Auth: authCfg, WAF: pr.WAF}); err != nil {
 					log.Fatalf("[TORON] Invalid static route configuration for prefix %q: %v", pr.Prefix, err)
 				}
 			} else if pr.IsTCP() {
@@ -320,6 +325,7 @@ func main() {
 					RateLimit:           pr.RateLimit,
 					StickyCookieName:    pr.StickyCookieName,
 					Auth:                authCfg,
+					WAF:                 pr.WAF,
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)

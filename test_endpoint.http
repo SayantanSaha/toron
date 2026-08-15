@@ -238,3 +238,18 @@ Transfer-Encoding: chunked
 GET {{baseUrl}}/health?param=val%07ue
 Accept: application/json
 
+### 13.7 Route-Level WAF CIDR IP Denylist Block (Expect 403 Forbidden)
+GET {{baseUrl}}/services/secure-admin/data
+X-Forwarded-For: 10.99.1.50
+Accept: application/json
+
+### 13.8 Route-Level WAF CIDR IP Allowlist Pass (Expect 200 OK)
+GET {{baseUrl}}/services/secure-admin/data
+X-Forwarded-For: 10.1.2.3
+Accept: application/json
+
+### 13.9 Route-Level WAF Disabled Rule Bypass (Expect 200 OK on /services/legacy-api)
+GET {{baseUrl}}/services/legacy-api/items?q=UNION+SELECT+1,2,3
+Accept: application/json
+
+

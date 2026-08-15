@@ -44,7 +44,13 @@ Toron includes a native, high-throughput **Web Application Firewall (WAF)** midd
    - **Request Smuggling Prevention**: Rejects requests containing both `Content-Length` and `Transfer-Encoding` headers or mismatched duplicate `Content-Length` header values with `400 Bad Request`.
    - **Control Character Filtering**: Rejects non-printable ASCII control characters (`0x00–0x1F`, `0x7F`) in paths, query parameters, or header fields.
    - **Payload Size Limits**: Enforces strict byte limits on single header values (4 KB), query strings (4 KB), and parameters (2 KB) returning `413 Payload Too Large`.
-4. **Multi-Location & Bounded Inspection**:
+4. **CIDR-Based IP Access Control Lists (ACLs)**:
+   - **Allowed IPs (`allowed_ips`)**: Configurable list of IPv4 and IPv6 CIDR blocks (e.g. `10.0.0.0/8`, `192.168.1.0/24`) or single IP addresses. When configured, requests originating from client IPs outside these ranges shall be immediately rejected with HTTP `403 Forbidden`.
+   - **Denied IPs (`denied_ips`)**: Configurable list of IPv4 and IPv6 CIDR blocks (e.g. `198.51.100.0/24`) or single IP addresses returning `403 Forbidden`.
+   - **Fast-Path $O(1)$ Pre-Inspection**: IP access checking executes before deep regex scanning or body buffering.
+5. **Per-Route WAF Customization & Overrides (`routes.yaml`)**:
+   - Any individual route in `routes.yaml` can define its own `waf:` block to selectively override global settings (e.g. tuning anomaly thresholds, disabling specific rules like `SQLI-001` for legacy backends, or setting dedicated CIDR allowlists).
+6. **Multi-Location & Bounded Inspection**:
    - Scans URL paths, raw query strings, HTTP headers, and request body payloads up to a configurable maximum size (`max_inspect_body_size`), preserving payload streams for downstream handlers.
 
 ## Configuration in `config.yaml`
@@ -58,6 +64,39 @@ server:
     anomaly_threshold: 5      # Threat score limit above which request is blocked
     max_inspect_body_size: 65536 # Maximum payload body bytes scanned (64 KB)
     disabled_rules: []        # Optional list of rule IDs to bypass (e.g. ["SQLI-002"])
+    allowed_ips:              # Optional global CIDR IP allowlist
+      - "10.0.0.0/8"
+      - "127.0.0.1"
+    denied_ips:               # Optional global CIDR IP denylist
+      - "198.51.100.0/24"
+```
+
+## Route-Level WAF Overrides in `routes.yaml`
+
+```yaml
+routes:
+  # 1. Admin route with strict CIDR IP access control
+  - type: "upstream"
+    prefix: "/services/secure-admin"
+    target: "http://localhost:9001"
+    waf:
+      enabled: true
+      mode: "enforce"
+      allowed_ips:
+        - "10.0.0.0/8"
+        - "127.0.0.1"
+      denied_ips:
+        - "10.99.0.0/16"
+
+  # 2. Legacy API route with SQLI-001 rule disabled
+  - type: "upstream"
+    prefix: "/services/legacy-api"
+    target: "http://localhost:9002"
+    waf:
+      enabled: true
+      mode: "enforce"
+      disabled_rules:
+        - "SQLI-001"
 ```
 
 ## Triggered Block Response Format
@@ -72,3 +111,4 @@ When a request is blocked in `enforce` mode, Toron returns `403 Forbidden` with 
   "triggered_rules": ["SQLI-001"]
 }
 ```
+

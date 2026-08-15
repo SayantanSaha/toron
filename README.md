@@ -21,6 +21,7 @@
 * **In-Memory HTTP Response Caching & RFC 7234 Cache-Control**: Thread-safe in-memory caching for idempotent GET and HEAD requests with TTL expiration, `no-store` / `no-cache` compliance, `Age` calculation, and `X-Cache: HIT/MISS` diagnostics.
 * **Multi-Scheme Authentication Middleware**: Built-in edge authentication supporting RFC 7519 JWT Bearer tokens (HS256/HS384/HS512), API keys, and RFC 7617 HTTP Basic authentication with timing-attack resistant comparisons (`crypto/subtle`) and upstream `X-Authenticated-User` context propagation.
 * **CORS Policies & Enterprise Security Headers**: Zero-allocation CORS preflight handling (`OPTIONS` 204 short-circuiting, origin wildcards/subdomains) and automatic injection of OWASP security headers (`Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Content-Security-Policy`, `Permissions-Policy`).
+* **Web Application Firewall (WAF) & OWASP Injection Protection**: High-throughput WAF inspection engine (`pkg/waf`) mitigating OWASP Top 10 vulnerabilities—SQL Injection (`SQLI-001..003`), Cross-Site Scripting (`XSS-001..003`), Path Traversal (`TRAVERSAL-001..002`), and Command Injection / RCE (`RCE-001..002`) across URLs, query strings, headers, and request bodies with configurable `enforce` (403 block) vs `detection` evaluation modes.
 * **Prometheus Metrics & W3C Tracing**: Standardized `/metrics` endpoint exporting Prometheus counters (`toron_http_requests_total`), latency histograms (`toron_http_request_duration_seconds`), QUIC stream gauges, and circuit breaker trip counters; automatic OpenTelemetry W3C `traceparent` context header propagation across upstream target microservices.
 * **Web Control Center & JSON Metrics API**: Mobile-first Web Dashboard UI served on `/internal/dashboard/` powered by internal management JSON API endpoints (`/internal/api/status`, `/internal/api/metrics`, `/internal/api/routes`, `/internal/api/upstreams/health`, `/internal/api/proxy-test`).
 * **Security & Path Traversal Guards**: Strict header (8 KB) and body (4 MB) size limits, socket read/write timeouts, path traversal sanitization, and panic recovery middleware.
@@ -107,6 +108,13 @@ server:
     max_payload_size: 1048576 # 1 MB maximum response body size per cached entry
   auth:
     type: ""                  # Authentication type: "jwt", "api_key", "basic", or "" (disabled)
+
+  # Web Application Firewall (WAF) & Layer 7 OWASP Injection Engine
+  waf:
+    enabled: true             # Enable WAF OWASP injection protection middleware
+    mode: "enforce"           # Evaluation mode: "enforce" (403 block) or "detection" (log-only)
+    anomaly_threshold: 5      # Threat score limit above which request is blocked
+    max_inspect_body_size: 65536 # Maximum payload body bytes scanned (64 KB)
 
 logging:
   level: "info"               # Logging level: debug, info, warn, error

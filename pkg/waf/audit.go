@@ -39,18 +39,20 @@ type SecurityEvent struct {
 	PayloadSnippet string `json:"payload_snippet,omitempty"`
 }
 
-// AuditLogger writes structured security audit events to a configured sink.
+// AuditLogger writes structured security audit events to a configured sink and maintains a recent events buffer.
 type AuditLogger struct {
-	cfg    AuditLogConfig
-	writer io.Writer
-	closer io.Closer
-	mu     sync.Mutex
+	cfg          AuditLogConfig
+	writer       io.Writer
+	closer       io.Closer
+	recentEvents []SecurityEvent
+	maxEvents    int
+	mu           sync.Mutex
 }
 
 // NewAuditLogger initializes an AuditLogger from configuration.
 func NewAuditLogger(cfg AuditLogConfig) (*AuditLogger, error) {
 	if !cfg.Enabled {
-		return &AuditLogger{cfg: cfg}, nil
+		return &AuditLogger{cfg: cfg, maxEvents: 50}, nil
 	}
 
 	var w io.Writer
@@ -72,9 +74,11 @@ func NewAuditLogger(cfg AuditLogConfig) (*AuditLogger, error) {
 	}
 
 	return &AuditLogger{
-		cfg:    cfg,
-		writer: w,
-		closer: c,
+		cfg:          cfg,
+		writer:       w,
+		closer:       c,
+		recentEvents: make([]SecurityEvent, 0, 50),
+		maxEvents:    50,
 	}, nil
 }
 
@@ -86,13 +90,15 @@ func NewAuditLoggerWithWriter(w io.Writer) *AuditLogger {
 			Output:  "custom",
 			Format:  "json",
 		},
-		writer: w,
+		writer:       w,
+		recentEvents: make([]SecurityEvent, 0, 50),
+		maxEvents:    50,
 	}
 }
 
-// LogEvent writes a SecurityEvent as a single JSON line.
+// LogEvent writes a SecurityEvent as a single JSON line and stores it in the recent events buffer.
 func (l *AuditLogger) LogEvent(event SecurityEvent) {
-	if l == nil || !l.cfg.Enabled || l.writer == nil {
+	if l == nil || !l.cfg.Enabled {
 		return
 	}
 
@@ -112,7 +118,42 @@ func (l *AuditLogger) LogEvent(event SecurityEvent) {
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	_, _ = l.writer.Write(append(data, '\n'))
+
+	l.recentEvents = append(l.recentEvents, event)
+	if len(l.recentEvents) > l.maxEvents {
+		l.recentEvents = l.recentEvents[len(l.recentEvents)-l.maxEvents:]
+	}
+
+	if l.writer != nil {
+		_, _ = l.writer.Write(append(data, '\n'))
+	}
+}
+
+// GetRecentEvents returns up to 'limit' most recent security events, sorted newest first.
+func (l *AuditLogger) GetRecentEvents(limit int) []SecurityEvent {
+	if l == nil {
+		return []SecurityEvent{}
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	n := len(l.recentEvents)
+	if n == 0 {
+		return []SecurityEvent{}
+	}
+
+	if limit <= 0 || limit > n {
+		limit = n
+	}
+
+	out := make([]SecurityEvent, limit)
+	copy(out, l.recentEvents[n-limit:])
+
+	// Reverse so newest event is first
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out
 }
 
 // Close closes any underlying open file handles.

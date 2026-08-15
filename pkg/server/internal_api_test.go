@@ -120,4 +120,27 @@ func TestInternalAPIRoutes(t *testing.T) {
 			t.Fatalf("expected status 200, got %d", res.StatusCode)
 		}
 	})
+
+	t.Run("GET /internal/api/security/incidents", func(t *testing.T) {
+		req, err := httpparser.NewRequest("GET", "/internal/api/security/incidents", "HTTP/1.1")
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", res.StatusCode)
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("failed to parse JSON response: %v", err)
+		}
+
+		if _, ok := payload["incidents"]; !ok {
+			t.Error("expected incidents key in payload")
+		}
+	})
 }

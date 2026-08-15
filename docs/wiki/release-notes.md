@@ -2,7 +2,8 @@
 
 ## 2026-08-15 - Prototype 35 Release (Custom WAF Regex Rules & Zero-Downtime Hot Reloading)
 
-### Added
+- **Web Control Center Security & WAF Dashboard (`public/`, `pkg/server`)**: Added dedicated Security & WAF Dashboard tab to the Web Control Center (`/internal/dashboard/`) featuring hero threat indicators, visual Security & Compliance Policy Matrix, real-time Security Audit Incidents log feed table, and WAF attack presets in the Live API Tester.
+- **Security Incidents Feed API (`GET /internal/api/security/incidents`)**: Registered management endpoint serving recorded security events from an in-memory thread-safe ring buffer in `AuditLogger`.
 - **User-Defined Custom WAF Regex Rules (`pkg/waf`)**: Supported defining custom security regex rules in `config.yaml` (`server.waf.custom_rules`) and `routes.yaml` (`pr.waf.custom_rules`) with customizable `id`, `category`, `description`, `pattern`, `score`, and granular inspection locations (`url`, `path`, `query`, `headers`, `body`) (`TASK-045`, `REQ-045`).
 - **Zero-Downtime Hot Reloading via `ConfigWatcher` (`pkg/config/watcher.go`)**: Background `fsnotify` file worker monitors `config.yaml` with debouncing, automatically re-validates configuration syntax, and atomically reloads active WAF rule sets in memory via `WAFEngine.Reload()` without dropping active TCP/TLS/HTTP connections.
 - **Fail-Safe Hot Reload Protection**: Invalid configuration edits or unparseable regular expressions are safely rejected with descriptive warning logs while retaining the active in-memory rule set intact.

@@ -145,4 +145,21 @@ Toron emits structured, SIEM-ready JSON log lines for all security violations to
 }
 ```
 
+## Web Control Center Security Dashboard & Real-Time Incidents Feed
+
+Toron's Web Control Center served at `/internal/dashboard/` includes a dedicated **Security & WAF Dashboard**:
+
+1. **Security & WAF Overview Tab**:
+   - Live indicators for WAF Engine Mode (`ENFORCE` / `DETECTION`), Intercepted Threat Count, Active Inspection Rules count, and CIDR IP Access Lists.
+   - **Security Policy Matrix**: Visual verification of active WAF rulesets, CIDR subnets, Enterprise Security Headers, CORS, and Mutual TLS policies.
+
+2. **Real-Time Security Audit Stream**:
+   - Live incident feed table displaying intercepted security threats in real-time.
+   - Categorized threat badges (`SQLi`, `XSS`, `Traversal`, `RCE`, `IP ACL`, `Protocol`), client IP, triggered rule ID, HTTP method & path, threat score, and action taken (`BLOCKED` / `LOGGED`).
+   - Powered by the `/internal/api/security/incidents` management endpoint.
+
+3. **Interactive WAF Attack Presets**:
+   - The Live API Tester composer includes pre-configured WAF attack payloads (SQL Injection, Path Traversal, Command Injection, XSS header) allowing administrators to validate WAF threat interception right from the web dashboard.
+
+
 

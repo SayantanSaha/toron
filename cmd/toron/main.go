@@ -193,14 +193,39 @@ func main() {
 		staticDir = appCfg.Static.Dir
 	}
 
+	wafMode := "enforce"
+	if appCfg.Server.WAF.Mode != "" {
+		wafMode = appCfg.Server.WAF.Mode
+	}
+	wafRulesCount := 10
+	if globalWafEngine != nil {
+		wafRulesCount = len(globalWafEngine.Rules())
+	}
+	var auditLogger *waf.AuditLogger
+	if globalWafEngine != nil {
+		auditLogger = globalWafEngine.AuditLogger()
+	}
+
 	internalCfg := server.InternalAPIConfig{
-		Port:           appCfg.Server.Port,
-		WorkerPoolSize: appCfg.Server.WorkerPoolSize,
-		ProxyEnabled:   appCfg.Proxy.Enabled,
-		Routes:         internalRoutes,
-		StaticEnabled:  staticEnabled,
-		StaticPrefix:   staticPrefix,
-		StaticDir:      staticDir,
+		Port:                   appCfg.Server.Port,
+		WorkerPoolSize:         appCfg.Server.WorkerPoolSize,
+		ProxyEnabled:           appCfg.Proxy.Enabled,
+		Routes:                 internalRoutes,
+		StaticEnabled:          staticEnabled,
+		StaticPrefix:           staticPrefix,
+		StaticDir:              staticDir,
+		WAFEnabled:             appCfg.Server.WAF.Enabled,
+		WAFMode:                wafMode,
+		WAFAnomalyThreshold:    appCfg.Server.WAF.AnomalyThreshold,
+		WAFRulesCount:          wafRulesCount,
+		WAFCustomRulesCount:    len(appCfg.Server.WAF.CustomRules),
+		WAFAllowedIPs:          appCfg.Server.WAF.AllowedIPs,
+		WAFDeniedIPs:           appCfg.Server.WAF.DeniedIPs,
+		CORSEnabled:            appCfg.Server.CORS.Enabled,
+		CORSAllowedOrigins:     appCfg.Server.CORS.AllowOrigins,
+		SecurityHeadersEnabled: appCfg.Server.SecurityHeaders.Enabled,
+		MTLSEnabled:            appCfg.Server.TLS.Enabled,
+		AuditLogger:            auditLogger,
 	}
 	server.RegisterInternalAPIRoutes(r, internalCfg)
 

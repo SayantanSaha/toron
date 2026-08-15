@@ -114,3 +114,31 @@ func TestAuditLogger_FileSink(t *testing.T) {
 		t.Errorf("expected log file to contain ip_acl_block, got: %s", string(content))
 	}
 }
+
+func TestAuditLogger_GetRecentEvents(t *testing.T) {
+	var buf bytes.Buffer
+	logger := NewAuditLoggerWithWriter(&buf)
+
+	for i := 1; i <= 60; i++ {
+		logger.LogEvent(SecurityEvent{
+			Event:    "waf_block",
+			ClientIP: "10.0.0.1",
+			RuleID:   strings.Repeat("R", i),
+		})
+	}
+
+	recent := logger.GetRecentEvents(10)
+	if len(recent) != 10 {
+		t.Fatalf("expected 10 recent events, got %d", len(recent))
+	}
+
+	// Should be newest first
+	if recent[0].RuleID != strings.Repeat("R", 60) {
+		t.Errorf("expected newest event first, got %s", recent[0].RuleID)
+	}
+
+	all := logger.GetRecentEvents(100)
+	if len(all) != 50 {
+		t.Errorf("expected ring buffer cap of 50 events, got %d", len(all))
+	}
+}

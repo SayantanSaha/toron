@@ -6,6 +6,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   initTabs();
   initHealthMatrix();
+  initSecurityTab();
   initTester();
   initPolling();
 });
@@ -268,7 +269,100 @@ function initTester() {
   }
 }
 
-// --- 4. AUTO POLLING ENGINE ---
+// --- 4. SECURITY & WAF TAB ENGINE ---
+function initSecurityTab() {
+  const btnRefreshIncidents = document.getElementById('btn-refresh-incidents');
+  if (btnRefreshIncidents) {
+    btnRefreshIncidents.addEventListener('click', () => {
+      fetchSecurityIncidents();
+    });
+  }
+  fetchSecurityIncidents();
+}
+
+async function fetchSecurityIncidents() {
+  const tbody = document.getElementById('security-incidents-tbody');
+  const badge = document.getElementById('incident-count-badge');
+  if (!tbody) return;
+
+  try {
+    const res = await fetch('/internal/api/security/incidents');
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    const incidents = data.incidents || [];
+    if (badge) badge.textContent = `${incidents.length} Event${incidents.length === 1 ? '' : 's'}`;
+
+    if (incidents.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="7" class="py-8 text-center text-slate-500 font-sans text-xs">
+            No security incidents recorded. System active with clean traffic flow.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = incidents.map(item => {
+      let catBadgeClass = 'bg-slate-800 text-slate-300 border-slate-700';
+      const cat = (item.category || 'unknown').toLowerCase();
+      if (cat.includes('sqli')) {
+        catBadgeClass = 'bg-rose-500/20 text-rose-300 border-rose-500/30';
+      } else if (cat.includes('xss')) {
+        catBadgeClass = 'bg-amber-500/20 text-amber-300 border-amber-500/30';
+      } else if (cat.includes('traversal')) {
+        catBadgeClass = 'bg-purple-500/20 text-purple-300 border-purple-500/30';
+      } else if (cat.includes('rce')) {
+        catBadgeClass = 'bg-red-600/30 text-red-300 border-red-500/40 animate-pulse';
+      } else if (cat.includes('ip_acl') || cat.includes('ip')) {
+        catBadgeClass = 'bg-sky-500/20 text-sky-300 border-sky-500/30';
+      } else if (cat.includes('protocol')) {
+        catBadgeClass = 'bg-orange-500/20 text-orange-300 border-orange-500/30';
+      }
+
+      let actionClass = 'text-rose-400 font-bold bg-rose-500/20 border-rose-500/30';
+      let actionLabel = 'BLOCKED (403)';
+      if (item.action === 'logged' || item.action === 'detection') {
+        actionClass = 'text-amber-300 font-semibold bg-amber-500/20 border-amber-500/30';
+        actionLabel = 'LOGGED (ANOMALY)';
+      } else if (item.action === 'ip_denied') {
+        actionClass = 'text-rose-400 font-bold bg-rose-600/30 border-rose-600/40';
+        actionLabel = 'IP DENIED (403)';
+      }
+
+      const formattedTime = item.timestamp ? item.timestamp.replace('T', ' ').replace('Z', '') : '--';
+
+      return `
+        <tr class="hover:bg-slate-800/30 transition">
+          <td class="py-2.5 px-3 text-slate-400 text-[11px] font-mono whitespace-nowrap">${formattedTime}</td>
+          <td class="py-2.5 px-3 text-slate-200 text-[11px] font-mono font-semibold">${item.client_ip || '127.0.0.1'}</td>
+          <td class="py-2.5 px-3">
+            <span class="text-[10px] px-2 py-0.5 rounded font-mono font-bold border ${catBadgeClass}">
+              ${(item.category || 'THREAT').toUpperCase()}
+            </span>
+          </td>
+          <td class="py-2.5 px-3 text-indigo-400 font-mono text-[11px]">${item.rule_id || 'RULE-000'}</td>
+          <td class="py-2.5 px-3 text-slate-300 font-mono text-[11px]">
+            <span class="text-slate-400 font-semibold">${item.method || 'GET'}</span>
+            <span class="text-slate-200 truncate max-w-xs inline-block align-bottom">${item.path || '/'}</span>
+          </td>
+          <td class="py-2.5 px-3 text-center text-amber-400 font-mono font-bold">${item.anomaly_score || 5}</td>
+          <td class="py-2.5 px-3 text-right">
+            <span class="text-[10px] px-2 py-0.5 rounded font-mono border ${actionClass}">
+              ${actionLabel}
+            </span>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+  } catch (err) {
+    if (badge) badge.textContent = 'Error';
+  }
+}
+
+// --- 5. AUTO POLLING ENGINE ---
 function initPolling() {
   const btnRefresh = document.getElementById('btn-refresh');
   const refreshIcon = document.getElementById('refresh-icon');
@@ -285,17 +379,100 @@ function initPolling() {
         const data = await res.json();
         const headerUptime = document.getElementById('header-uptime');
         if (headerUptime) headerUptime.textContent = `100% (${data.uptime})`;
+
+        // Update Security Metrics Cards
+        if (data.security) {
+          const secWafMode = document.getElementById('sec-waf-mode');
+          if (secWafMode) {
+            const modeStr = (data.security.waf_mode || 'ENFORCE').toUpperCase();
+            secWafMode.textContent = modeStr;
+            secWafMode.className = modeStr === 'ENFORCE'
+              ? 'text-lg sm:text-xl font-bold text-rose-400 font-mono'
+              : 'text-lg sm:text-xl font-bold text-amber-400 font-mono';
+          }
+
+          const secWafSub = document.getElementById('sec-waf-sub');
+          if (secWafSub) {
+            secWafSub.textContent = data.security.waf_enabled ? 'Active Protection Engine' : 'Engine Disabled';
+          }
+
+          const secRulesCount = document.getElementById('sec-rules-count');
+          if (secRulesCount) {
+            secRulesCount.textContent = `${data.security.waf_rules_count || 10} Active`;
+          }
+
+          const secCustomRulesSub = document.getElementById('sec-custom-rules-sub');
+          if (secCustomRulesSub) {
+            secCustomRulesSub.textContent = `${data.security.waf_custom_rules_count || 0} Custom Regex`;
+          }
+
+          const secIpAclStatus = document.getElementById('sec-ip-acl-status');
+          if (secIpAclStatus) {
+            const allowN = data.security.waf_allowed_ips ? data.security.waf_allowed_ips.length : 0;
+            const denyN = data.security.waf_denied_ips ? data.security.waf_denied_ips.length : 0;
+            secIpAclStatus.textContent = allowN > 0 || denyN > 0 ? `${allowN} Allow / ${denyN} Deny` : 'Active';
+          }
+
+          const cfgWafDetails = document.getElementById('cfg-waf-details');
+          if (cfgWafDetails) {
+            cfgWafDetails.innerHTML = `
+              <div>Mode: <span class="text-rose-400 font-mono font-bold">${(data.security.waf_mode || 'enforce').toUpperCase()} (403)</span></div>
+              <div>Anomaly Threshold: <span class="text-slate-200 font-mono">${data.security.waf_anomaly_threshold || 5}</span></div>
+              <div>Protocol Smuggling Guard: <span class="text-emerald-400 font-mono">Active</span></div>
+            `;
+          }
+
+          const cfgIpDetails = document.getElementById('cfg-ip-details');
+          if (cfgIpDetails) {
+            const allowN = data.security.waf_allowed_ips ? data.security.waf_allowed_ips.length : 0;
+            const denyN = data.security.waf_denied_ips ? data.security.waf_denied_ips.length : 0;
+            cfgIpDetails.innerHTML = `
+              <div>Allowed Subnets: <span class="text-emerald-400 font-mono font-semibold">${allowN} subnets</span></div>
+              <div>Denied Subnets: <span class="text-rose-400 font-mono font-semibold">${denyN} subnets</span></div>
+              <div>Auto Header Strip: <span class="text-emerald-400 font-mono">Active</span></div>
+            `;
+          }
+
+          const cfgHeadersDetails = document.getElementById('cfg-headers-details');
+          if (cfgHeadersDetails) {
+            cfgHeadersDetails.innerHTML = `
+              <div>HSTS Header: <span class="text-emerald-400 font-mono">${data.security.security_headers ? 'Enabled' : 'Disabled'}</span></div>
+              <div>Frame-Options: <span class="text-emerald-400 font-mono">DENY</span></div>
+              <div>X-Content-Type: <span class="text-emerald-400 font-mono">nosniff</span></div>
+            `;
+          }
+
+          const cfgCorsDetails = document.getElementById('cfg-cors-details');
+          if (cfgCorsDetails) {
+            cfgCorsDetails.innerHTML = `
+              <div>CORS Protection: <span class="text-indigo-400 font-mono">${data.security.cors_enabled ? 'Active' : 'Disabled'}</span></div>
+              <div>Preflight MaxAge: <span class="text-slate-200 font-mono">86400s</span></div>
+              <div>Mutual TLS (mTLS): <span class="text-emerald-400 font-mono font-semibold">${data.security.mtls_enabled ? 'Active' : 'Ready'}</span></div>
+            `;
+          }
+        }
+
+        if (data.metrics && data.metrics.waf) {
+          const secBlockedCount = document.getElementById('sec-blocked-count');
+          if (secBlockedCount) {
+            secBlockedCount.textContent = `${data.metrics.waf.blocked_total || 0} Intercepted`;
+          }
+        }
       }
     } catch (e) {
       const headerUptime = document.getElementById('header-uptime');
       if (headerUptime) headerUptime.textContent = 'Offline';
     }
+
+    fetchSecurityIncidents();
   }
 
   if (btnRefresh) {
     btnRefresh.addEventListener('click', pollStatus);
   }
 
-  // Poll every 10s
-  setInterval(pollStatus, 10000);
+  // Initial fetch and poll every 5 seconds for security reactivity
+  pollStatus();
+  setInterval(pollStatus, 5000);
 }
+

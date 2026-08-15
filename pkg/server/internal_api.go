@@ -12,6 +12,7 @@ import (
 	"toron/pkg/httpparser"
 	"toron/pkg/metrics"
 	"toron/pkg/router"
+	"toron/pkg/waf"
 )
 
 // RouteInfo represents routing metadata for internal route listings.
@@ -27,13 +28,25 @@ type RouteInfo struct {
 
 // InternalAPIConfig configures /internal/api/ route parameters without importing pkg/config.
 type InternalAPIConfig struct {
-	Port           int         `json:"port"`
-	WorkerPoolSize int         `json:"worker_pool_size"`
-	ProxyEnabled   bool        `json:"proxy_enabled"`
-	Routes         []RouteInfo `json:"routes"`
-	StaticEnabled  bool        `json:"static_enabled"`
-	StaticPrefix   string      `json:"static_prefix"`
-	StaticDir      string      `json:"static_dir"`
+	Port                   int              `json:"port"`
+	WorkerPoolSize         int              `json:"worker_pool_size"`
+	ProxyEnabled           bool             `json:"proxy_enabled"`
+	Routes                 []RouteInfo      `json:"routes"`
+	StaticEnabled          bool             `json:"static_enabled"`
+	StaticPrefix           string           `json:"static_prefix"`
+	StaticDir              string           `json:"static_dir"`
+	WAFEnabled             bool             `json:"waf_enabled"`
+	WAFMode                string           `json:"waf_mode"`
+	WAFAnomalyThreshold    int              `json:"waf_anomaly_threshold"`
+	WAFRulesCount          int              `json:"waf_rules_count"`
+	WAFCustomRulesCount    int              `json:"waf_custom_rules_count"`
+	WAFAllowedIPs          []string         `json:"waf_allowed_ips"`
+	WAFDeniedIPs           []string         `json:"waf_denied_ips"`
+	CORSEnabled            bool             `json:"cors_enabled"`
+	CORSAllowedOrigins     []string         `json:"cors_allowed_origins"`
+	SecurityHeadersEnabled bool             `json:"security_headers_enabled"`
+	MTLSEnabled            bool             `json:"mtls_enabled"`
+	AuditLogger            *waf.AuditLogger `json:"-"`
 }
 
 // UpstreamNodeHealth describes the health state of an individual upstream service node.
@@ -76,6 +89,19 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	// 1. GET /internal/api/status
 	r.GET("/internal/api/status", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
+		wafAllowed := cfg.WAFAllowedIPs
+		if wafAllowed == nil {
+			wafAllowed = make([]string, 0)
+		}
+		wafDenied := cfg.WAFDeniedIPs
+		if wafDenied == nil {
+			wafDenied = make([]string, 0)
+		}
+		corsOrigins := cfg.CORSAllowedOrigins
+		if corsOrigins == nil {
+			corsOrigins = make([]string, 0)
+		}
+
 		payload := map[string]interface{}{
 			"server":           "Toron",
 			"version":          "1.0.0",
@@ -84,6 +110,19 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			"port":             cfg.Port,
 			"worker_pool_size": cfg.WorkerPoolSize,
 			"metrics":          metrics.DefaultRegistry.GetSummaryJSON(),
+			"security": map[string]interface{}{
+				"waf_enabled":            cfg.WAFEnabled,
+				"waf_mode":               cfg.WAFMode,
+				"waf_anomaly_threshold":  cfg.WAFAnomalyThreshold,
+				"waf_rules_count":        cfg.WAFRulesCount,
+				"waf_custom_rules_count": cfg.WAFCustomRulesCount,
+				"waf_allowed_ips":        wafAllowed,
+				"waf_denied_ips":         wafDenied,
+				"cors_enabled":           cfg.CORSEnabled,
+				"cors_allowed_origins":   corsOrigins,
+				"security_headers":       cfg.SecurityHeadersEnabled,
+				"mtls_enabled":           cfg.MTLSEnabled,
+			},
 		}
 		data, _ := json.Marshal(payload)
 		_, _ = res.Write(data)
@@ -278,4 +317,24 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		data, _ := json.Marshal(resOut)
 		_, _ = res.Write(data)
 	})
+
+	// 5. GET /internal/api/security/incidents
+	r.GET("/internal/api/security/incidents", func(req *httpparser.Request, res *httpparser.Response) {
+		res.Header.Set("Content-Type", "application/json")
+		events := []waf.SecurityEvent{}
+		if cfg.AuditLogger != nil {
+			events = cfg.AuditLogger.GetRecentEvents(50)
+		}
+		if events == nil {
+			events = make([]waf.SecurityEvent, 0)
+		}
+		payload := map[string]interface{}{
+			"timestamp": time.Now().UTC().Format(time.RFC3339),
+			"total":     len(events),
+			"incidents": events,
+		}
+		data, _ := json.Marshal(payload)
+		_, _ = res.Write(data)
+	})
 }
+

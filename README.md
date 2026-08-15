@@ -23,7 +23,7 @@
 * **CORS Policies & Enterprise Security Headers**: Zero-allocation CORS preflight handling (`OPTIONS` 204 short-circuiting, origin wildcards/subdomains) and automatic injection of OWASP security headers (`Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Content-Security-Policy`, `Permissions-Policy`).
 * **Web Application Firewall (WAF) & Custom Regex Rules**: High-throughput WAF inspection engine (`pkg/waf`) mitigating OWASP Top 10 vulnerabilities (SQLi, XSS, Path Traversal, Command Injection / RCE) and user-defined custom regex rules across URLs, query strings, headers, and request bodies with configurable `enforce` vs `detection` modes, granular route-level overrides (`disabled_rules`, custom thresholds), and fast-path $O(1)$ CIDR IP allow/deny access control lists (`allowed_ips`, `denied_ips`).
 * **Prometheus Metrics & Structured Security Audit Logging**: Standardized `/metrics` endpoint exporting Prometheus counters (`toron_http_requests_total`, `toron_waf_blocked_requests_total`, `toron_waf_anomalies_detected_total`), latency histograms (`toron_http_request_duration_seconds`, `toron_waf_inspection_duration_seconds`), QUIC stream gauges, and circuit breaker trip counters; SIEM-ready structured JSON security audit logger; automatic OpenTelemetry W3C `traceparent` context header propagation across upstream target microservices.
-* **Web Control Center & JSON Metrics API**: Mobile-first Web Dashboard UI served on `/internal/dashboard/` powered by internal management JSON API endpoints (`/internal/api/status`, `/internal/api/metrics`, `/internal/api/routes`, `/internal/api/upstreams/health`, `/internal/api/proxy-test`).
+* **Web Control Center & Security Audit Dashboard**: Mobile-first Web Dashboard UI served on `/internal/dashboard/` featuring a dedicated Security & WAF Dashboard, live policy compliance matrix, real-time threat incident audit feed table, upstream health matrix, and interactive REST API request composer with WAF attack presets (`/internal/api/security/incidents`, `/internal/api/status`, `/internal/api/metrics`, `/internal/api/upstreams/health`, `/internal/api/proxy-test`).
 * **Security & Path Traversal Guards**: Strict header (8 KB) and body (4 MB) size limits, socket read/write timeouts, path traversal sanitization, and panic recovery middleware.
 * **Zero-Downtime Hot Reloading via `fsnotify`**: Background file workers (`ConfigWatcher` & `RouteWatcher`) monitor `config.yaml` and `routes.yaml` file edits, automatically validating and atomically swapping routing tables and WAF security rule sets in memory without dropping active TCP/UDP/QUIC/TLS sockets.
 * **Configuration Dry-Run Validator**: Native CLI flag (`-t` / `-test-config`) to validate YAML syntax without starting the server listener.
@@ -290,9 +290,11 @@ Open your browser and navigate to:
 http://localhost:8080/internal/dashboard/
 ```
 The Control Center provides:
-* Real-time active health probing of upstream microservices (Ports 9001–9010).
-* Interactive REST API request composer to test headers (`X-Version: v1` / `v2`), subpaths, and domain routing.
-* Formatted JSON response preview and latency benchmarking (ms).
+* **Dedicated Security & WAF Dashboard**: Live indicators for WAF Engine Status (`ENFORCE` / `DETECTION`), threat attack counters, active rule counts, and CIDR IP Access Lists.
+* **Security & Compliance Policy Matrix**: Visual verification of active WAF rules, anomaly thresholds, CIDR IP subnets, Security Headers (HSTS, CSP, Frame Options), and CORS/mTLS policies.
+* **Real-Time Security Audit Incident Stream**: Auto-refreshing table displaying intercepted threats (SQLi, XSS, Path Traversal, RCE, IP ACL, Protocol violations) with Client IP, Rule ID, Method & Path, Threat Score, and Action Taken (`BLOCKED` / `LOGGED`).
+* **Real-time active health probing** of upstream microservices (Ports 9001–9010).
+* **Interactive REST API Request Composer** with WAF attack test presets (SQL Injection, Path Traversal, Command Injection, XSS) to validate threat blocking in real-time.
 
 ---
 
@@ -305,11 +307,17 @@ curl http://localhost:8080/health
 # Built-in Server Status Endpoint
 curl http://localhost:8080/api/status
 
+# Live Security Audit Incidents Feed
+curl http://localhost:8080/internal/api/security/incidents
+
+# Prometheus Metrics Endpoint
+curl http://localhost:8080/metrics
+
 # Header Routing (API v2 -> Dummy Services 1, 2, 3)
 curl -H "X-Version: v2" http://localhost:8080/api/users
 
-# Header Routing (API v1 -> Dummy Service 4)
-curl -H "X-Version: v1" http://localhost:8080/api/users
+# Test WAF Threat Interception (SQL Injection attack)
+curl "http://localhost:8080/api?query=UNION+SELECT+1,2,3--"
 
 # Cluster Load Balancing (Dummy Services 5, 6, 7)
 curl http://localhost:8080/services/cluster
@@ -378,13 +386,16 @@ server/
 ├── routes.yaml             # Routing rules (static sites & reverse proxies)
 ├── dummy-services/         # Test suite of 10 dummy upstream microservices
 ├── pkg/
+│   ├── acme/               # ACME HTTP-01 & TLS-ALPN-01 SSL certificate engine
 │   ├── config/             # YAML config loader & syntax validator
 │   ├── httpparser/         # HTTP/1.1 request parser & response builder
+│   ├── metrics/            # Prometheus telemetry metrics & JSON stats registry
 │   ├── proxy/              # Reverse proxy, load balancer & circuit breaker
 │   ├── reactor/            # Non-blocking TCP socket event engine
-│   ├── router/             # URL/Domain/Header router & static file handler
-│   └── server/             # Server lifecycle, HTTP/2 & HTTPS TLS engine
-├── public/                 # Static Web Control Center & Proxy Dashboard UI
+│   ├── router/             # URL/Domain/Header router, CORS & security headers
+│   ├── server/             # Server lifecycle, HTTP/2, HTTPS TLS & Internal API
+│   └── waf/                # Web Application Firewall, OWASP rules & audit logger
+├── public/                 # Static Web Control Center & Security Dashboard UI
 ├── test_endpoint.http      # Standardized REST client HTTP request runner
 └── PRD.md                  # Project Requirements Document
 ```

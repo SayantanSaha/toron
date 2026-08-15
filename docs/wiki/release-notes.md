@@ -1,5 +1,19 @@
 # Release Notes
 
+## 2026-08-15 - Prototype 34 Release (WAF Telemetry, Prometheus Metrics & Structured Security Audit Logging)
+
+### Added
+- **Prometheus WAF Metrics (`pkg/metrics`)**: Added specialized WAF telemetry counters and latency histograms exposed via `/metrics` in standard Prometheus text format (`TASK-044`, `REQ-044`):
+  - `toron_waf_blocked_requests_total{category="...",route="..."}`: Total blocked attacks categorized by threat vector and route.
+  - `toron_waf_anomalies_detected_total{category="...",mode="detection"}`: Total anomalies observed in detection mode.
+  - `toron_waf_inspection_duration_seconds`: High-resolution latency histogram tracking WAF inspection processing times.
+  - Telemetry integrated into JSON metrics summary API (`/internal/api/metrics`).
+- **Structured JSON Security Audit Logger (`pkg/waf/audit.go`)**: Implemented thread-safe `AuditLogger` writing SIEM-ready JSON log lines (client IP, rule ID, threat score, method, path, location, and bounded payload snippet) to `stdout`, `stderr`, or dedicated log files.
+- **WAF Middleware Telemetry Hooks (`pkg/waf/middleware.go`)**: Automatically records inspection duration, increments Prometheus counters, and emits structured security audit logs for IP ACL blocks, protocol violations, OWASP threat blocks, and detection anomalies.
+
+### Related Tasks
+- `TASK-044`: Implement WAF Telemetry, Prometheus Metrics, and Structured Security Audit Logging
+
 ## 2026-08-15 - Prototype 33 Release (Route-Level WAF Overrides & CIDR IP Access Control Lists)
 
 ### Added

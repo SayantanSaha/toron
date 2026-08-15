@@ -228,3 +228,47 @@ func TestWAFMiddleware_DisabledRules(t *testing.T) {
 	}
 }
 
+func TestWAFMiddleware_TelemetryAndAuditLog(t *testing.T) {
+	var logBuf bytes.Buffer
+	cfg := DefaultConfig()
+	cfg.Mode = "enforce"
+	engine, _ := NewEngine(cfg)
+	engine.SetAuditLogger(NewAuditLoggerWithWriter(&logBuf))
+
+	mw := NewWAFMiddleware(engine)
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(200)
+	})
+
+	u, _ := url.Parse("http://localhost/api/users?q=%3Cscript%3Ealert('xss')%3C/script%3E")
+	req := &httpparser.Request{
+		Method: "GET",
+		Path:   u.Path,
+		URL:    u,
+		Header: make(httpparser.Header),
+	}
+	req.Header.Set("X-Forwarded-For", "203.0.113.88")
+	res := &httpparser.Response{
+		Header: make(httpparser.Header),
+		Body:   bytes.NewBuffer(nil),
+	}
+
+	handler(req, res)
+
+	if res.StatusCode != 403 {
+		t.Errorf("expected status 403, got %d", res.StatusCode)
+	}
+
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "waf_block") {
+		t.Errorf("expected log output to contain waf_block, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "203.0.113.88") {
+		t.Errorf("expected log output to contain client IP 203.0.113.88, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, "XSS-001") {
+		t.Errorf("expected log output to contain XSS-001, got: %s", logOutput)
+	}
+}
+
+

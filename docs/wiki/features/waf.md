@@ -112,3 +112,37 @@ When a request is blocked in `enforce` mode, Toron returns `403 Forbidden` with 
 }
 ```
 
+## Prometheus Observability & Metrics
+
+Toron exports real-time WAF telemetry at the standard `/metrics` endpoint:
+
+- **`toron_waf_blocked_requests_total{category="sqli|xss|traversal|rce|protocol|ip_acl", route="/..."}`**: Total number of blocked requests categorized by threat vector and route.
+- **`toron_waf_anomalies_detected_total{category="...", mode="detection"}`**: Total threat anomalies detected in detection mode.
+- **`toron_waf_inspection_duration_seconds`**: Histogram tracking WAF inspection execution latency.
+
+```promql
+# Example Prometheus Alert Query for SQLi spikes:
+sum(rate(toron_waf_blocked_requests_total{category="sqli"}[5m])) > 10
+```
+
+## Structured Security Audit Logging
+
+Toron emits structured, SIEM-ready JSON log lines for all security violations to `stdout`, `stderr`, or a dedicated log file:
+
+```json
+{
+  "timestamp": "2026-08-15T14:30:00Z",
+  "event": "waf_block",
+  "client_ip": "198.51.100.45",
+  "method": "POST",
+  "path": "/api/users",
+  "category": "sqli",
+  "rule_id": "SQLI-001",
+  "anomaly_score": 5,
+  "action": "blocked",
+  "location": "query",
+  "payload_snippet": "1 UNION SELECT username, password FROM users"
+}
+```
+
+

@@ -3,8 +3,10 @@ package waf
 import (
 	"bytes"
 	"strings"
+	"time"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/metrics"
 )
 
 // HandlerFunc describes an HTTP request handler function.
@@ -32,12 +34,35 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 				}
 			}
 
+			start := time.Now()
+			defer func() {
+				metrics.DefaultRegistry.RecordWAFInspectionDuration(time.Since(start).Seconds())
+			}()
+
+			clientIP := ""
+			if ip := ExtractClientIP(req); ip != nil {
+				clientIP = ip.String()
+			}
+
 			// 0. Fast-Path CIDR IP Access Control Check
 			if acl := engine.IPAccessList(); acl != nil && acl.HasRules() {
-				clientIP := ExtractClientIP(req)
-				if clientIP != nil {
-					allowed, reason := acl.CheckIP(clientIP)
+				if ip := ExtractClientIP(req); ip != nil {
+					allowed, reason := acl.CheckIP(ip)
 					if !allowed {
+						metrics.DefaultRegistry.RecordWAFBlocked("ip_acl", req.Path)
+						if logger := engine.AuditLogger(); logger != nil {
+							logger.LogEvent(SecurityEvent{
+								Event:        "ip_acl_block",
+								ClientIP:     clientIP,
+								Method:       req.Method,
+								Path:         req.Path,
+								Category:     "ip_acl",
+								AnomalyScore: 0,
+								Action:       "blocked",
+								Location:     "remote_addr",
+							})
+						}
+
 						if res.Body == nil {
 							res.Body = bytes.NewBuffer(nil)
 						}
@@ -52,6 +77,20 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 
 			// 1. Protocol Integrity & Request Smuggling Guard
 			if protoErr := ValidateProtocolIntegrity(req, protocolCfg); protoErr != nil {
+				metrics.DefaultRegistry.RecordWAFBlocked("protocol", req.Path)
+				if logger := engine.AuditLogger(); logger != nil {
+					logger.LogEvent(SecurityEvent{
+						Event:          "protocol_violation",
+						ClientIP:       clientIP,
+						Method:         req.Method,
+						Path:           req.Path,
+						Category:       "protocol",
+						AnomalyScore:   0,
+						Action:         "blocked",
+						PayloadSnippet: protoErr.Error(),
+					})
+				}
+
 				if res.Body == nil {
 					res.Body = bytes.NewBuffer(nil)
 				}
@@ -76,6 +115,28 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 			}
 
 			if blocked {
+				for _, r := range matched {
+					metrics.DefaultRegistry.RecordWAFBlocked(string(r.Category), req.Path)
+					if logger := engine.AuditLogger(); logger != nil {
+						snippet := ""
+						if req.URL != nil && req.URL.RawQuery != "" {
+							snippet = req.URL.RawQuery
+						}
+						logger.LogEvent(SecurityEvent{
+							Event:          "waf_block",
+							ClientIP:       clientIP,
+							Method:         req.Method,
+							Path:           req.Path,
+							Category:       string(r.Category),
+							RuleID:         r.ID,
+							AnomalyScore:   score,
+							Action:         "blocked",
+							Location:       locationString(r.Locations),
+							PayloadSnippet: snippet,
+						})
+					}
+				}
+
 				res.SetStatus(403)
 				res.Header.Set("Content-Type", "application/json")
 
@@ -88,9 +149,51 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 				return
 			}
 
+			// Detection mode recording
+			if score > 0 && !blocked {
+				for _, r := range matched {
+					metrics.DefaultRegistry.RecordWAFAnomaly(string(r.Category), "detection")
+					if logger := engine.AuditLogger(); logger != nil {
+						snippet := ""
+						if req.URL != nil && req.URL.RawQuery != "" {
+							snippet = req.URL.RawQuery
+						}
+						logger.LogEvent(SecurityEvent{
+							Event:          "waf_detection",
+							ClientIP:       clientIP,
+							Method:         req.Method,
+							Path:           req.Path,
+							Category:       string(r.Category),
+							RuleID:         r.ID,
+							AnomalyScore:   score,
+							Action:         "logged",
+							Location:       locationString(r.Locations),
+							PayloadSnippet: snippet,
+						})
+					}
+				}
+			}
+
 			next(req, res)
 		}
 	}
+}
+
+func locationString(loc InspectLocation) string {
+	var parts []string
+	if loc&InspectURL != 0 {
+		parts = append(parts, "url")
+	}
+	if loc&InspectQuery != 0 {
+		parts = append(parts, "query")
+	}
+	if loc&InspectHeaders != 0 {
+		parts = append(parts, "headers")
+	}
+	if loc&InspectBody != 0 {
+		parts = append(parts, "body")
+	}
+	return strings.Join(parts, ",")
 }
 
 func intToString(n int) string {

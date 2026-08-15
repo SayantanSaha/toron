@@ -45,14 +45,15 @@ type WAFRule struct {
 
 // WAFConfig holds configuration for the WAF engine.
 type WAFConfig struct {
-	Enabled            bool     `json:"enabled" yaml:"enabled"`
-	Mode               string   `json:"mode" yaml:"mode"` // "enforce" or "detection"
-	AnomalyThreshold   int      `json:"anomaly_threshold" yaml:"anomaly_threshold"`
-	MaxInspectBodySize int64    `json:"max_inspect_body_size" yaml:"max_inspect_body_size"`
-	DisabledRules      []string `json:"disabled_rules" yaml:"disabled_rules"`
-	AllowedIPs         []string `json:"allowed_ips" yaml:"allowed_ips"`
-	DeniedIPs          []string `json:"denied_ips" yaml:"denied_ips"`
-	Excluded           []string `json:"excluded" yaml:"excluded"`
+	Enabled            bool           `json:"enabled" yaml:"enabled"`
+	Mode               string         `json:"mode" yaml:"mode"` // "enforce" or "detection"
+	AnomalyThreshold   int            `json:"anomaly_threshold" yaml:"anomaly_threshold"`
+	MaxInspectBodySize int64          `json:"max_inspect_body_size" yaml:"max_inspect_body_size"`
+	DisabledRules      []string       `json:"disabled_rules" yaml:"disabled_rules"`
+	AllowedIPs         []string       `json:"allowed_ips" yaml:"allowed_ips"`
+	DeniedIPs          []string       `json:"denied_ips" yaml:"denied_ips"`
+	Excluded           []string       `json:"excluded" yaml:"excluded"`
+	AuditLog           AuditLogConfig `json:"audit_log" yaml:"audit_log"`
 }
 
 // DefaultConfig returns safe default WAF settings.
@@ -66,15 +67,17 @@ func DefaultConfig() WAFConfig {
 		AllowedIPs:         nil,
 		DeniedIPs:          nil,
 		Excluded:           nil,
+		AuditLog:           DefaultAuditLogConfig(),
 	}
 }
 
 // WAFEngine executes inspection rules against incoming HTTP requests.
 type WAFEngine struct {
-	config WAFConfig
-	rules  []WAFRule
-	ipACL  *IPAccessList
-	mu     sync.RWMutex
+	config      WAFConfig
+	rules       []WAFRule
+	ipACL       *IPAccessList
+	auditLogger *AuditLogger
+	mu          sync.RWMutex
 }
 
 // NewEngine initializes a WAFEngine with default OWASP rules, IP ACLs, and configuration.
@@ -94,6 +97,14 @@ func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 		return nil, err
 	}
 
+	var logger *AuditLogger
+	if cfg.AuditLog.Enabled {
+		logger, err = NewAuditLogger(cfg.AuditLog)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	disabledMap := make(map[string]bool)
 	for _, id := range cfg.DisabledRules {
 		disabledMap[id] = true
@@ -108,9 +119,10 @@ func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 	}
 
 	return &WAFEngine{
-		config: cfg,
-		rules:  activeRules,
-		ipACL:  acl,
+		config:      cfg,
+		rules:       activeRules,
+		ipACL:       acl,
+		auditLogger: logger,
 	}, nil
 }
 
@@ -263,5 +275,25 @@ func (e *WAFEngine) IPAccessList() *IPAccessList {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.ipACL
+}
+
+// AuditLogger returns the audit logger associated with the engine.
+func (e *WAFEngine) AuditLogger() *AuditLogger {
+	if e == nil {
+		return nil
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.auditLogger
+}
+
+// SetAuditLogger overrides or sets the engine's audit logger.
+func (e *WAFEngine) SetAuditLogger(l *AuditLogger) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.auditLogger = l
 }
 

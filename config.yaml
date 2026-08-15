@@ -102,6 +102,10 @@ server:
     #   - "10.0.0.0/8"
     # denied_ips:             # Global CIDR IP denylist (matching IPs get 403)
     #   - "198.51.100.0/24"
+    audit_log:
+      enabled: true           # Enable structured JSON security audit logging
+      output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
+      format: "json"          # Output format (json)
 
 # Logging and Telemetry Output Settings
 logging:

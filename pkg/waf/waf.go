@@ -21,6 +21,8 @@ const (
 	CategoryXSS       WAFCategory = "xss"
 	CategoryTraversal WAFCategory = "traversal"
 	CategoryRCE       WAFCategory = "rce"
+	CategoryBot       WAFCategory = "bot"
+	CategoryCustom    WAFCategory = "custom"
 )
 
 // InspectLocation flags where the rule should be checked.
@@ -43,17 +45,28 @@ type WAFRule struct {
 	Locations   InspectLocation
 }
 
+// CustomRuleConfig defines a user-configurable regex rule in YAML/JSON.
+type CustomRuleConfig struct {
+	ID          string   `json:"id" yaml:"id"`
+	Category    string   `json:"category" yaml:"category"`
+	Description string   `json:"description" yaml:"description"`
+	Pattern     string   `json:"pattern" yaml:"pattern"`
+	Score       int      `json:"score" yaml:"score"`
+	Locations   []string `json:"locations" yaml:"locations"`
+}
+
 // WAFConfig holds configuration for the WAF engine.
 type WAFConfig struct {
-	Enabled            bool           `json:"enabled" yaml:"enabled"`
-	Mode               string         `json:"mode" yaml:"mode"` // "enforce" or "detection"
-	AnomalyThreshold   int            `json:"anomaly_threshold" yaml:"anomaly_threshold"`
-	MaxInspectBodySize int64          `json:"max_inspect_body_size" yaml:"max_inspect_body_size"`
-	DisabledRules      []string       `json:"disabled_rules" yaml:"disabled_rules"`
-	AllowedIPs         []string       `json:"allowed_ips" yaml:"allowed_ips"`
-	DeniedIPs          []string       `json:"denied_ips" yaml:"denied_ips"`
-	Excluded           []string       `json:"excluded" yaml:"excluded"`
-	AuditLog           AuditLogConfig `json:"audit_log" yaml:"audit_log"`
+	Enabled            bool               `json:"enabled" yaml:"enabled"`
+	Mode               string             `json:"mode" yaml:"mode"` // "enforce" or "detection"
+	AnomalyThreshold   int                `json:"anomaly_threshold" yaml:"anomaly_threshold"`
+	MaxInspectBodySize int64              `json:"max_inspect_body_size" yaml:"max_inspect_body_size"`
+	DisabledRules      []string           `json:"disabled_rules" yaml:"disabled_rules"`
+	AllowedIPs         []string           `json:"allowed_ips" yaml:"allowed_ips"`
+	DeniedIPs          []string           `json:"denied_ips" yaml:"denied_ips"`
+	Excluded           []string           `json:"excluded" yaml:"excluded"`
+	CustomRules        []CustomRuleConfig `json:"custom_rules" yaml:"custom_rules"`
+	AuditLog           AuditLogConfig     `json:"audit_log" yaml:"audit_log"`
 }
 
 // DefaultConfig returns safe default WAF settings.
@@ -67,8 +80,94 @@ func DefaultConfig() WAFConfig {
 		AllowedIPs:         nil,
 		DeniedIPs:          nil,
 		Excluded:           nil,
+		CustomRules:        nil,
 		AuditLog:           DefaultAuditLogConfig(),
 	}
+}
+
+// ParseLocations maps string location identifiers to an InspectLocation bitmask.
+func ParseLocations(locs []string) InspectLocation {
+	if len(locs) == 0 {
+		return InspectURL | InspectQuery | InspectHeaders | InspectBody
+	}
+	var mask InspectLocation
+	for _, l := range locs {
+		switch strings.ToLower(strings.TrimSpace(l)) {
+		case "url", "path":
+			mask |= InspectURL
+		case "query":
+			mask |= InspectQuery
+		case "headers", "header":
+			mask |= InspectHeaders
+		case "body":
+			mask |= InspectBody
+		}
+	}
+	if mask == 0 {
+		return InspectURL | InspectQuery | InspectHeaders | InspectBody
+	}
+	return mask
+}
+
+// CompileCustomRule compiles a CustomRuleConfig into an active WAFRule.
+func CompileCustomRule(c CustomRuleConfig) (WAFRule, error) {
+	if strings.TrimSpace(c.ID) == "" {
+		return WAFRule{}, fmt.Errorf("custom WAF rule id cannot be empty")
+	}
+	if strings.TrimSpace(c.Pattern) == "" {
+		return WAFRule{}, fmt.Errorf("custom WAF rule %q pattern cannot be empty", c.ID)
+	}
+	re, err := regexp.Compile(c.Pattern)
+	if err != nil {
+		return WAFRule{}, fmt.Errorf("custom WAF rule %q invalid regex %q: %w", c.ID, c.Pattern, err)
+	}
+
+	cat := WAFCategory(strings.ToLower(strings.TrimSpace(c.Category)))
+	if cat == "" {
+		cat = CategoryCustom
+	}
+
+	score := c.Score
+	if score <= 0 {
+		score = 5
+	}
+
+	return WAFRule{
+		ID:          c.ID,
+		Category:    cat,
+		Description: c.Description,
+		Pattern:     re,
+		Score:       score,
+		Locations:   ParseLocations(c.Locations),
+	}, nil
+}
+
+func buildActiveRules(cfg WAFConfig) ([]WAFRule, error) {
+	disabledMap := make(map[string]bool)
+	for _, id := range cfg.DisabledRules {
+		disabledMap[id] = true
+	}
+
+	allRules := defaultRules()
+	activeRules := make([]WAFRule, 0, len(allRules)+len(cfg.CustomRules))
+	for _, r := range allRules {
+		if !disabledMap[r.ID] {
+			activeRules = append(activeRules, r)
+		}
+	}
+
+	for _, cr := range cfg.CustomRules {
+		if disabledMap[cr.ID] {
+			continue
+		}
+		compiled, err := CompileCustomRule(cr)
+		if err != nil {
+			return nil, err
+		}
+		activeRules = append(activeRules, compiled)
+	}
+
+	return activeRules, nil
 }
 
 // WAFEngine executes inspection rules against incoming HTTP requests.
@@ -80,7 +179,7 @@ type WAFEngine struct {
 	mu          sync.RWMutex
 }
 
-// NewEngine initializes a WAFEngine with default OWASP rules, IP ACLs, and configuration.
+// NewEngine initializes a WAFEngine with default OWASP rules, custom rules, IP ACLs, and configuration.
 func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 	if cfg.AnomalyThreshold <= 0 {
 		cfg.AnomalyThreshold = 5
@@ -105,17 +204,9 @@ func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 		}
 	}
 
-	disabledMap := make(map[string]bool)
-	for _, id := range cfg.DisabledRules {
-		disabledMap[id] = true
-	}
-
-	allRules := defaultRules()
-	activeRules := make([]WAFRule, 0, len(allRules))
-	for _, r := range allRules {
-		if !disabledMap[r.ID] {
-			activeRules = append(activeRules, r)
-		}
+	activeRules, err := buildActiveRules(cfg)
+	if err != nil {
+		return nil, err
 	}
 
 	return &WAFEngine{
@@ -126,9 +217,64 @@ func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 	}, nil
 }
 
+// Reload dynamically updates the WAF engine configuration and rule sets atomically under mutex lock.
+func (e *WAFEngine) Reload(cfg WAFConfig) error {
+	if cfg.AnomalyThreshold <= 0 {
+		cfg.AnomalyThreshold = 5
+	}
+	if cfg.MaxInspectBodySize <= 0 {
+		cfg.MaxInspectBodySize = 64 * 1024
+	}
+	if cfg.Mode == "" {
+		cfg.Mode = "enforce"
+	}
+
+	acl, err := NewIPAccessList(cfg.AllowedIPs, cfg.DeniedIPs)
+	if err != nil {
+		return fmt.Errorf("failed to reload WAF IP ACLs: %w", err)
+	}
+
+	activeRules, err := buildActiveRules(cfg)
+	if err != nil {
+		return fmt.Errorf("failed to reload WAF custom rules: %w", err)
+	}
+
+	var logger *AuditLogger
+	if cfg.AuditLog.Enabled {
+		logger, err = NewAuditLogger(cfg.AuditLog)
+		if err != nil {
+			return fmt.Errorf("failed to reload WAF audit logger: %w", err)
+		}
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	e.config = cfg
+	e.rules = activeRules
+	e.ipACL = acl
+	if cfg.AuditLog.Enabled {
+		e.auditLogger = logger
+	}
+
+	return nil
+}
+
+// Rules returns a copy of the currently active WAF rules.
+func (e *WAFEngine) Rules() []WAFRule {
+	if e == nil {
+		return nil
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	res := make([]WAFRule, len(e.rules))
+	copy(res, e.rules)
+	return res
+}
+
 // Inspect evaluates a stdlib *http.Request against active WAF rules.
 func (e *WAFEngine) Inspect(req *http.Request) (blocked bool, score int, matched []WAFRule, err error) {
-	if !e.config.Enabled || req == nil {
+	if e == nil || req == nil {
 		return false, 0, nil, nil
 	}
 
@@ -159,7 +305,7 @@ func (e *WAFEngine) Inspect(req *http.Request) (blocked bool, score int, matched
 
 // InspectToron evaluates a Toron *httpparser.Request against active WAF rules.
 func (e *WAFEngine) InspectToron(req *httpparser.Request) (blocked bool, score int, matched []WAFRule, err error) {
-	if !e.config.Enabled || req == nil {
+	if e == nil || req == nil {
 		return false, 0, nil, nil
 	}
 
@@ -195,8 +341,16 @@ func (e *WAFEngine) InspectToron(req *httpparser.Request) (blocked bool, score i
 }
 
 func (e *WAFEngine) inspectInternal(method, urlPath, rawQuery, headersStr string, bodyReader io.Reader, restoreBody func([]byte)) (blocked bool, score int, matched []WAFRule, err error) {
+	if e == nil {
+		return false, 0, nil, nil
+	}
+
 	e.mu.RLock()
 	defer e.mu.RUnlock()
+
+	if !e.config.Enabled {
+		return false, 0, nil, nil
+	}
 
 	normPath := urlPath
 	if unescaped, unErr := url.PathUnescape(urlPath); unErr == nil {

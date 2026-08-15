@@ -78,19 +78,21 @@ func main() {
 	// Attach Middlewares
 	r.Use(router.LoggerMiddleware())
 	r.Use(router.RecoveryMiddleware())
+	var globalWafEngine *waf.WAFEngine
 	if appCfg.Server.WAF.Enabled {
 		globalWafCfg := appCfg.Server.WAF
 		if appCfg.Proxy.Enabled {
 			for _, pr := range appCfg.Proxy.Routes {
-				if pr.WAF.Enabled || len(pr.WAF.AllowedIPs) > 0 || len(pr.WAF.DeniedIPs) > 0 || len(pr.WAF.DisabledRules) > 0 || pr.WAF.Mode != "" {
+				if pr.WAF.Enabled || len(pr.WAF.AllowedIPs) > 0 || len(pr.WAF.DeniedIPs) > 0 || len(pr.WAF.DisabledRules) > 0 || len(pr.WAF.CustomRules) > 0 || pr.WAF.Mode != "" {
 					if pr.Prefix != "" {
 						globalWafCfg.Excluded = append(globalWafCfg.Excluded, pr.Prefix)
 					}
 				}
 			}
 		}
-		if wafEngine, wafErr := waf.NewEngine(globalWafCfg); wafErr == nil {
-			wafMw := waf.NewWAFMiddleware(wafEngine)
+		if engine, wafErr := waf.NewEngine(globalWafCfg); wafErr == nil {
+			globalWafEngine = engine
+			wafMw := waf.NewWAFMiddleware(globalWafEngine)
 			r.Use(func(next router.HandlerFunc) router.HandlerFunc {
 				return func(req *httpparser.Request, res *httpparser.Response) {
 					wafMw(waf.HandlerFunc(next))(req, res)
@@ -350,6 +352,36 @@ func main() {
 		_ = r.RoutePrefix(router.RouteTypeStatic, "", appCfg.Static.Prefix, nil, appCfg.Static.Dir, proxy.ProxyOptions{})
 	}
 
+	// Initialize ConfigWatcher for zero-downtime server and WAF hot reloading
+	var configWatcher *config.ConfigWatcher
+	if configPath != "" {
+		cw, err := config.NewConfigWatcher(configPath, routesPath, func(newCfg *config.AppConfig) {
+			if globalWafEngine != nil && newCfg.Server.WAF.Enabled {
+				globalWafCfg := newCfg.Server.WAF
+				if newCfg.Proxy.Enabled {
+					for _, pr := range newCfg.Proxy.Routes {
+						if pr.WAF.Enabled || len(pr.WAF.AllowedIPs) > 0 || len(pr.WAF.DeniedIPs) > 0 || len(pr.WAF.DisabledRules) > 0 || len(pr.WAF.CustomRules) > 0 || pr.WAF.Mode != "" {
+							if pr.Prefix != "" {
+								globalWafCfg.Excluded = append(globalWafCfg.Excluded, pr.Prefix)
+							}
+						}
+					}
+				}
+				if reloadErr := globalWafEngine.Reload(globalWafCfg); reloadErr != nil {
+					log.Printf("[TORON] Hot reload error updating WAF engine: %v", reloadErr)
+				} else {
+					log.Printf("[TORON] Hot reloaded WAF engine successfully (%d custom rules, mode=%s)", len(globalWafCfg.CustomRules), globalWafCfg.Mode)
+				}
+			}
+		})
+		if err != nil {
+			log.Printf("[TORON] Warning: Failed to start ConfigWatcher for %s: %v", configPath, err)
+		} else {
+			configWatcher = cw
+			log.Printf("[TORON] Started ConfigWatcher for zero-downtime hot reloading on %s", configPath)
+		}
+	}
+
 	srv := server.New(srvCfg, r)
 
 	// Graceful shutdown context listener
@@ -372,6 +404,10 @@ func main() {
 
 	<-shutdownCtx.Done()
 	log.Println("[TORON] Shutdown signal received. Shutting down gracefully...")
+
+	if configWatcher != nil {
+		_ = configWatcher.Stop()
+	}
 
 	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

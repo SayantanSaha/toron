@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -187,8 +188,42 @@ func ValidateConfig(cfg *AppConfig) error {
 		}
 	}
 
+	if cfg.Server.WAF.Enabled {
+		for i, cr := range cfg.Server.WAF.CustomRules {
+			if strings.TrimSpace(cr.ID) == "" {
+				return fmt.Errorf("server.waf.custom_rules[%d] missing required id", i)
+			}
+			if strings.TrimSpace(cr.Pattern) == "" {
+				return fmt.Errorf("server.waf.custom_rules[%d] (%s) missing required pattern", i, cr.ID)
+			}
+			if _, err := regexp.Compile(cr.Pattern); err != nil {
+				return fmt.Errorf("server.waf.custom_rules[%d] (%s) invalid regex %q: %w", i, cr.ID, cr.Pattern, err)
+			}
+			if cr.Score < 0 {
+				return fmt.Errorf("server.waf.custom_rules[%d] (%s) score must be non-negative, got %d", i, cr.ID, cr.Score)
+			}
+		}
+	}
+
 	if cfg.Proxy.Enabled {
 		for i, route := range cfg.Proxy.Routes {
+			if route.WAF.Enabled {
+				for j, cr := range route.WAF.CustomRules {
+					if strings.TrimSpace(cr.ID) == "" {
+						return fmt.Errorf("route %q waf.custom_rules[%d] missing required id", route.Prefix, j)
+					}
+					if strings.TrimSpace(cr.Pattern) == "" {
+						return fmt.Errorf("route %q waf.custom_rules[%d] (%s) missing required pattern", route.Prefix, j, cr.ID)
+					}
+					if _, err := regexp.Compile(cr.Pattern); err != nil {
+						return fmt.Errorf("route %q waf.custom_rules[%d] (%s) invalid regex %q: %w", route.Prefix, j, cr.ID, cr.Pattern, err)
+					}
+					if cr.Score < 0 {
+						return fmt.Errorf("route %q waf.custom_rules[%d] (%s) score must be non-negative, got %d", route.Prefix, j, cr.ID, cr.Score)
+					}
+				}
+			}
+
 			if route.IsTCP() || route.IsUDP() {
 				if route.GetListenPort() <= 0 || route.GetListenPort() > 65535 {
 					return fmt.Errorf("Layer 4 %s route #%d missing or invalid listen_port (must be 1-65535)", route.GetType(), i+1)

@@ -1,5 +1,15 @@
 # Release Notes
 
+## 2026-08-15 - Prototype 35 Release (Custom WAF Regex Rules & Zero-Downtime Hot Reloading)
+
+### Added
+- **User-Defined Custom WAF Regex Rules (`pkg/waf`)**: Supported defining custom security regex rules in `config.yaml` (`server.waf.custom_rules`) and `routes.yaml` (`pr.waf.custom_rules`) with customizable `id`, `category`, `description`, `pattern`, `score`, and granular inspection locations (`url`, `path`, `query`, `headers`, `body`) (`TASK-045`, `REQ-045`).
+- **Zero-Downtime Hot Reloading via `ConfigWatcher` (`pkg/config/watcher.go`)**: Background `fsnotify` file worker monitors `config.yaml` with debouncing, automatically re-validates configuration syntax, and atomically reloads active WAF rule sets in memory via `WAFEngine.Reload()` without dropping active TCP/TLS/HTTP connections.
+- **Fail-Safe Hot Reload Protection**: Invalid configuration edits or unparseable regular expressions are safely rejected with descriptive warning logs while retaining the active in-memory rule set intact.
+
+### Related Tasks
+- `TASK-045`: Implement Custom WAF Regex Rules and Zero-Downtime Hot Reloading
+
 ## 2026-08-15 - Prototype 34 Release (WAF Telemetry, Prometheus Metrics & Structured Security Audit Logging)
 
 ### Added

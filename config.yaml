@@ -102,6 +102,13 @@ server:
     #   - "10.0.0.0/8"
     # denied_ips:             # Global CIDR IP denylist (matching IPs get 403)
     #   - "198.51.100.0/24"
+    custom_rules:             # User-defined regex rules (hot reloaded dynamically via fsnotify)
+      - id: "CUSTOM-001"
+        category: "bot"
+        description: "Block malicious scrapers and security scanners"
+        pattern: "(?i)(sqlmap|nikto|nmap|acunetix)"
+        score: 10
+        locations: ["headers"]
     audit_log:
       enabled: true           # Enable structured JSON security audit logging
       output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")

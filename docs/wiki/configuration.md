@@ -142,7 +142,7 @@ server:
     allow_credentials: true
     max_age: 86400
 
-  # Web Application Firewall (WAF) & Layer 7 OWASP Threat Inspection
+  # Web Application Firewall (WAF) & Layer 7 Threat Inspection
   waf:
     enabled: true
     mode: "enforce"           # "enforce" (403 block) or "detection" (log-only anomaly score)
@@ -151,6 +151,17 @@ server:
     allowed_ips: []           # Optional global CIDR IP allowlist (e.g. ["10.0.0.0/8"])
     denied_ips: []            # Optional global CIDR IP denylist (e.g. ["198.51.100.0/24"])
     disabled_rules: []        # Optional list of rule IDs to bypass globally
+    custom_rules:             # User-defined regex rules (hot reloaded dynamically via fsnotify)
+      - id: "CUSTOM-001"
+        category: "bot"
+        description: "Block malicious scrapers and security scanners"
+        pattern: "(?i)(sqlmap|nikto|nmap|acunetix)"
+        score: 10
+        locations: ["headers"]
+    audit_log:
+      enabled: true
+      output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
+      format: "json"
 
 logging:
   level: "info"

@@ -16,6 +16,7 @@ import (
 	"toron/pkg/proxy"
 	"toron/pkg/router"
 	"toron/pkg/server"
+	"toron/pkg/waf"
 )
 
 func main() {
@@ -77,6 +78,11 @@ func main() {
 	// Attach Middlewares
 	r.Use(router.LoggerMiddleware())
 	r.Use(router.RecoveryMiddleware())
+	if appCfg.Server.WAF.Enabled {
+		if wafEngine, wafErr := waf.NewEngine(appCfg.Server.WAF); wafErr == nil {
+			r.Use(waf.NewWAFMiddleware(wafEngine))
+		}
+	}
 	if appCfg.Server.Cache.Enabled {
 		r.Use(router.NewCacheMiddleware(router.CacheConfig{
 			Enabled:        appCfg.Server.Cache.Enabled,

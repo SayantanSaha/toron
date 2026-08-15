@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"toron/pkg/server"
+	"toron/pkg/waf"
 )
 
 // AppConfig is the root configuration structure for Toron.
@@ -145,6 +146,7 @@ type ServerConfig struct {
 	Auth            AuthConfig            `yaml:"auth" json:"auth"`
 	CORS            CORSConfig            `yaml:"cors" json:"cors"`
 	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
+	WAF             waf.WAFConfig         `yaml:"waf" json:"waf"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -186,6 +188,7 @@ type ProxyRouteConfig struct {
 	TLS                 RouteTLSConfig        `yaml:"tls" json:"tls"`
 	CORS                CORSConfig            `yaml:"cors" json:"cors"`
 	SecurityHeaders     SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
+	WAF                 waf.WAFConfig         `yaml:"waf" json:"waf"`
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").
@@ -358,6 +361,7 @@ func DefaultAppConfig() *AppConfig {
 				FrameOptions:       "DENY",
 				ReferrerPolicy:     "strict-origin-when-cross-origin",
 			},
+			WAF: waf.DefaultConfig(),
 		},
 		Static: StaticConfig{
 			Enabled: false,

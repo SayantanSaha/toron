@@ -92,6 +92,13 @@ server:
     referrer_policy: "strict-origin-when-cross-origin"
     csp: ""
 
+  # Web Application Firewall (WAF) & Layer 7 OWASP Injection Protection Engine
+  waf:
+    enabled: true             # Enable WAF Layer 7 threat inspection middleware
+    mode: "enforce"           # Evaluation mode: "enforce" (403 block) or "detection" (log-only score)
+    anomaly_threshold: 5      # Threat score limit above which request is blocked
+    max_inspect_body_size: 65536 # Maximum payload body bytes scanned (64 KB)
+
 # Logging and Telemetry Output Settings
 logging:
   level: "info"

@@ -1,5 +1,16 @@
 # Release Notes
 
+## 2026-08-15 - Prototype 31 Release (Core Web Application Firewall Engine & OWASP Injection Protection)
+
+### Added
+- **Core WAF Engine (`pkg/waf`)**: Implemented high-performance, modular Web Application Firewall engine (`WAFEngine`) in `pkg/waf/waf.go` with `enforce` (HTTP `403 Forbidden` blocking) and `detection` (log-only threat anomaly score) modes (`TASK-041`, `REQ-041`).
+- **OWASP Top 10 Injection Protection**: Pre-compiled regex rule set in `pkg/waf/rules.go` targeting SQL Injection (`SQLI-001`, `SQLI-002`, `SQLI-003`), Cross-Site Scripting (`XSS-001`, `XSS-002`, `XSS-003`), Path Traversal / LFI (`TRAVERSAL-001`, `TRAVERSAL-002`), and Command Injection / RCE (`RCE-001`, `RCE-002`).
+- **Multi-Location Request Inspection**: Inspects URL paths, raw query parameters, HTTP request headers, and payload bodies (bounded by `max_inspect_body_size`, restoring `req.Body` for downstream handlers).
+- **Router Middleware Adapter**: Created `NewWAFMiddleware` in `pkg/waf/middleware.go` and integrated into `cmd/toron/main.go`, `pkg/config/config.go`, `config.yaml`, and `routes.yaml`.
+
+### Related Tasks
+- `TASK-041`: Implement Core Web Application Firewall Engine and OWASP Injection Protection Middleware
+
 ## 2026-08-14 - Prototype 30 Release (Configurable CORS Policies & Enterprise Security Headers)
 
 ### Added

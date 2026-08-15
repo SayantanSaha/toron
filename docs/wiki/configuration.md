@@ -112,12 +112,45 @@ server:
   cache:
     enabled: true
     default_ttl: 60s
-    max_entries: 1000
-    max_payload_size: 1048576
+  # Enterprise Browser Security Headers
+  security_headers:
+    enabled: true
+    hsts: "max-age=31536000; includeSubDomains"
+    content_type_options: "nosniff"
+    frame_options: "DENY"
+    referrer_policy: "strict-origin-when-cross-origin"
+    csp: ""
 
-  # Global Edge Authentication (Optional)
-  auth:
-    type: "" # "jwt", "api_key", "basic", or ""
+  # Cross-Origin Resource Sharing (CORS) Policy
+  cors:
+    enabled: true
+    allow_origins:
+      - "*"
+    allow_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+      - "OPTIONS"
+    allow_headers:
+      - "Content-Type"
+      - "Authorization"
+      - "X-Version"
+    expose_headers:
+      - "X-Cache"
+      - "X-Toron-WAF-Anomaly-Score"
+    allow_credentials: true
+    max_age: 86400
+
+  # Web Application Firewall (WAF) & Layer 7 OWASP Threat Inspection
+  waf:
+    enabled: true
+    mode: "enforce"           # "enforce" (403 block) or "detection" (log-only anomaly score)
+    anomaly_threshold: 5
+    max_inspect_body_size: 65536
+    allowed_ips: []           # Optional global CIDR IP allowlist (e.g. ["10.0.0.0/8"])
+    denied_ips: []            # Optional global CIDR IP denylist (e.g. ["198.51.100.0/24"])
+    disabled_rules: []        # Optional list of rule IDs to bypass globally
 
 logging:
   level: "info"
@@ -185,6 +218,29 @@ routes:
   - type: "udp"
     listen_port: 8091
     target: "127.0.0.1:9091"
+
+  # Route-Level WAF Override & CIDR IP Access List
+  - type: "upstream"
+    prefix: "/services/secure-admin"
+    target: "http://localhost:9001"
+    waf:
+      enabled: true
+      mode: "enforce"
+      allowed_ips:
+        - "10.0.0.0/8"
+        - "127.0.0.1"
+      denied_ips:
+        - "10.99.0.0/16"
+
+  # Route-Level WAF Rule Tuning (Legacy API with SQLI-001 disabled)
+  - type: "upstream"
+    prefix: "/services/legacy-api"
+    target: "http://localhost:9002"
+    waf:
+      enabled: true
+      mode: "enforce"
+      disabled_rules:
+        - "SQLI-001"
 ```
 
 ## Related Pages

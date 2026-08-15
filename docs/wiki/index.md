@@ -54,6 +54,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Domain-Based Virtual Host Routing](./features/domain-routing.md) – Multi-tenant host header dispatching.
 
 ### 🛡️ Traffic Control, Performance & Security
+- [Web Application Firewall (WAF) & Injection Protection](./features/waf.md) – OWASP Top 10 SQLi, XSS, Path Traversal, and RCE threat mitigation.
 - [CORS Policies & Enterprise Security Headers](./features/cors-security-headers.md) – Preflight OPTIONS handling, origin matching, and OWASP security headers.
 - [Transparent Response Compression](./features/compression.md) – Streaming Zstd, Brotli, Gzip & Deflate response compression.
 - [In-Memory Response Caching](./features/response-caching.md) – RFC 7234 HTTP response caching and telemetry headers.

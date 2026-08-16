@@ -14,8 +14,15 @@ all: build
 build:
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> Building Toron binary in $(BUILD_DIR)/$(BINARY_NAME)..."
-	go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_SRC)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_SRC)
 	@echo "==> Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
+
+## build-darwin-arm64: Compiles Toron binary for macOS Apple Silicon (ARM64)
+build-darwin-arm64:
+	@mkdir -p $(BUILD_DIR)
+	@echo "==> Building Toron binary for macOS ARM64 in $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64..."
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_SRC)
+	@echo "==> macOS ARM64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64"
 
 ## dummy: Compiles the dummy microservice cluster binary into bin/
 dummy:

@@ -12,10 +12,14 @@ import (
 	"time"
 
 	"toron/pkg/config"
+	"toron/pkg/discovery"
 	"toron/pkg/httpparser"
+	"toron/pkg/ingress"
 	"toron/pkg/proxy"
 	"toron/pkg/router"
 	"toron/pkg/server"
+	"toron/pkg/sidecar"
+	"toron/pkg/transcoder"
 	"toron/pkg/waf"
 )
 
@@ -375,6 +379,50 @@ func main() {
 	if appCfg.Static.Enabled && !staticEnabled {
 		log.Printf("[TORON] Serving static assets from %s under prefix %q...", appCfg.Static.Dir, appCfg.Static.Prefix)
 		_ = r.RoutePrefix(router.RouteTypeStatic, "", appCfg.Static.Prefix, nil, appCfg.Static.Dir, proxy.ProxyOptions{})
+	}
+
+	// Initialize OCI Container Auto-Discovery Engine if enabled
+	if appCfg.Discovery.Enabled {
+		discMgr := discovery.NewManager(appCfg.Discovery, r)
+		if err := discMgr.Start(context.Background()); err != nil {
+			log.Printf("[TORON] Failed to start OCI Container Auto-Discovery: %v", err)
+		} else {
+			defer discMgr.Stop()
+		}
+	}
+
+	// Initialize Kubernetes Ingress Controller Engine if enabled
+	if appCfg.Ingress.Enabled {
+		ingCtrl, err := ingress.NewController(appCfg.Ingress, r)
+		if err != nil {
+			log.Printf("[TORON] K8s Ingress Controller initialization warning: %v", err)
+		} else {
+			if err := ingCtrl.Start(context.Background()); err != nil {
+				log.Printf("[TORON] Failed to start K8s Ingress Controller: %v", err)
+			}
+			defer ingCtrl.Stop()
+		}
+	}
+
+	// Initialize Service Mesh Sidecar Mode Engine if enabled
+	if appCfg.Sidecar.Enabled {
+		sidecarEng, err := sidecar.NewProxyEngine(appCfg.Sidecar, r)
+		if err != nil {
+			log.Printf("[TORON] Service Mesh Sidecar initialization warning: %v", err)
+		} else {
+			if err := sidecarEng.Start(context.Background()); err != nil {
+				log.Printf("[TORON] Failed to start Service Mesh Sidecar: %v", err)
+			}
+			defer sidecarEng.Stop()
+		}
+	}
+
+	// Initialize REST-to-gRPC Transcoding Engine if enabled
+	if appCfg.Transcoder.Enabled {
+		_, err := transcoder.NewEngine(appCfg.Transcoder, r)
+		if err != nil {
+			log.Printf("[TORON] REST-to-gRPC Transcoder initialization warning: %v", err)
+		}
 	}
 
 	// Initialize ConfigWatcher for zero-downtime server and WAF hot reloading

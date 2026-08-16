@@ -253,3 +253,41 @@ GET {{baseUrl}}/services/legacy-api/items?q=UNION+SELECT+1,2,3
 Accept: application/json
 
 
+###############################################################################
+# 14. OCI Container Auto-Discovery (Docker & Podman)
+###############################################################################
+
+### 14.1 Auto-Discovered Docker Container 1 (Host: container.toron.local)
+GET {{baseUrl}}/container-api/health
+Host: container.toron.local
+Accept: application/json
+
+### 14.2 Auto-Discovered Docker Container 2 (Host: container.toron.local)
+GET {{baseUrl}}/container-api/info
+Host: container.toron.local
+Accept: application/json
+
+### 14.3 Auto-Discovered Docker Container 3 (Host: auto-discovered.local)
+GET {{baseUrl}}/auto-discovered/status
+Host: auto-discovered.local
+Accept: application/json
+
+
+###############################################################################
+# 15. REST-to-gRPC Transcoding & Service Mesh Sidecar
+###############################################################################
+
+### 15.1 REST-to-gRPC Transcoded Request (GET /v1/users/123 -> gRPC POST)
+GET {{baseUrl}}/v1/users/123
+Accept: application/json
+
+### 15.2 Service Mesh Sidecar Ingress Listener (Port 15006)
+GET http://localhost:15006/health
+Accept: application/json
+
+### 15.3 Service Mesh Sidecar Egress Listener (Port 15001 - 80/20 Canary Split)
+GET http://localhost:15001/api/data
+Accept: application/json
+
+
+

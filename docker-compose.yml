@@ -1,0 +1,45 @@
+services:
+  dummy-container-1:
+    build:
+      context: .
+      dockerfile: dummy-services/Dockerfile
+    container_name: toron-dummy-container-1
+    command: ["-port", "9001", "-count", "1"]
+    ports:
+      - "9001:9001"
+    labels:
+      toron.enable: "true"
+      toron.host: "container.toron.local"
+      toron.prefix: "/container-api"
+      toron.port: "9001"
+      toron.weight: "10"
+
+  dummy-container-2:
+    build:
+      context: .
+      dockerfile: dummy-services/Dockerfile
+    container_name: toron-dummy-container-2
+    command: ["-port", "9002", "-count", "1"]
+    ports:
+      - "9002:9002"
+    labels:
+      toron.enable: "true"
+      toron.host: "container.toron.local"
+      toron.prefix: "/container-api"
+      toron.port: "9002"
+      toron.weight: "10"
+
+  dummy-container-3:
+    build:
+      context: .
+      dockerfile: dummy-services/Dockerfile
+    container_name: toron-dummy-container-3
+    command: ["-port", "9003", "-count", "1"]
+    ports:
+      - "9003:9003"
+    labels:
+      toron.enable: "true"
+      toron.host: "auto-discovered.local"
+      toron.prefix: "/auto-discovered"
+      toron.port: "9003"
+      toron.weight: "5"

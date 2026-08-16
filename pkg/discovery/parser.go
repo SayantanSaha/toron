@@ -80,6 +80,17 @@ func ParseContainerLabels(container Container, defaultWeight int) (*DiscoveredRo
 		ip = "127.0.0.1"
 	}
 
+	// For Docker Desktop on macOS/Windows or host-mode discovery, map target to 127.0.0.1:PublicPort
+	for _, pm := range container.Ports {
+		if pm.PublicPort > 0 {
+			if targetPort == pm.PrivatePort || targetPort == 0 || targetPort == 80 {
+				targetPort = pm.PublicPort
+				ip = "127.0.0.1"
+				break
+			}
+		}
+	}
+
 	return &DiscoveredRoute{
 		ContainerID:     container.ID,
 		ContainerName:   cName,

@@ -107,6 +107,9 @@ uninstall_toron() {
         log_info "Removed log directory ${INSTALL_LOG_DIR}"
     fi
 
+    rm -f "/etc/logrotate.d/toron" 2>/dev/null || true
+    rm -f "/etc/newsyslog.d/toron.conf" 2>/dev/null || true
+
     log_success "Toron Edge Gateway uninstallation complete!"
     exit 0
 }
@@ -278,11 +281,51 @@ EOF
     fi
 }
 
+# Step 5: Install Log Rotation Configuration (daily rolling + gzip compression)
+install_log_rotation() {
+    log_info "Configuring daily log rotation and gzip compression for ${OS}..."
+
+    if [[ "${OS}" == "linux" ]]; then
+        if [[ -d "/etc/logrotate.d" ]]; then
+            local logrotate_file="/etc/logrotate.d/toron"
+            log_info "Writing logrotate configuration at ${logrotate_file}..."
+
+            cat <<EOF > "${logrotate_file}"
+/var/log/toron/*.log {
+    daily
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+}
+EOF
+            chmod 644 "${logrotate_file}"
+            log_success "Linux logrotate configuration installed at ${logrotate_file} (daily, 7 rotations, gzip compressed)"
+        fi
+
+    elif [[ "${OS}" == "darwin" ]]; then
+        if [[ -d "/etc/newsyslog.d" ]]; then
+            local newsyslog_file="/etc/newsyslog.d/toron.conf"
+            log_info "Writing newsyslog configuration at ${newsyslog_file}..."
+
+            cat <<EOF > "${newsyslog_file}"
+# logfilename                      [owner:group]  mode count size when  flags [/pid_file] [sig_num]
+/var/log/toron/*.log                              644  7     *    $D0   Z
+EOF
+            chmod 644 "${newsyslog_file}"
+            log_success "macOS newsyslog configuration installed at ${newsyslog_file} (daily midnight \$D0, 7 rotations, gzip compressed)"
+        fi
+    fi
+}
+
 # Main Execution Flow
 locate_binary
 install_binary
 install_configuration
 install_service
+install_log_rotation
 
 echo ""
 echo -e "${BOLD}${GREEN}=============================================================================="

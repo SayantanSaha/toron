@@ -41,6 +41,10 @@ sudo make install
    - **Linux (`systemd`)**: Creates `/etc/systemd/system/toron.service`, reloads systemctl, enables, and starts the service.
    - **macOS (`launchd`)**: Creates `/Library/LaunchDaemons/com.toron.edgegateway.plist`, loads, and starts the daemon.
 
+5. **Daily Log Rotation & Compression**:
+   - **Linux (`logrotate`)**: Writes `/etc/logrotate.d/toron` for daily rotation, keeping 7 archives with `gzip` compression.
+   - **macOS (`newsyslog`)**: Writes `/etc/newsyslog.d/toron.conf` for daily midnight (`$D0`) rotation, keeping 7 archives with `gzip` (`Z`) compression.
+
 ---
 
 ## ⚙️ System Service Management

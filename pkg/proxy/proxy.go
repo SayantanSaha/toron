@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -22,10 +24,15 @@ import (
 type Algorithm string
 
 const (
-	AlgorithmRoundRobin   Algorithm = "round_robin"
-	AlgorithmRandom       Algorithm = "random"
-	AlgorithmStickyCookie Algorithm = "sticky_cookie"
-	AlgorithmIPHash       Algorithm = "ip_hash"
+	AlgorithmRoundRobin         Algorithm = "round_robin"
+	AlgorithmRandom             Algorithm = "random"
+	AlgorithmStickyCookie       Algorithm = "sticky_cookie"
+	AlgorithmIPHash             Algorithm = "ip_hash"
+	AlgorithmWeightedRoundRobin Algorithm = "weighted_round_robin"
+	AlgorithmWeightedRandom     Algorithm = "weighted_random"
+	AlgorithmLeastConn          Algorithm = "least_conn"
+	AlgorithmWeightedLeastConn  Algorithm = "weighted_least_conn"
+	AlgorithmLeastLatency       Algorithm = "least_latency"
 )
 
 var (
@@ -92,6 +99,259 @@ func (b *RoundRobinBalancer) Stop() {
 	}
 }
 
+// 1. WeightedRoundRobinBalancer implements Nginx smooth weighted round-robin.
+type WeightedRoundRobinBalancer struct {
+	targets []*UpstreamTarget
+	mu      sync.Mutex
+}
+
+func NewWeightedRoundRobinBalancer(targets []*UpstreamTarget) (*WeightedRoundRobinBalancer, error) {
+	if len(targets) == 0 {
+		return nil, ErrNoTargetsAvailable
+	}
+	copied := make([]*UpstreamTarget, len(targets))
+	for i, t := range targets {
+		cp := *t
+		if cp.Weight <= 0 {
+			cp.Weight = 1
+		}
+		cp.EffectiveWeight = cp.Weight
+		cp.CurrentWeight = 0
+		copied[i] = &cp
+	}
+	return &WeightedRoundRobinBalancer{targets: copied}, nil
+}
+
+func (b *WeightedRoundRobinBalancer) Next(req *httpparser.Request) (*UpstreamTarget, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if len(b.targets) == 0 {
+		return nil, ErrNoTargetsAvailable
+	}
+
+	var best *UpstreamTarget
+	totalWeight := 0
+
+	for _, t := range b.targets {
+		state := t.GetState()
+		if state != StateClosed && state != StateHalfOpen {
+			continue
+		}
+
+		t.CurrentWeight += t.EffectiveWeight
+		totalWeight += t.EffectiveWeight
+
+		if best == nil || t.CurrentWeight > best.CurrentWeight {
+			best = t
+		}
+	}
+
+	if best == nil {
+		return nil, ErrNoHealthyUpstreamAvailable
+	}
+
+	best.CurrentWeight -= totalWeight
+	return best, nil
+}
+
+func (b *WeightedRoundRobinBalancer) Algorithm() Algorithm { return AlgorithmWeightedRoundRobin }
+func (b *WeightedRoundRobinBalancer) Targets() []*UpstreamTarget { return b.targets }
+func (b *WeightedRoundRobinBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+
+// 2. WeightedRandomBalancer implements weighted cumulative random selection.
+type WeightedRandomBalancer struct {
+	targets []*UpstreamTarget
+	mu      sync.Mutex
+	rnd     *rand.Rand
+}
+
+func NewWeightedRandomBalancer(targets []*UpstreamTarget) (*WeightedRandomBalancer, error) {
+	if len(targets) == 0 {
+		return nil, ErrNoTargetsAvailable
+	}
+	copied := make([]*UpstreamTarget, len(targets))
+	for i, t := range targets {
+		cp := *t
+		if cp.Weight <= 0 {
+			cp.Weight = 1
+		}
+		copied[i] = &cp
+	}
+	return &WeightedRandomBalancer{
+		targets: copied,
+		rnd:     rand.New(rand.NewSource(time.Now().UnixNano())),
+	}, nil
+}
+
+func (b *WeightedRandomBalancer) Next(req *httpparser.Request) (*UpstreamTarget, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	healthy := make([]*UpstreamTarget, 0, len(b.targets))
+	totalWeight := 0
+	for _, t := range b.targets {
+		state := t.GetState()
+		if state == StateClosed || state == StateHalfOpen {
+			healthy = append(healthy, t)
+			w := t.Weight
+			if w <= 0 {
+				w = 1
+			}
+			totalWeight += w
+		}
+	}
+
+	if len(healthy) == 0 {
+		return nil, ErrNoHealthyUpstreamAvailable
+	}
+
+	r := b.rnd.Intn(totalWeight)
+	for _, t := range healthy {
+		w := t.Weight
+		if w <= 0 {
+			w = 1
+		}
+		if r < w {
+			return t, nil
+		}
+		r -= w
+	}
+
+	return healthy[0], nil
+}
+
+func (b *WeightedRandomBalancer) Algorithm() Algorithm { return AlgorithmWeightedRandom }
+func (b *WeightedRandomBalancer) Targets() []*UpstreamTarget { return b.targets }
+func (b *WeightedRandomBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+
+// 3. LeastConnBalancer selects target handling fewest active connections.
+type LeastConnBalancer struct {
+	targets []*UpstreamTarget
+}
+
+func NewLeastConnBalancer(targets []*UpstreamTarget) (*LeastConnBalancer, error) {
+	if len(targets) == 0 {
+		return nil, ErrNoTargetsAvailable
+	}
+	copied := make([]*UpstreamTarget, len(targets))
+	copy(copied, targets)
+	return &LeastConnBalancer{targets: copied}, nil
+}
+
+func (b *LeastConnBalancer) Next(req *httpparser.Request) (*UpstreamTarget, error) {
+	var best *UpstreamTarget
+	var minConns int64 = -1
+
+	for _, t := range b.targets {
+		state := t.GetState()
+		if state == StateClosed || state == StateHalfOpen {
+			conns := t.GetActiveConns()
+			if minConns == -1 || conns < minConns {
+				minConns = conns
+				best = t
+			}
+		}
+	}
+
+	if best == nil {
+		return nil, ErrNoHealthyUpstreamAvailable
+	}
+	return best, nil
+}
+
+func (b *LeastConnBalancer) Algorithm() Algorithm { return AlgorithmLeastConn }
+func (b *LeastConnBalancer) Targets() []*UpstreamTarget { return b.targets }
+func (b *LeastConnBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+
+// 4. WeightedLeastConnBalancer selects target with minimal ActiveConns / Weight.
+type WeightedLeastConnBalancer struct {
+	targets []*UpstreamTarget
+}
+
+func NewWeightedLeastConnBalancer(targets []*UpstreamTarget) (*WeightedLeastConnBalancer, error) {
+	if len(targets) == 0 {
+		return nil, ErrNoTargetsAvailable
+	}
+	copied := make([]*UpstreamTarget, len(targets))
+	for i, t := range targets {
+		cp := *t
+		if cp.Weight <= 0 {
+			cp.Weight = 1
+		}
+		copied[i] = &cp
+	}
+	return &WeightedLeastConnBalancer{targets: copied}, nil
+}
+
+func (b *WeightedLeastConnBalancer) Next(req *httpparser.Request) (*UpstreamTarget, error) {
+	var best *UpstreamTarget
+	var minRatio float64 = -1.0
+
+	for _, t := range b.targets {
+		state := t.GetState()
+		if state == StateClosed || state == StateHalfOpen {
+			w := t.Weight
+			if w <= 0 {
+				w = 1
+			}
+			ratio := float64(t.GetActiveConns()) / float64(w)
+			if minRatio < 0 || ratio < minRatio {
+				minRatio = ratio
+				best = t
+			}
+		}
+	}
+
+	if best == nil {
+		return nil, ErrNoHealthyUpstreamAvailable
+	}
+	return best, nil
+}
+
+func (b *WeightedLeastConnBalancer) Algorithm() Algorithm { return AlgorithmWeightedLeastConn }
+func (b *WeightedLeastConnBalancer) Targets() []*UpstreamTarget { return b.targets }
+func (b *WeightedLeastConnBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+
+// 5. LeastLatencyBalancer selects target with minimal EMA latency.
+type LeastLatencyBalancer struct {
+	targets []*UpstreamTarget
+}
+
+func NewLeastLatencyBalancer(targets []*UpstreamTarget) (*LeastLatencyBalancer, error) {
+	if len(targets) == 0 {
+		return nil, ErrNoTargetsAvailable
+	}
+	copied := make([]*UpstreamTarget, len(targets))
+	copy(copied, targets)
+	return &LeastLatencyBalancer{targets: copied}, nil
+}
+
+func (b *LeastLatencyBalancer) Next(req *httpparser.Request) (*UpstreamTarget, error) {
+	var best *UpstreamTarget
+	var minLatency int64 = -1
+
+	for _, t := range b.targets {
+		state := t.GetState()
+		if state == StateClosed || state == StateHalfOpen {
+			lat := t.GetAvgLatencyUS()
+			if minLatency == -1 || lat < minLatency {
+				minLatency = lat
+				best = t
+			}
+		}
+	}
+
+	if best == nil {
+		return nil, ErrNoHealthyUpstreamAvailable
+	}
+	return best, nil
+}
+
+func (b *LeastLatencyBalancer) Algorithm() Algorithm { return AlgorithmLeastLatency }
+func (b *LeastLatencyBalancer) Targets() []*UpstreamTarget { return b.targets }
+func (b *LeastLatencyBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+
 // NewLoadBalancer constructs a LoadBalancer for given targets and algorithm.
 func NewLoadBalancer(algo Algorithm, targets []*UpstreamTarget) (LoadBalancer, error) {
 	return NewLoadBalancerWithOptions(algo, targets, "")
@@ -107,10 +367,22 @@ func NewLoadBalancerWithOptions(algo Algorithm, targets []*UpstreamTarget, cooki
 	switch normAlgo {
 	case "", AlgorithmRoundRobin:
 		return NewRoundRobinBalancer(targets)
+	case AlgorithmRandom:
+		return NewWeightedRandomBalancer(targets)
 	case AlgorithmStickyCookie:
 		return NewStickyCookieBalancer(targets, cookieName)
 	case AlgorithmIPHash:
 		return NewIPHashBalancer(targets)
+	case AlgorithmWeightedRoundRobin:
+		return NewWeightedRoundRobinBalancer(targets)
+	case AlgorithmWeightedRandom:
+		return NewWeightedRandomBalancer(targets)
+	case AlgorithmLeastConn:
+		return NewLeastConnBalancer(targets)
+	case AlgorithmWeightedLeastConn:
+		return NewWeightedLeastConnBalancer(targets)
+	case AlgorithmLeastLatency:
+		return NewLeastLatencyBalancer(targets)
 	default:
 		return nil, fmt.Errorf("proxy: unsupported load balancing algorithm %q", algo)
 	}
@@ -231,6 +503,13 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		p.writeBadGateway(res, "No upstream target available")
 		return
 	}
+
+	targetNode.IncActiveConns()
+	startTime := time.Now()
+	defer func() {
+		targetNode.DecActiveConns()
+		targetNode.RecordLatency(time.Since(startTime))
+	}()
 
 	targetURL := targetNode.URL
 	relPath := req.Path

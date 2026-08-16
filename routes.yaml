@@ -65,6 +65,30 @@ routes:
       - "http://localhost:9001"
       - "http://localhost:9002"
 
+  # 7a. Upstream Routing + Weighted Round-Robin Load Balancing
+  - type: "upstream"
+    prefix: "/services/weighted"
+    algorithm: "weighted_round_robin"
+    targets:
+      - "http://localhost:9005"
+      - "http://localhost:9006"
+
+  # 7b. Upstream Routing + Least Connections Load Balancing
+  - type: "upstream"
+    prefix: "/services/least-conn"
+    algorithm: "least_conn"
+    targets:
+      - "http://localhost:9007"
+      - "http://localhost:9008"
+
+  # 7c. Upstream Routing + Lowest Response Latency Load Balancing
+  - type: "upstream"
+    prefix: "/services/least-latency"
+    algorithm: "least_latency"
+    targets:
+      - "http://localhost:9009"
+      - "http://localhost:9010"
+
   # 8. Single Target Upstream Route + API Key Authentication
   - type: "upstream"
     prefix: "/services/auth"

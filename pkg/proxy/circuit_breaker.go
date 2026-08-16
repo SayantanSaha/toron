@@ -39,7 +39,7 @@ var (
 	ErrNoHealthyUpstreamAvailable = errors.New("proxy: all upstream targets are unhealthy or circuit open")
 )
 
-// UpstreamTarget tracks the URL, health check configuration, and circuit breaker state for a backend server.
+// UpstreamTarget tracks the URL, health check configuration, circuit breaker state, load balancing weight, active connections, and latency metrics.
 type UpstreamTarget struct {
 	URL                 *url.URL
 	HealthCheckType     string
@@ -51,8 +51,43 @@ type UpstreamTarget struct {
 	State               CircuitState
 	LastStateChange     time.Time
 	CooldownPeriod      time.Duration
+	Weight              int
+	EffectiveWeight     int
+	CurrentWeight       int
+	ActiveConns         int64
+	AvgLatencyUS        int64
 	mu                  sync.RWMutex
 	cancelProbe         context.CancelFunc
+}
+
+func (t *UpstreamTarget) IncActiveConns() int64 {
+	return atomic.AddInt64(&t.ActiveConns, 1)
+}
+
+func (t *UpstreamTarget) DecActiveConns() int64 {
+	return atomic.AddInt64(&t.ActiveConns, -1)
+}
+
+func (t *UpstreamTarget) GetActiveConns() int64 {
+	return atomic.LoadInt64(&t.ActiveConns)
+}
+
+func (t *UpstreamTarget) RecordLatency(d time.Duration) {
+	us := d.Microseconds()
+	if us <= 0 {
+		us = 1
+	}
+	old := atomic.LoadInt64(&t.AvgLatencyUS)
+	if old == 0 {
+		atomic.StoreInt64(&t.AvgLatencyUS, us)
+	} else {
+		newVal := int64(float64(old)*0.8 + float64(us)*0.2)
+		atomic.StoreInt64(&t.AvgLatencyUS, newVal)
+	}
+}
+
+func (t *UpstreamTarget) GetAvgLatencyUS() int64 {
+	return atomic.LoadInt64(&t.AvgLatencyUS)
 }
 
 // NewUpstreamTarget constructs a target node with circuit breaker defaults.
@@ -81,6 +116,8 @@ func NewUpstreamTargetWithHealth(targetURL *url.URL, healthType, healthPath, hea
 		State:              StateClosed,
 		LastStateChange:    time.Now(),
 		CooldownPeriod:     cooldown,
+		Weight:             1,
+		EffectiveWeight:    1,
 	}
 }
 

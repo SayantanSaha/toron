@@ -171,6 +171,16 @@ async function fetchAndRenderRoutes() {
         badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-cyan font-semibold flex items-center gap-1">🐋 OCI Auto-Discovered</span>`;
       } else if (isTranscoder) {
         badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-sky font-semibold flex items-center gap-1">🔀 REST-to-gRPC</span>`;
+      } else if (r.algorithm === 'weighted_round_robin') {
+        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-cyan font-semibold flex items-center gap-1">⚖️ Weighted Round-Robin</span>`;
+      } else if (r.algorithm === 'weighted_random') {
+        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-violet font-semibold flex items-center gap-1">🎲 Weighted Random</span>`;
+      } else if (r.algorithm === 'least_conn') {
+        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-emerald font-semibold flex items-center gap-1">⚡ Least Connections</span>`;
+      } else if (r.algorithm === 'weighted_least_conn') {
+        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-emerald font-semibold flex items-center gap-1">⚡ Weighted Least Conn</span>`;
+      } else if (r.algorithm === 'least_latency') {
+        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-amber font-semibold flex items-center gap-1">⏱️ Lowest Latency</span>`;
       }
 
       const hostHTML = r.host ? `<span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">Host: <code class="text-indigo-400">${r.host}</code></span>` : '';

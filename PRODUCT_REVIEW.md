@@ -1,14 +1,14 @@
-# 👑 Product Owner Review: Toron Web Server & Edge Gateway (v1.2.0 Feature Release)
+# 👑 Product Owner Review: Toron Web Server & Edge Gateway (v1.3.0 Feature Release)
 
 **Role**: Product Owner (PO)  
 **Date**: August 16, 2026  
-**Milestone**: **v1.2.0 Release (Prototype 37)** — Native Zero-Dependency Kubernetes Ingress Controller (`pkg/ingress`) & OCI Container Auto-Discovery (`pkg/discovery`).
+**Milestone**: **v1.3.0 Release (Prototype 38)** — Service Mesh Sidecar Mode (`pkg/sidecar`), Native Kubernetes Ingress Controller (`pkg/ingress`), & OCI Container Auto-Discovery (`pkg/discovery`).
 
 ---
 
 ## 1. 🎯 Executive Product Summary
 
-**Toron** is an **event-driven, zero-dependency, ultra-lightweight Web Server, Reverse Proxy Gateway, and Edge Security Engine** written in pure Go. Over 37 iterative prototypes, Toron has matured from a non-blocking TCP reactor into an enterprise-grade cloud-native edge proxy capable of serving high-throughput static assets, functioning as a native Kubernetes Ingress Controller (`networking.k8s.io/v1`), auto-discovering OCI containers across Docker and Podman sockets, reverse proxying containerized microservices, terminating multi-tenant TLS/mTLS and automated ACME certificates, routing Layer 4 TCP/UDP and Layer 7 streams, performing native gRPC health checks and trailer forwarding, executing high-density Brotli/Zstd compression, caching responses, enforcing multi-scheme authentication, inspecting traffic via a Web Application Firewall (WAF) with OWASP & custom regex rules and CIDR IP ACLs, and providing a real-time Security Audit Control Center Dashboard with zero external runtime dependencies.
+**Toron** is an **event-driven, zero-dependency, ultra-lightweight Web Server, Reverse Proxy Gateway, and Edge Security Engine** written in pure Go. Over 38 iterative prototypes, Toron has matured from a non-blocking TCP reactor into an enterprise-grade cloud-native edge proxy capable of serving high-throughput static assets, operating as a lightweight Service Mesh Sidecar proxy (`pkg/sidecar`) with pod-to-pod mTLS and weighted traffic splitting, functioning as a native Kubernetes Ingress Controller (`networking.k8s.io/v1`), auto-discovering OCI containers across Docker and Podman sockets, reverse proxying containerized microservices, terminating multi-tenant TLS/mTLS and automated ACME certificates, routing Layer 4 TCP/UDP and Layer 7 streams, performing native gRPC health checks and trailer forwarding, executing high-density Brotli/Zstd compression, caching responses, enforcing multi-scheme authentication, inspecting traffic via a Web Application Firewall (WAF) with OWASP & custom regex rules and CIDR IP ACLs, and providing a real-time Security Audit Control Center Dashboard with zero external runtime dependencies.
 
 ```mermaid
 flowchart TD
@@ -151,10 +151,10 @@ timeline
 
 > **PO Assessment**: **PASSED WITH HIGHEST HONORS (A++)**  
 > 
-> * **Completeness**: **37/37 completed prototypes** with 100% test pass rate across all 11 packages (`acme`, `config`, `discovery`, `httpparser`, `ingress`, `metrics`, `proxy`, `reactor`, `router`, `server`, `waf`).
-> * **Security & Compliance**: Enterprise WAF, OWASP injection protection, protocol integrity guards, CIDR IP ACLs, custom regex rules, CORS, security headers, vendor-agnostic OCI container auto-discovery, native Kubernetes Ingress Controller (`networking.k8s.io/v1`), and an intentionally read-only Web Control Center.
+> * **Completeness**: **38/38 completed prototypes** with 100% test pass rate across all 12 packages (`acme`, `config`, `discovery`, `httpparser`, `ingress`, `metrics`, `proxy`, `reactor`, `router`, `server`, `sidecar`, `waf`).
+> * **Security & Compliance**: Enterprise WAF, OWASP injection protection, protocol integrity guards, CIDR IP ACLs, custom regex rules, CORS, security headers, vendor-agnostic OCI container auto-discovery, native Kubernetes Ingress Controller (`networking.k8s.io/v1`), pod-to-pod mTLS sidecar proxying, and an intentionally read-only Web Control Center.
 > * **Stability**: Configuration dry-run validation, zero-downtime hot reload, thread-safe memory management, and robust panic recovery.
-> * **Positioning**: A standalone, ultra-high-performance, developer-friendly, zero-license alternative to NGINX, Traefik, and Caddy.
+> * **Positioning**: A standalone, ultra-high-performance, developer-friendly, zero-license alternative to NGINX, Traefik, Caddy, and Envoy.
 >
-> **Status**: Production-ready for enterprise edge proxy deployments, Kubernetes cluster ingress routing, containerized microservices, multi-tenant security gateways, and high-throughput gRPC routers.
+> **Status**: Production-ready for enterprise edge proxy deployments, service mesh sidecar proxies, Kubernetes cluster ingress routing, containerized microservices, multi-tenant security gateways, and high-throughput gRPC routers.
 

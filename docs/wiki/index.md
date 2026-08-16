@@ -46,6 +46,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Static File Serving](./features/static-file-serving.md) – Hosting web apps, MIME resolution, and directory index handling.
 
 ### 🌐 Routing, Proxying & Resilience
+- [Service Mesh Sidecar Mode](./features/service-mesh-sidecar.md) – Lightweight pod-to-pod mTLS and weighted traffic splitting.
 - [Native Kubernetes Ingress Controller](./features/kubernetes-ingress.md) – Zero-dependency Kubernetes `networking.k8s.io/v1` Ingress Controller.
 - [OCI Container Auto-Discovery](./features/oci-container-auto-discovery.md) – Vendor-agnostic Docker & Podman Unix socket container auto-discovery.
 - [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding and proxy headers.

@@ -17,6 +17,7 @@ type AppConfig struct {
 	Logging   LoggingConfig   `yaml:"logging" json:"logging"`
 	Discovery DiscoveryConfig `yaml:"discovery" json:"discovery"`
 	Ingress   IngressConfig   `yaml:"ingress" json:"ingress"`
+	Sidecar   SidecarConfig   `yaml:"sidecar" json:"sidecar"`
 }
 
 // HTTP2Config captures HTTP/2 protocol settings.
@@ -95,6 +96,32 @@ type IngressConfig struct {
 	KubeConfigPath    string        `yaml:"kubeconfig_path" json:"kubeconfig_path"`
 	ServiceAccountDir string        `yaml:"service_account_dir" json:"service_account_dir"`
 	ResyncPeriod      time.Duration `yaml:"resync_period" json:"resync_period"`
+}
+
+// SidecarConfig captures Service Mesh Sidecar proxy mode settings.
+type SidecarConfig struct {
+	Enabled       bool                `yaml:"enabled" json:"enabled"`
+	Mode          string              `yaml:"mode" json:"mode"` // "ingress", "egress", "dual"
+	IngressPort   int                 `yaml:"ingress_port" json:"ingress_port"`
+	EgressPort    int                 `yaml:"egress_port" json:"egress_port"`
+	AppPort       int                 `yaml:"app_port" json:"app_port"`
+	StrictmTLS    bool                `yaml:"strict_mtls" json:"strict_mtls"`
+	CertFile      string              `yaml:"cert_file" json:"cert_file"`
+	KeyFile       string              `yaml:"key_file" json:"key_file"`
+	CAFile        string              `yaml:"ca_file" json:"ca_file"`
+	TrafficSplits []TrafficSplitRoute `yaml:"traffic_splits" json:"traffic_splits"`
+}
+
+// TrafficSplitRoute captures subpath weighted traffic splitting (canary releases).
+type TrafficSplitRoute struct {
+	Prefix   string         `yaml:"prefix" json:"prefix"`
+	Backends []SplitBackend `yaml:"backends" json:"backends"`
+}
+
+// SplitBackend defines a target URL and integer weight.
+type SplitBackend struct {
+	Target string `yaml:"target" json:"target"`
+	Weight int    `yaml:"weight" json:"weight"`
 }
 
 // JWTConfig captures JWT authentication settings.

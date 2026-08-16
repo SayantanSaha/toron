@@ -1,5 +1,16 @@
 # Release Notes
 
+## 2026-08-16 - Toron v1.3.0 Feature Release (Prototype 38: Service Mesh Sidecar Mode)
+
+### Milestone Summary
+- **Service Mesh Sidecar Mode (`pkg/sidecar`)**: Implemented lightweight pod-level proxy mode enforcing pod-to-pod Mutual TLS (mTLS) encryption and dynamic weighted traffic splitting (`TASK-048`, `REQ-048`).
+- **Zero External Dependencies**: Pure Go stdlib HTTP & TLS client/server listeners operating on dedicated local ports (`15006` ingress, `15001` egress).
+- **Strict Mutual TLS**: Support for `RequireAndVerifyClientCert` with Root CA validation pools (`ca_file`).
+- **Weighted Traffic Splitting**: Thread-safe atomic weighted round-robin selector (`WeightedSplitter`) for canary traffic distribution (e.g. 80/20 ratio).
+
+### Related Tasks
+- `TASK-048`: Implement Service Mesh Sidecar Mode Engine
+
 ## 2026-08-16 - Toron v1.2.0 Feature Release (Prototype 37: Native Kubernetes Ingress Controller)
 
 ### Milestone Summary

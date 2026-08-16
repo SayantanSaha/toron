@@ -179,6 +179,22 @@ ingress:
   service_account_dir: "/var/run/secrets/kubernetes.io/serviceaccount"
   resync_period: 30s                                # Fallback periodic resync interval
 
+# Service Mesh Sidecar Mode Engine
+sidecar:
+  enabled: true
+  mode: "dual"              # Operational mode: "ingress", "egress", or "dual"
+  ingress_port: 15006       # Pod inbound mTLS listener port
+  egress_port: 15001        # Pod outbound proxy listener port
+  app_port: 8080            # Local app container target port (127.0.0.1:8080)
+  strict_mtls: true         # Enforce RequireAndVerifyClientCert mTLS
+  traffic_splits:           # Weighted canary traffic splitting
+    - prefix: "/api"
+      backends:
+        - target: "http://service-v1:8080"
+          weight: 80
+        - target: "http://service-v2:8080"
+          weight: 20
+
 logging:
   level: "info"
   format: "text"

@@ -75,6 +75,22 @@ tail -f /var/log/toron/toron.log
 tail -f /var/log/toron/toron.error.log
 ```
 
+### Windows (`sc.exe` / `install.bat`)
+```cmd
+:: Run installer as Administrator
+right-click install.bat -> "Run as administrator"
+
+:: Check Windows Service status
+sc query Toron
+
+:: Stop / Start Windows Service
+sc stop Toron
+sc start Toron
+
+:: Uninstall Windows Service & purge files
+install.bat /uninstall
+```
+
 ---
 
 ## 🗑️ Uninstallation
@@ -82,8 +98,9 @@ tail -f /var/log/toron/toron.error.log
 To cleanly remove Toron, stop services, and purge system configuration directories:
 
 ```bash
+# Linux / macOS
 sudo ./install.sh --uninstall
 
-# Or via Makefile shortcut
-sudo make uninstall
+# Windows
+install.bat /uninstall
 ```

@@ -39,7 +39,8 @@ This guide walks you through building, running, and verifying your first instanc
 ### 1. Clone or Open Project
 Ensure you are in the Toron repository directory:
 ```bash
-cd D:/Work/server
+git clone https://github.com/SayantanSaha/toron_v3.git
+cd toron_v3
 ```
 
 ### 2. Run the Server

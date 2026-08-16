@@ -38,8 +38,15 @@ build-linux-amd64:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_SRC)
 	@echo "==> Linux AMD64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64"
 
-## build-all: Cross-compiles binaries for macOS and Linux (ARM64 & AMD64)
-build-all: build-darwin-arm64 build-linux-arm64 build-linux-amd64
+## build-windows-amd64: Compiles Toron binary for Windows AMD64 (x86_64)
+build-windows-amd64:
+	@mkdir -p $(BUILD_DIR)
+	@echo "==> Building Toron binary for Windows AMD64 in $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe..."
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_SRC)
+	@echo "==> Windows AMD64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe"
+
+## build-all: Cross-compiles binaries for macOS, Linux, and Windows (ARM64 & AMD64)
+build-all: build-darwin-arm64 build-linux-arm64 build-linux-amd64 build-windows-amd64
 
 ## dummy: Compiles the dummy microservice cluster binary into bin/
 dummy:

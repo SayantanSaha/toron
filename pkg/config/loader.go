@@ -249,8 +249,10 @@ func ValidateConfig(cfg *AppConfig) error {
 				}
 			} else if route.IsUpstream() {
 				algo := strings.ToLower(route.GetAlgorithm())
-				if algo != "round_robin" && algo != "random" && algo != "sticky_cookie" && algo != "ip_hash" {
-					return fmt.Errorf("proxy route %q specifies unsupported load balancing algorithm %q (supported: round_robin, random, sticky_cookie, ip_hash)", prefix, algo)
+				if algo != "round_robin" && algo != "random" && algo != "sticky_cookie" && algo != "ip_hash" &&
+					algo != "weighted_round_robin" && algo != "weighted_random" && algo != "least_conn" &&
+					algo != "weighted_least_conn" && algo != "least_latency" {
+					return fmt.Errorf("proxy route %q specifies unsupported load balancing algorithm %q (supported: round_robin, random, sticky_cookie, ip_hash, weighted_round_robin, weighted_random, least_conn, weighted_least_conn, least_latency)", prefix, algo)
 				}
 
 				targets := route.GetTargets()

@@ -1,63 +1,562 @@
-# Toron Web Server
+# Toron Web Server (`toron_v3`)
 
-**Toron** is an event-driven, high-performance, modular web server and API gateway written in Go. Designed with performance, security, and developer ergonomics as primary priorities, Toron features non-blocking TCP socket event handling, zero-copy HTTP/1.1 parsing, HTTP/2 stream multiplexing, HTTPS TLS 1.2/1.3 with auto-dev certificate generation, dual-file YAML configuration, and unified static site & reverse proxy gateway routing.
-
----
-
-## 🌟 Key Features
-
-* **Event Reactor Engine**: High-performance, non-blocking TCP event loop with a configurable worker pool for concurrent request dispatching.
-* **HTTP/1.1, HTTP/2 & HTTP/3 Support**: Non-blocking HTTP/1.1, HTTP/2 cleartext `h2c` / stream multiplexing, and HTTP/3 QUIC (UDP) engine with automatic `Alt-Svc` protocol advertising headers.
-* **HTTPS TLS Encryption & ACME Zero-Touch SSL**: TLS 1.2/1.3 support, ALPN negotiation (`h2`, `http/1.1`), ACME (Let's Encrypt / ZeroSSL) HTTP-01 and TLS-ALPN-01 (`acme-tls/1`) zero-touch production SSL certificate issuance and renewal, disk certificate caching, and zero-config self-signed ECDSA dev certificate generator (`auto_dev_cert`).
-* **WebSocket Protocol Upgrade & Tunneling**: Full support for HTTP/1.1 (RFC 6455 101 Switching Protocols) and HTTP/2 Extended CONNECT protocol (RFC 8441 `:protocol = websocket`) with bi-directional stream tunneling for real-time web services.
-* **Layer 4 TCP & UDP Transport Proxying**: Raw socket stream forwarding (`type: "tcp"`) and connectionless datagram proxying (`type: "udp"`) with port listener binding and load balancing.
-* **Dual-File YAML Configuration**: Decoupled infrastructure settings ([`config.yaml`](./config.yaml)) and routing rules ([`routes.yaml`](./routes.yaml)).
-* **Unified Routing Architecture**: Routing rules accept `type: "static"` or `type: "upstream"`, sharing identical domain host matching, header-conditional dispatching, and subpath prefix routing capabilities.
-* **Upstream Load Balancing & Sticky Sessions**: Multi-target load balancing (`round_robin`, `random`, `sticky_cookie`, `ip_hash`), cookie-based session affinity, active HTTP health check probing, and a 3-state Circuit Breaker (`Closed`, `Open`, `HalfOpen`).
-* **Token Bucket Rate Limiting Middleware**: Route-level DDoS and abuse protection (`rate_limit: "100/min"`, `"10/sec"`) per client IP or `X-API-Key` header returning `429 Too Many Requests` and `Retry-After` headers.
-* **gRPC Edge Gateway & Health Probing**: Native routing and load balancing of gRPC microservices over HTTP/2 with binary `grpc.health.v1.Health/Check` active probing and strict HTTP/2 trailers preservation (`grpc-status`, `grpc-message`).
-* **Per-Host Dynamic SNI & Mutual TLS (mTLS)**: Multi-tenant TLS profile registry (`SNIRegistry`) dynamically dispatching dedicated X.509 certificate pairs, client certificate verification policies (`client_auth: "require_and_verify"`), and minimum TLS versions per virtual host domain in `routes.yaml`.
-* **Streaming Response Compression (Zstd, Brotli, Gzip & Deflate)**: High-performance response compression middleware utilizing Zstandard (RFC 8878), Brotli (RFC 7932), Gzip, and Deflate with `sync.Pool` allocation reuse, quality factor weighting (`q=`), and modern server precedence ranking.
-* **In-Memory HTTP Response Caching & RFC 7234 Cache-Control**: Thread-safe in-memory caching for idempotent GET and HEAD requests with TTL expiration, `no-store` / `no-cache` compliance, `Age` calculation, and `X-Cache: HIT/MISS` diagnostics.
-* **Multi-Scheme Authentication Middleware**: Built-in edge authentication supporting RFC 7519 JWT Bearer tokens (HS256/HS384/HS512), API keys, and RFC 7617 HTTP Basic authentication with timing-attack resistant comparisons (`crypto/subtle`) and upstream `X-Authenticated-User` context propagation.
-* **CORS Policies & Enterprise Security Headers**: Zero-allocation CORS preflight handling (`OPTIONS` 204 short-circuiting, origin wildcards/subdomains) and automatic injection of OWASP security headers (`Strict-Transport-Security`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy`, `Content-Security-Policy`, `Permissions-Policy`).
-* **Web Application Firewall (WAF) & Custom Regex Rules**: High-throughput WAF inspection engine (`pkg/waf`) mitigating OWASP Top 10 vulnerabilities (SQLi, XSS, Path Traversal, Command Injection / RCE) and user-defined custom regex rules across URLs, query strings, headers, and request bodies with configurable `enforce` vs `detection` modes, granular route-level overrides (`disabled_rules`, custom thresholds), and fast-path $O(1)$ CIDR IP allow/deny access control lists (`allowed_ips`, `denied_ips`).
-* **Prometheus Metrics & Structured Security Audit Logging**: Standardized `/metrics` endpoint exporting Prometheus counters (`toron_http_requests_total`, `toron_waf_blocked_requests_total`, `toron_waf_anomalies_detected_total`), latency histograms (`toron_http_request_duration_seconds`, `toron_waf_inspection_duration_seconds`), QUIC stream gauges, and circuit breaker trip counters; SIEM-ready structured JSON security audit logger; automatic OpenTelemetry W3C `traceparent` context header propagation across upstream target microservices.
-* **Web Control Center & Security Audit Dashboard**: Mobile-first Web Dashboard UI served on `/internal/dashboard/` featuring a dedicated Security & WAF Dashboard, live policy compliance matrix, real-time threat incident audit feed table, upstream health matrix, and interactive REST API request composer with WAF attack presets (`/internal/api/security/incidents`, `/internal/api/status`, `/internal/api/metrics`, `/internal/api/upstreams/health`, `/internal/api/proxy-test`).
-* **Security & Path Traversal Guards**: Strict header (8 KB) and body (4 MB) size limits, socket read/write timeouts, path traversal sanitization, and panic recovery middleware.
-* **Zero-Downtime Hot Reloading via `fsnotify`**: Background file workers (`ConfigWatcher` & `RouteWatcher`) monitor `config.yaml` and `routes.yaml` file edits, automatically validating and atomically swapping routing tables and WAF security rule sets in memory without dropping active TCP/UDP/QUIC/TLS sockets.
-* **Configuration Dry-Run Validator**: Native CLI flag (`-t` / `-test-config`) to validate YAML syntax without starting the server listener.
-* **Testing & Microservices Suite**: Includes 10 dummy upstream microservices ([`dummy-services/`](./dummy-services/)) and a standardized REST client file ([`test_endpoint.http`](./test_endpoint.http)).
+**Toron** is an event-driven, high-performance, zero-dependency web server, reverse proxy API gateway, and edge security engine written in pure Go. Engineered with performance, enterprise security, and developer ergonomics as primary design goals, Toron features a non-blocking TCP reactor event loop, zero-copy HTTP/1.1 parsing, HTTP/2 stream multiplexing (`h2c`), HTTP/3 QUIC (UDP), zero-touch ACME production SSL issuance (Let's Encrypt / ZeroSSL), per-host mTLS, dynamic SNI, a Layer 7 Web Application Firewall (WAF), a 3-state Circuit Breaker, and background zero-downtime hot reloading via `fsnotify`.
 
 ---
 
-## 🛠️ Installation & Building
+## 📋 Executive Summary
 
-### Prerequisites
-* **Go**: Version 1.20 or later.
+Toron decouples infrastructure settings ([`config.yaml`](./config.yaml)) from routing rules ([`routes.yaml`](./routes.yaml)). It functions simultaneously as a static site host, reverse proxy gateway, gRPC router, Layer 4 TCP/UDP load balancer, and edge WAF security gateway.
 
-### Building Toron
-Clone the repository and build the binary:
+* **Core Architecture**: Event-driven TCP reactor engine driving a thread-safe worker pool for concurrent request dispatching.
+* **Protocols Supported**: HTTP/1.1, HTTP/2 Cleartext (`h2c`), HTTP/3 QUIC (UDP), WebSocket (RFC 6455 & RFC 8441 Extended CONNECT), Layer 4 TCP/UDP, and gRPC.
+* **Edge Security & Compliance**: OWASP Top 10 WAF inspection (SQLi, XSS, Path Traversal, RCE), custom regex rules, fast-path CIDR IP ACLs, constant-time authentication, CRLF header sanitization, OWASP security headers, and SSRF guards.
+* **Resilience & Traffic Control**: Multi-algorithm load balancing (`round_robin`, `random`, `sticky_cookie`, `ip_hash`), active HTTP/gRPC health probing, 3-state Circuit Breaker, RFC 7234 response caching, and Token Bucket rate limiting.
+* **Observability & Management**: Built-in Web Control Center & Security Audit Dashboard UI (`/internal/dashboard/`), Prometheus `/metrics` endpoint, SIEM-ready JSON audit logger, and W3C `traceparent` OpenTelemetry header propagation.
 
-```powershell
-# Clone repository
-cd server
+---
 
-# Build executable binary
-go build -o toron.exe ./cmd/toron
+## 🌟 Feature Breakdown & Sample Configurations
+
+Below is the complete catalog of Toron features with dedicated configuration snippets for each capability.
+
+---
+
+### 1. Event Reactor Engine & Concurrency Worker Pool
+
+Toron handles concurrent connections using an event-driven non-blocking socket loop paired with a configurable worker pool.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 8080
+  worker_pool_size: 128       # Number of concurrent worker threads
+  read_timeout: 5s            # Max time to read request headers and body
+  write_timeout: 5s           # Max time to write response
+  idle_timeout: 30s           # Keep-alive socket idle timeout
+  max_header_bytes: 8192      # 8 KB header limit
+  max_body_bytes: 4194304     # 4 MB payload body limit
 ```
 
 ---
 
-## ⚙️ Configuration Guide
+### 2. Multi-Protocol Engine (HTTP/1.1, HTTP/2 `h2c` & HTTP/3 QUIC)
 
-Toron splits configuration into two files:
-1. [`config.yaml`](./config.yaml): Infrastructure, network listener, worker pool, HTTP/2, TLS, and logging settings.
-2. [`routes.yaml`](./routes.yaml): Static site hosting and upstream reverse proxy routing rules.
+Toron supports non-blocking HTTP/1.1, HTTP/2 cleartext (`h2c`) prior-knowledge upgrade connections, and HTTP/3 QUIC over UDP with automatic `Alt-Svc` header injection.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+server:
+  http2:
+    enabled: true
+    max_concurrent_streams: 250
+    max_frame_size: 16384
+    allow_h2c: true           # Allow HTTP/2 Cleartext prior-knowledge connections
+  http3:
+    enabled: true             # Enable HTTP/3 QUIC protocol listener
+    port: 8443                # QUIC UDP listener port
+    alt_svc_header: true      # Automatically add Alt-Svc: h3=":8443" headers
+```
 
 ---
 
-### 1. Infrastructure Configuration (`config.yaml`)
+### 3. HTTPS TLS Encryption & Auto Dev Certificate Generator
+
+Supports TLS 1.2/1.3 with ALPN negotiation (`h2`, `http/1.1`). If certificate files are omitted in development mode, Toron automatically generates an in-memory self-signed ECDSA certificate.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+server:
+  tls:
+    enabled: true
+    cert_file: ""             # Path to custom X.509 cert (optional)
+    key_file: ""              # Path to custom private key (optional)
+    auto_dev_cert: true       # Auto-generate self-signed ECDSA certificate for dev
+```
+
+---
+
+### 4. ACME Zero-Touch SSL Management (Let's Encrypt / ZeroSSL)
+
+Automates production SSL/TLS certificate issuance and background renewal using ACME HTTP-01 or TLS-ALPN-01 (`acme-tls/1`) challenge strategies with on-disk caching.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+server:
+  acme:
+    enabled: true
+    directory_url: "https://acme-v02.api.letsencrypt.org/directory"
+    email: "admin@company.com"
+    domains:
+      - "api.company.com"
+      - "company.com"
+    cache_dir: "./certs"
+    challenge_type: "http-01" # "http-01" or "tls-alpn-01"
+```
+
+---
+
+### 5. WebSocket Protocol Upgrade & Bi-Directional Tunneling
+
+Supports WebSocket upgrades over HTTP/1.1 (RFC 6455 `101 Switching Protocols`) and HTTP/2 Extended CONNECT protocol (RFC 8441 `:protocol = websocket`) with full bi-directional stream proxying.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    prefix: "/ws"
+    target: "http://localhost:9001"
+```
+
+---
+
+### 6. Layer 4 TCP & UDP Transport Proxying
+
+Provides raw socket stream forwarding (`type: "tcp"`) and connectionless datagram proxying (`type: "udp"`) with dedicated listener port binding.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  # L4 TCP Socket Proxy
+  - type: "tcp"
+    listen_port: 8090
+    target: "127.0.0.1:9090"
+
+  # L4 UDP Datagram Proxy
+  - type: "udp"
+    listen_port: 8091
+    target: "127.0.0.1:9091"
+```
+
+---
+
+### 7. Static File Serving with Symlink & Path Traversal Guards
+
+Serves static web applications and assets with automatic MIME resolution, index page handling, and physical symlink target verification (`filepath.EvalSymlinks`) preventing directory escape attacks.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "static"
+    prefix: "/internal/dashboard"
+    dir: "./public"
+```
+
+---
+
+### 8. Reverse Proxy Gateway & Subpath Prefix Routing
+
+Proxies incoming requests to backend microservice targets with automatic subpath prefix stripping and forwarding headers (`X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`).
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    prefix: "/services/auth"
+    target: "http://localhost:9008"
+```
+
+---
+
+### 9. Domain-Based Virtual Host Matching
+
+Dispatches incoming HTTP requests based on the `Host` header, allowing multi-tenant domain hosting on a single port listener.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    host: "api.toron.local"
+    prefix: "/"
+    target: "http://localhost:9001"
+```
+
+---
+
+### 10. Conditional Header-Based HTTP Routing & API Versioning
+
+Routes requests conditionally based on specific incoming HTTP request header key/value pairs (e.g., API versioning headers).
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  # API v2 Route
+  - type: "upstream"
+    prefix: "/api"
+    headers:
+      X-Version: "v2"
+    targets:
+      - "http://localhost:9001"
+      - "http://localhost:9002"
+
+  # API v1 Route
+  - type: "upstream"
+    prefix: "/api"
+    headers:
+      X-Version: "v1"
+    target: "http://localhost:9004"
+```
+
+---
+
+### 11. Upstream Load Balancing & Session Affinity
+
+Distributes request traffic across multiple backend targets using 4 load balancing algorithms: `round_robin`, `random`, `sticky_cookie`, and `ip_hash`.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  # Cookie-Based Sticky Session Affinity
+  - type: "upstream"
+    prefix: "/services/analytics"
+    algorithm: "sticky_cookie"
+    sticky_cookie_name: "TORON_STICKY"
+    targets:
+      - "http://localhost:9009"
+      - "http://localhost:9010"
+
+  # Client IP Hash Affinity
+  - type: "upstream"
+    prefix: "/services/sockets"
+    algorithm: "ip_hash"
+    targets:
+      - "http://localhost:9001"
+      - "http://localhost:9002"
+```
+
+---
+
+### 12. Active Upstream Health Probing & 3-State Circuit Breaker
+
+Probes upstream target health periodically (`health_check_path`). If a target fails consecutive checks, the 3-state Circuit Breaker (`Closed` -> `Open` -> `HalfOpen`) trips and short-circuits traffic for a cooldown duration.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    prefix: "/services/cluster"
+    algorithm: "round_robin"
+    targets:
+      - "http://localhost:9005"
+      - "http://localhost:9006"
+      - "http://localhost:9007"
+    health_check_path: "/health"
+    health_check_interval: 5s
+    consecutive_failures: 3
+    cooldown_period: 15s
+```
+
+---
+
+### 13. Token Bucket Rate Limiting Middleware
+
+Defines per-route Token Bucket rate limits per client IP or API key, returning `429 Too Many Requests` with standard `Retry-After` headers upon threshold exceedance.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    prefix: "/api"
+    rate_limit: "100/min"      # e.g., "10/sec", "100/min", "1000/hour"
+    target: "http://localhost:9001"
+```
+
+---
+
+### 14. gRPC Edge Gateway & Active Binary Health Probing
+
+Routes gRPC microservice traffic over HTTP/2 while preserving binary trailers (`grpc-status`, `grpc-message`). Supports active binary health checks via `grpc.health.v1.Health/Check`.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    prefix: "/order.OrderService"
+    algorithm: "round_robin"
+    targets:
+      - "http://localhost:9005"
+      - "http://localhost:9006"
+    health_check_type: "grpc"
+    health_check_service: "OrderService"
+    health_check_interval: 5s
+    consecutive_failures: 3
+    cooldown_period: 15s
+```
+
+---
+
+### 15. Per-Host Dynamic SNI & Mutual TLS (mTLS) Client Verification
+
+Registers dedicated X.509 certificate pairs and client CA pools per virtual host domain, enforcing client certificate verification (`client_auth`) and minimum TLS versions.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    host: "secure.internal.local"
+    prefix: "/"
+    target: "http://localhost:9001"
+    tls:
+      cert_file: "./certs/server.crt"
+      key_file: "./certs/server.key"
+      ca_file: "./certs/ca.crt"
+      client_auth: "require_and_verify" # "no_client_cert", "request_client_cert", "require_any_client_cert", "verify_client_cert_if_given", "require_and_verify"
+      min_version: "tls1.3"
+```
+
+---
+
+### 16. Streaming Response Compression (Zstd, Brotli, Gzip & Deflate)
+
+Compresses outgoing response payloads automatically based on `Accept-Encoding` quality weighting (`q=`), using `sync.Pool` allocation reuse.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+server:
+  compression:
+    enabled: true             # Enable automatic response compression
+    min_length: 512           # Minimum byte size threshold for compression
+    level: -1                 # Compression level (-1 = default)
+    encodings:
+      - "zstd"
+      - "br"
+      - "gzip"
+      - "deflate"
+```
+
+---
+
+### 17. In-Memory Response Caching (RFC 7234)
+
+Thread-safe in-memory cache for GET and HEAD requests with TTL expiration, `Cache-Control` (`no-store`/`no-cache`) validation, `Age` calculation, and `X-Cache: HIT/MISS` headers.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+server:
+  cache:
+    enabled: true             # Enable RFC 7234 response caching
+    default_ttl: 60s          # Default cache TTL if max-age is omitted
+    max_entries: 1000         # Max cached items in RAM
+    max_payload_size: 1048576 # 1 MB maximum payload size per entry
+```
+
+---
+
+### 18. Multi-Scheme Authentication Middleware (JWT, API Keys, Basic Auth)
+
+Provides edge authentication supporting RFC 7519 JWT Bearer tokens (HS256/384/512), API keys, and Basic Auth with constant-time SHA-256 comparisons (`crypto/subtle`) and `X-Authenticated-User` header propagation.
+
+**Sample Configuration (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    prefix: "/services/auth"
+    target: "http://localhost:9008"
+    auth:
+      type: "api_key"
+      api_key:
+        keys:
+          - "demo-api-key-12345"
+```
+
+**Global Auth Configuration (`config.yaml`)**:
+```yaml
+server:
+  auth:
+    type: "jwt"
+    jwt:
+      secret: "super-secret-jwt-signing-key"
+      issuer: "toron-auth-service"
+      audience: "toron-api-clients"
+    excluded:
+      - "/health"
+      - "/public"
+```
+
+---
+
+### 19. CORS Policies & Enterprise Security Headers
+
+Short-circuits `OPTIONS` preflights (204 No Content), matches origin domain boundaries safely, and injects baseline OWASP security headers into all outgoing HTTP responses.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+server:
+  cors:
+    enabled: true
+    allow_origins:
+      - "https://app.company.com"
+      - "https://*.company.com"
+    allow_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+      - "OPTIONS"
+    allow_headers:
+      - "Origin"
+      - "Content-Type"
+      - "Authorization"
+    expose_headers:
+      - "X-Cache"
+    allow_credentials: true
+    max_age: 86400
+
+  security_headers:
+    enabled: true
+    hsts: "max-age=31536000; includeSubDomains"
+    content_type_options: "nosniff"
+    frame_options: "DENY"
+    referrer_policy: "strict-origin-when-cross-origin"
+    csp: "default-src 'self'"
+```
+
+---
+
+### 20. Web Application Firewall (WAF) & Custom Regex Rules + CIDR IP ACLs
+
+Layer 7 WAF engine scanning URLs, query parameters, headers, and request bodies for OWASP Top 10 injection vectors (SQLi, XSS, Path Traversal, RCE). Supports custom user regex rules, `enforce` (403 block) vs `detection` (log-only) modes, and fast-path CIDR IP allow/deny lists.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+server:
+  waf:
+    enabled: true
+    mode: "enforce"           # "enforce" (403 block) or "detection" (log-only)
+    anomaly_threshold: 5      # Threat score limit above which request is blocked
+    max_inspect_body_size: 65536 # 64 KB max body scanned
+    allowed_ips:
+      - "10.0.0.0/8"
+      - "127.0.0.1"
+    denied_ips:
+      - "198.51.100.0/24"
+    custom_rules:
+      - id: "CUSTOM-001"
+        category: "bot"
+        description: "Block malicious scanners"
+        pattern: "(?i)(sqlmap|nikto|nmap|acunetix)"
+        score: 10
+        locations: ["headers"]
+    audit_log:
+      enabled: true
+      output: "stdout"        # "stdout", "stderr", or file path
+      format: "json"
+```
+
+**Route-Level WAF Overrides (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "upstream"
+    prefix: "/services/legacy-api"
+    target: "http://localhost:9002"
+    waf:
+      enabled: true
+      mode: "enforce"
+      disabled_rules:
+        - "SQLI-001"          # Disable specific rule for legacy endpoint
+```
+
+---
+
+### 21. Prometheus Metrics & SIEM JSON Security Audit Logging
+
+Exports standardized Prometheus metrics on `/metrics` (`toron_http_requests_total`, `toron_waf_blocked_requests_total`, latency histograms, QUIC gauges) and emits structured JSON audit logs for security incidents while propagating W3C `traceparent` OpenTelemetry headers.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+logging:
+  level: "info"               # "debug", "info", "warn", "error"
+  format: "text"              # "text" or "json"
+```
+
+---
+
+### 22. Web Control Center & Security Audit Dashboard UI
+
+Serves an interactive Web Control Center served at `/internal/dashboard/`.
+
+Features:
+* Dedicated Security & WAF Dashboard with threat counters and active compliance matrix.
+* Real-time Security Incident Stream with XSS-sanitized payload details.
+* Upstream Service Node Health Matrix (Ports 9001–9010).
+* REST API Request Composer with live threat test presets.
+
+**Sample Route Setup (`routes.yaml`)**:
+```yaml
+routes:
+  - type: "static"
+    prefix: "/internal/dashboard"
+    dir: "./public"
+```
+
+---
+
+### 23. Configuration Dry-Run Syntax Validator (`-t` / `-test-config`)
+
+CLI flag validating YAML syntax, regex compilations, and file paths without starting server network listeners.
+
+**Command Usage**:
+```powershell
+go run ./cmd/toron -t
+```
+**Output**:
+```text
+2026/08/16 09:12:00 [TORON] Configuration syntax OK: config.yaml and routes.yaml are valid.
+```
+
+---
+
+### 24. Zero-Downtime Hot Reloading via `fsnotify`
+
+Background file workers monitor `config.yaml` and `routes.yaml` file modifications, validating syntax and atomically swapping active routing tables and WAF rules in memory without dropping active TCP/UDP/QUIC/TLS sockets.
+
+---
+
+### 25. Testing & Dummy Microservices Cluster
+
+Includes a standalone test cluster of 10 dummy upstream microservices running on ports 9001–9010 to verify load balancing, sticky sessions, rate limits, and circuit breakers.
+
+**Command Usage**:
+```powershell
+# Start 10 dummy microservices in background terminal
+go run ./dummy-services
+```
+
+---
+
+## 🛠️ Building & Running Toron
+
+### Prerequisites
+* **Go**: Version 1.20 or later.
+
+### Building Binary
+```powershell
+# Build executable binary
+go build -o toron ./cmd/toron
+```
+
+### Running Server
+```powershell
+# Run using default config.yaml & routes.yaml in working directory
+./toron
+
+# Or specify custom config file paths
+./toron -config ./my-config.yaml -routes ./my-routes.yaml
+```
+
+### Running Test Suite
+```powershell
+# Run full unit test suite
+go test -v ./...
+
+# Run benchmarks
+go test -bench=. -benchmem ./pkg/reactor ./pkg/httpparser ./pkg/router ./pkg/server
+```
+
+---
+
+## 📄 Complete Infrastructure Configuration (`config.yaml`)
 
 ```yaml
 # Toron Web Server Infrastructure Configuration File
@@ -71,115 +570,131 @@ server:
   idle_timeout: 30s           # Keep-alive socket idle duration
   max_header_bytes: 8192      # 8 KB maximum header size limit
   max_body_bytes: 4194304     # 4 MB maximum request body size limit
+
+  # HTTP/2 Stream Multiplexing & Cleartext h2c Engine Settings
   http2:
-    enabled: true             # Enable HTTP/2 protocol engine
+    enabled: true
     max_concurrent_streams: 250
     max_frame_size: 16384
-    allow_h2c: true           # Allow HTTP/2 Cleartext (h2c) prior-knowledge connections
+    allow_h2c: true           # Allow HTTP/2 Cleartext (h2c) upgrade connections
+
+  # HTTP/3 QUIC (UDP) Protocol Engine Settings
   http3:
-    enabled: true             # Enable HTTP/3 QUIC (UDP) protocol engine
-    port: 8443                # HTTP/3 QUIC UDP port
-    alt_svc_header: true      # Automatically advertise Alt-Svc: h3=":8443" response headers
+    enabled: true             # Enable HTTP/3 QUIC protocol engine over UDP
+    port: 8443                # HTTP/3 QUIC UDP listener port
+    alt_svc_header: true      # Automatically advertise Alt-Svc: h3=":8443" headers
+
+  # HTTPS TLS Encryption & ALPN Protocol Negotiation Settings
   tls:
-    enabled: false            # Set true to enable HTTPS TLS listener
-    cert_file: ""             # Path to TLS X.509 certificate file
-    key_file: ""              # Path to TLS private key file
+    enabled: false
+    cert_file: ""
+    key_file: ""
+    auto_dev_cert: true       # Auto-generate self-signed ECDSA certificate for development if TLS enabled
+
+  # ACME Zero-Touch Production SSL Certificate Management (Let's Encrypt / ZeroSSL)
   acme:
-    enabled: false            # Enable ACME zero-touch production SSL issuance (Let's Encrypt / ZeroSSL)
+    enabled: false            # Enable ACME automated SSL certificate issuance and background renewal
     directory_url: "https://acme-v02.api.letsencrypt.org/directory"
     email: "admin@toron.local"
     domains:
       - "api.toron.local"
+      - "toron.local"
     cache_dir: "./certs"
     challenge_type: "http-01" # Challenge validation strategy: "http-01" or "tls-alpn-01"
+
+  # Transparent Response Compression Settings (Zstd, Brotli, Gzip & Deflate)
   compression:
-    enabled: true             # Enable automatic gzip/deflate/br/zstd response compression
-    min_length: 512           # Minimum response byte threshold
-    level: -1                 # Compression level (-1 = default)
+    enabled: true             # Enable automatic gzip/deflate response compression
+    min_length: 512           # Minimum response byte threshold for compression
+    level: -1                 # Compression level (-1 = default, 1 = best speed, 9 = best compression)
     encodings:
       - "zstd"
       - "br"
       - "gzip"
       - "deflate"
+
+  # In-Memory HTTP Response Caching Settings
   cache:
     enabled: true             # Enable in-memory RFC 7234 response caching for GET/HEAD
-    default_ttl: 60s          # Default cache expiration time if max-age is omitted
-    max_entries: 1000         # Maximum number of response entries stored in RAM
+    default_ttl: 60s          # Default cache expiration time if Cache-Control max-age is omitted
+    max_entries: 1000         # Maximum number of response entries stored in memory
     max_payload_size: 1048576 # 1 MB maximum response body size per cached entry
-  auth:
-    type: ""                  # Authentication type: "jwt", "api_key", "basic", or "" (disabled)
 
-  # Web Application Firewall (WAF) & Layer 7 OWASP Injection Engine
+  # Cross-Origin Resource Sharing (CORS) Settings
+  cors:
+    enabled: true             # Enable CORS preflight handling and header injection
+    allow_origins:
+      - "*"
+    allow_methods:
+      - "GET"
+      - "POST"
+      - "PUT"
+      - "DELETE"
+      - "OPTIONS"
+      - "PATCH"
+    allow_headers:
+      - "Origin"
+      - "Content-Type"
+      - "Accept"
+      - "Authorization"
+      - "X-Requested-With"
+    expose_headers:
+      - "X-Cache"
+      - "Content-Length"
+    allow_credentials: false
+    max_age: 86400
+
+  # Enterprise Browser Security Headers
+  security_headers:
+    enabled: true
+    hsts: "max-age=31536000; includeSubDomains"
+    content_type_options: "nosniff"
+    frame_options: "DENY"
+    referrer_policy: "strict-origin-when-cross-origin"
+    csp: ""
+
+  # Web Application Firewall (WAF) & Layer 7 OWASP Injection Protection Engine
   waf:
-    enabled: true             # Enable WAF OWASP injection protection middleware
-    mode: "enforce"           # Evaluation mode: "enforce" (403 block) or "detection" (log-only)
+    enabled: true             # Enable WAF Layer 7 threat inspection middleware
+    mode: "enforce"           # Evaluation mode: "enforce" (403 block) or "detection" (log-only score)
     anomaly_threshold: 5      # Threat score limit above which request is blocked
     max_inspect_body_size: 65536 # Maximum payload body bytes scanned (64 KB)
+    # allowed_ips:            # Global CIDR IP allowlist (when set, non-matching IPs get 403)
+    #   - "10.0.0.0/8"
+    # denied_ips:             # Global CIDR IP denylist (matching IPs get 403)
+    #   - "198.51.100.0/24"
+    custom_rules:             # User-defined regex rules (hot reloaded dynamically via fsnotify)
+      - id: "CUSTOM-001"
+        category: "bot"
+        description: "Block malicious scrapers and security scanners"
+        pattern: "(?i)(sqlmap|nikto|nmap|acunetix)"
+        score: 10
+        locations: ["headers"]
+    audit_log:
+      enabled: true           # Enable structured JSON security audit logging
+      output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
+      format: "json"          # Output format (json)
 
+# Logging and Telemetry Output Settings
 logging:
-  level: "info"               # Logging level: debug, info, warn, error
-  format: "text"              # Logging format: text or json
+  level: "info"
+  format: "text"
 ```
-
-#### TLS & ACME Certificate Configuration Patterns
-
-Toron resolves TLS certificates using a strict priority fallback chain:
-1. **ACME Managed Certificate (`acme.enabled: true`)**: Automated Let's Encrypt / ZeroSSL production certificate.
-2. **Static Certificate Files (`tls.cert_file` & `tls.key_file`)**: Custom corporate certificate files.
-3. **Auto Dev Certificate (`tls.auto_dev_cert: true`)**: Local self-signed ECDSA certificate fallback for local development.
-
-* **Pattern A: Local Development (Self-Signed HTTPS)**
-  ```yaml
-  server:
-    tls:
-      enabled: true
-      auto_dev_cert: true
-    acme:
-      enabled: false
-  ```
-
-* **Pattern B: Production Zero-Touch Automated SSL (Let's Encrypt)**
-  ```yaml
-  server:
-    tls:
-      enabled: true
-    acme:
-      enabled: true
-      email: "admin@mycompany.com"
-      domains:
-        - "api.mycompany.com"
-      cache_dir: "./certs"
-      challenge_type: "http-01"
-  ```
-
-* **Pattern C: Custom Corporate SSL Certificates**
-  ```yaml
-  server:
-    tls:
-      enabled: true
-      cert_file: "/etc/ssl/certs/custom.crt"
-      key_file: "/etc/ssl/private/custom.key"
-      auto_dev_cert: false
-    acme:
-      enabled: false
-  ```
 
 ---
 
-### 2. Routing Configuration (`routes.yaml`)
-
-Routes support both **Static Sites** (`type: "static"`) and **Upstream Reverse Proxies** (`type: "upstream"`). Both route types share host matching, header conditions, and path prefixes.
+## 🛣️ Complete Routing Configuration (`routes.yaml`)
 
 ```yaml
-# Toron Web Server Routing Configuration File
+# Toron Web Server Routing Configuration File (Static Sites, Upstream Reverse Proxies, Layer 4 TCP/UDP)
 
 routes:
-  # 1. Static Site Route - Control Center UI
+  # 1. Static Site Route - Control Center & Dashboard UI
   - type: "static"
     prefix: "/internal/dashboard"
     dir: "./public"
 
-  # 2. Domain-Based Upstream Route (api.toron.local -> Dummy Services 1, 4, 6)
+  # 2. Domain-Based Upstream Routing (Host: api.toron.local -> Dummy Services 1, 4, 6)
   - type: "upstream"
     host: "api.toron.local"
     prefix: "/"
@@ -189,25 +704,26 @@ routes:
       - "http://localhost:9004"
       - "http://localhost:9006"
 
-  # 3. Header-Based Upstream Route (API Versioning v2)
+  # 3. Header-Based Upstream Routing + Token Bucket Rate Limiting (X-Version: v2, 100 req/min)
   - type: "upstream"
     prefix: "/api"
     headers:
       X-Version: "v2"
     algorithm: "round_robin"
+    rate_limit: "100/min"
     targets:
       - "http://localhost:9001"
       - "http://localhost:9002"
       - "http://localhost:9003"
 
-  # 4. Header-Based Upstream Route (API Versioning v1)
+  # 4. Header-Based Upstream Routing + Single Target (X-Version: v1)
   - type: "upstream"
     prefix: "/api"
     headers:
       X-Version: "v1"
     target: "http://localhost:9004"
 
-  # 5. Path Prefix Upstream Route (Load Balanced Cluster)
+  # 5. Load-Balanced Upstream Cluster + Active Health Checks & Circuit Breaker
   - type: "upstream"
     prefix: "/services/cluster"
     algorithm: "round_robin"
@@ -220,188 +736,88 @@ routes:
     consecutive_failures: 3
     cooldown_period: 15s
 
-  # 6. Single Target Upstream Route
+  # 6. Upstream Routing + Cookie-Based Sticky Session Affinity
+  - type: "upstream"
+    prefix: "/services/analytics"
+    algorithm: "sticky_cookie"
+    sticky_cookie_name: "TORON_STICKY"
+    targets:
+      - "http://localhost:9009"
+      - "http://localhost:9010"
+
+  # 7. Upstream Routing + Client IP Hash Affinity
+  - type: "upstream"
+    prefix: "/services/sockets"
+    algorithm: "ip_hash"
+    targets:
+      - "http://localhost:9001"
+      - "http://localhost:9002"
+
+  # 8. Single Target Upstream Route + API Key Authentication
   - type: "upstream"
     prefix: "/services/auth"
     target: "http://localhost:9008"
+    auth:
+      type: "api_key"
+      api_key:
+        keys:
+          - "demo-api-key-12345"
+
+  # 9. gRPC Service Route + Native grpc.health.v1 Health Prober
+  - type: "upstream"
+    prefix: "/order.OrderService"
+    algorithm: "round_robin"
+    targets:
+      - "http://localhost:9005"
+      - "http://localhost:9006"
+    health_check_type: "grpc"
+    health_check_service: "OrderService"
+    health_check_interval: 5s
+    consecutive_failures: 3
+    cooldown_period: 15s
+
+  # 10. Per-Host Dedicated SSL/TLS & Mutual TLS (mTLS) Virtual Host Route
+  - type: "upstream"
+    host: "secure.internal.local"
+    prefix: "/"
+    target: "http://localhost:9001"
+    tls:
+      cert_file: "./certs/server.crt"
+      key_file: "./certs/server.key"
+      ca_file: "./certs/ca.crt"
+      client_auth: "require_and_verify" # "no_client_cert", "request_client_cert", "require_any_client_cert", "verify_client_cert_if_given", "require_and_verify"
+      min_version: "tls1.3"
+
+  # 11. Layer 4 TCP Socket Stream Proxy Route (Listen Port 8090 -> TCP Backend 9090)
+  - type: "tcp"
+    listen_port: 8090
+    target: "127.0.0.1:9090"
+
+  # 12. Layer 4 UDP Datagram Proxy Route (Listen Port 8091 -> UDP Backend 9091)
+  - type: "udp"
+    listen_port: 8091
+    target: "127.0.0.1:9091"
+
+  # 13. Route-Level WAF Override & CIDR IP Access Control List (Allowlist & Denylist)
+  - type: "upstream"
+    prefix: "/services/secure-admin"
+    target: "http://localhost:9001"
+    waf:
+      enabled: true
+      mode: "enforce"
+      allowed_ips:
+        - "10.0.0.0/8"
+        - "127.0.0.1"
+      denied_ips:
+        - "10.99.0.0/16"
+
+  # 14. Route-Level WAF Rule Tuning (Legacy API with SQLI-001 disabled)
+  - type: "upstream"
+    prefix: "/services/legacy-api"
+    target: "http://localhost:9002"
+    waf:
+      enabled: true
+      mode: "enforce"
+      disabled_rules:
+        - "SQLI-001"
 ```
-
-#### Route Options Reference
-* `type`: Route handler mode (`"static"`, `"upstream"`, `"tcp"`, or `"udp"`).
-* `listen_port` / `port`: Dedicated port for Layer 4 `"tcp"` and `"udp"` proxy socket listeners.
-* `host` / `domain`: Optional domain matching (e.g., `api.toron.local` or `docs.toron.local`).
-* `prefix`: Path prefix matcher (e.g., `/api`, `/internal/dashboard`).
-* `headers`: Key/value map of expected request HTTP headers (e.g., `X-Version: "v2"`).
-* `dir`: Local filesystem path for `static` routes (e.g., `./public`).
-* `targets` / `target`: Target URL string or list of URLs for `upstream` reverse proxy routes.
-* `algorithm`: Load balancing algorithm (`"round_robin"`, `"random"`, `"sticky_cookie"`, or `"ip_hash"`).
-* `sticky_cookie_name`: Optional custom cookie name for `"sticky_cookie"` session affinity (default: `"TORON_STICKY"`).
-* `rate_limit`: Route rate limit threshold string (e.g. `"100/min"`, `"10/sec"`, `"1000/hour"`) enforcing Token Bucket client rate limits.
-* `health_check_path`: Path for upstream active health probing (e.g., `/health`).
-
----
-
-## 🚀 Running the Server
-
-### 1. Test Configuration Syntax (Dry-Run Mode)
-Before starting the server, test YAML syntax and file paths using `-t` or `-test-config`:
-
-```powershell
-go run ./cmd/toron -t
-```
-*Output:*
-```text
-2026/08/12 15:50:16 [TORON] Configuration syntax OK: config.yaml and routes.yaml are valid.
-```
-
----
-
-### 2. Start the Toron Server
-Start Toron using default configuration files (`config.yaml` & `routes.yaml` in current working directory):
-
-```powershell
-go run ./cmd/toron
-```
-
-Or specify custom configuration file paths using `-c` / `-config` and `-r` / `-routes`:
-
-```powershell
-go run ./cmd/toron -c ./config.yaml -r ./routes.yaml
-```
-
----
-
-### 3. Start Upstream Dummy Web Services (For Testing Proxy & Load Balancer)
-In a separate terminal, launch the 10 dummy upstream web microservices running on ports 9001–9010:
-
-```powershell
-go run ./dummy-services
-```
-*Output:*
-```text
-2026/08/12 15:30:00 [DUMMY-SERVICES] Cluster started 10 HTTP services on ports 9001 - 9010.
-```
-
----
-
-### 4. Access Web Control Center & Proxy Dashboard
-Open your browser and navigate to:
-```text
-http://localhost:8080/internal/dashboard/
-```
-The Control Center provides:
-* **Dedicated Security & WAF Dashboard**: Live indicators for WAF Engine Status (`ENFORCE` / `DETECTION`), threat attack counters, active rule counts, and CIDR IP Access Lists.
-* **Security & Compliance Policy Matrix**: Visual verification of active WAF rules, anomaly thresholds, CIDR IP subnets, Security Headers (HSTS, CSP, Frame Options), and CORS/mTLS policies.
-* **Real-Time Security Audit Incident Stream**: Auto-refreshing table displaying intercepted threats (SQLi, XSS, Path Traversal, RCE, IP ACL, Protocol violations) with Client IP, Rule ID, Method & Path, Threat Score, and Action Taken (`BLOCKED` / `LOGGED`).
-* **Real-time active health probing** of upstream microservices (Ports 9001–9010).
-* **Interactive REST API Request Composer** with WAF attack test presets (SQL Injection, Path Traversal, Command Injection, XSS) to validate threat blocking in real-time.
-
----
-
-### 5. Test Server Endpoints via `curl`
-
-```powershell
-# Built-in Health Endpoint
-curl http://localhost:8080/health
-
-# Built-in Server Status Endpoint
-curl http://localhost:8080/api/status
-
-# Live Security Audit Incidents Feed
-curl http://localhost:8080/internal/api/security/incidents
-
-# Prometheus Metrics Endpoint
-curl http://localhost:8080/metrics
-
-# Header Routing (API v2 -> Dummy Services 1, 2, 3)
-curl -H "X-Version: v2" http://localhost:8080/api/users
-
-# Test WAF Threat Interception (SQL Injection attack)
-curl "http://localhost:8080/api?query=UNION+SELECT+1,2,3--"
-
-# Cluster Load Balancing (Dummy Services 5, 6, 7)
-curl http://localhost:8080/services/cluster
-
-# Domain Host Matching
-curl -H "Host: api.toron.local" http://localhost:8080/
-```
-
----
-
-### 6. Enable and Test HTTPS TLS
-
-To test HTTPS mode:
-1. Update `config.yaml`:
-   ```yaml
-   server:
-     port: 8443
-     tls:
-       enabled: true
-       auto_dev_cert: true
-   ```
-2. Start the server:
-   ```powershell
-   go run ./cmd/toron
-   ```
-3. Execute encrypted HTTPS requests:
-   ```powershell
-   # Test HTTPS connection
-   curl -k https://localhost:8443/health
-
-   # Test HTTP/2 over TLS via ALPN negotiation
-   curl -k --http2 https://localhost:8443/api/status -i
-   ```
-
----
-
-## 🧪 Testing & Benchmarking
-
-### Run Unit Test Suite
-Run unit tests across all packages:
-
-```powershell
-# Run unit tests across all packages
-go test -v ./...
-
-# Run test coverage report
-go test -cover ./pkg/... ./dummy-services/...
-```
-
-### Run Performance Benchmarks
-Run statement execution benchmarks and memory allocation tracking:
-
-```powershell
-go test -bench=. -benchmem ./pkg/reactor ./pkg/httpparser ./pkg/router ./pkg/server
-```
-
----
-
-## 📂 Project Architecture
-
-```text
-server/
-├── cmd/
-│   └── toron/              # Application entry point & CLI orchestration
-├── config.yaml             # Infrastructure & server config file
-├── routes.yaml             # Routing rules (static sites & reverse proxies)
-├── dummy-services/         # Test suite of 10 dummy upstream microservices
-├── pkg/
-│   ├── acme/               # ACME HTTP-01 & TLS-ALPN-01 SSL certificate engine
-│   ├── config/             # YAML config loader & syntax validator
-│   ├── httpparser/         # HTTP/1.1 request parser & response builder
-│   ├── metrics/            # Prometheus telemetry metrics & JSON stats registry
-│   ├── proxy/              # Reverse proxy, load balancer & circuit breaker
-│   ├── reactor/            # Non-blocking TCP socket event engine
-│   ├── router/             # URL/Domain/Header router, CORS & security headers
-│   ├── server/             # Server lifecycle, HTTP/2, HTTPS TLS & Internal API
-│   └── waf/                # Web Application Firewall, OWASP rules & audit logger
-├── public/                 # Static Web Control Center & Security Dashboard UI
-├── test_endpoint.http      # Standardized REST client HTTP request runner
-└── PRD.md                  # Project Requirements Document
-```
-
----
-
-## 📜 License
-
-This project is open-source software built under the prototype development model.

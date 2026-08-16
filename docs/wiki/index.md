@@ -36,6 +36,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 
 ### 🚀 Getting Started & Operations
 - [Getting Started](./getting-started.md) – Quickstart guide for building and running Toron.
+- [Universal Installer & Service Manager](./features/installation-guide.md) – Auto-installer script (`install.sh`), systemd (Linux) & launchd (macOS) service setup.
 - [Configuration Guide](./configuration.md) – Dual-file YAML configuration guide (`config.yaml` & `routes.yaml`).
 
 ### ⚙️ Core Architecture & Protocols

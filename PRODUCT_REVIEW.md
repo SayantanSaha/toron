@@ -2,7 +2,7 @@
 
 **Role**: Product Owner (PO)  
 **Date**: August 16, 2026  
-**Milestone**: **v1.5.0 Release (Prototype 40)** — Advanced Load Balancing Engine (Weighted Round-Robin, Weighted Random, Least Connections, Weighted Least Connections, Lowest Response Latency in `pkg/proxy`), Real-Time Container Lifecycle State Sync (`pkg/discovery`), & Traefik-Inspired Web Control Center Redesign (`public/index.html` & `public/app.js`).
+**Milestone**: **v1.5.0 Release (Prototype 41)** — Universal Auto-Installer Script (`install.sh`), Cross-Platform Build Makefile (`bin/toron-darwin-arm64`, `bin/toron-linux-arm64`, `bin/toron-linux-amd64`, `bin/toron-windows-amd64.exe`, `bin/toron-windows-arm64.exe`), Systemd (Linux) & Launchd (macOS) Service Integration, Advanced Load Balancing Engine (Weighted Round-Robin, Weighted Random, Least Connections, Weighted Least Connections, Lowest Response Latency in `pkg/proxy`), Real-Time Container Lifecycle State Sync (`pkg/discovery`), & Traefik-Inspired Web Control Center Redesign (`public/index.html` & `public/app.js`).
 
 ---
 

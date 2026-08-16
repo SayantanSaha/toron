@@ -1,5 +1,11 @@
 # Release Notes
 
+## 2026-08-16 - Toron v1.0.0 Official Release (Feature Freeze Milestone)
+
+### Milestone Summary
+- **Official Version 1.0.0 Freeze**: All feature sets spanning Prototypes 1 through 35 are officially frozen for the stable **v1.0.0** release.
+- **Production Scope**: Core event reactor engine, HTTP/1.1, HTTP/2 (`h2c` / TLS), HTTP/3 QUIC, gRPC gateway & trailers, ACME zero-touch SSL (HTTP-01 & ALPN-01), per-host SNI & mTLS, Zstd/Brotli compression, RFC 7234 response caching, multi-scheme authentication, Web Application Firewall (WAF) with OWASP & custom regex rules and CIDR IP ACLs, zero-downtime hot reloading, Prometheus metrics, and read-only Security Control Center Dashboard are finalized.
+
 ## 2026-08-15 - Prototype 35 Release (Custom WAF Regex Rules & Zero-Downtime Hot Reloading)
 
 - **Web Control Center Security & WAF Dashboard (`public/`, `pkg/server`)**: Added dedicated Security & WAF Dashboard tab to the Web Control Center (`/internal/dashboard/`) featuring hero threat indicators, visual Security & Compliance Policy Matrix, real-time Security Audit Incidents log feed table, and WAF attack presets in the Live API Tester.

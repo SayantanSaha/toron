@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-08-14
+updated: 2026-08-16
 
 depends_on:
   - REQ-001
@@ -28,9 +28,9 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki
+# Toron Documentation Wiki (v1.0.0 Official Release)
 
-Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, modular web server and API gateway written in Go.
+Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go. **Toron v1.0.0 is officially feature-frozen** spanning Prototypes 1 through 35.
 
 ## Wiki Navigation
 

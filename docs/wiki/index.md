@@ -46,6 +46,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Static File Serving](./features/static-file-serving.md) – Hosting web apps, MIME resolution, and directory index handling.
 
 ### 🌐 Routing, Proxying & Resilience
+- [OCI Container Auto-Discovery](./features/oci-container-auto-discovery.md) – Vendor-agnostic Docker & Podman Unix socket container auto-discovery.
 - [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding and proxy headers.
 - [gRPC Edge Gateway & Health Probing](./features/grpc-gateway.md) – Native `grpc.health.v1` probing and HTTP/2 trailers preservation.
 - [Load Balancing & Session Affinity](./features/load-balancing.md) – Round-robin, random, sticky cookie, and IP hash balancers.

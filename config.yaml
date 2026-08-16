@@ -114,6 +114,14 @@ server:
       output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
       format: "json"          # Output format (json)
 
+# Vendor-Agnostic OCI Container Auto-Discovery Engine
+discovery:
+  enabled: true             # Enable automatic OCI container discovery over Unix socket
+  engine: "auto"            # Runtime engine auto-detection ("auto", "docker", "podman")
+  socket_path: "auto"        # Unix domain socket path ("auto" probes standard paths)
+  poll_interval: 10s         # Background periodic scan interval
+  default_weight: 1          # Default load balancing weight for discovered upstreams
+
 # Logging and Telemetry Output Settings
 logging:
   level: "info"

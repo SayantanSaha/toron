@@ -1,5 +1,16 @@
 # Release Notes
 
+## 2026-08-16 - Toron v1.1.0 Feature Release (Prototype 36: Vendor-Agnostic OCI Container Auto-Discovery Engine)
+
+### Milestone Summary
+- **Vendor-Agnostic OCI Container Auto-Discovery Engine (`pkg/discovery`)**: Implemented dynamic container discovery engine monitoring Unix domain sockets across Docker Engine, Podman, Finch, and Nerdctl (`TASK-046`, `REQ-046`).
+- **Zero External Dependencies**: Pure Go stdlib HTTP transport (`net.DialContext("unix", ...)`) over Unix domain sockets without 3rd-party Docker or Containerd SDKs.
+- **Unified `toron.*` Metadata Label Taxonomy**: Automatic extraction of container routing metadata (`toron.enable`, `toron.host`, `toron.prefix`, `toron.port`, `toron.weight`, `toron.health_check`).
+- **Real-Time Lifecycle Event Streaming**: Background worker streams container `start`, `die`, and `stop` events and dynamically inserts/removes upstreams from `router.Router` with zero downtime.
+
+### Related Tasks
+- `TASK-046`: Implement Vendor-Agnostic OCI Container Auto-Discovery Engine
+
 ## 2026-08-16 - Toron v1.0.0 Official Release (Feature Freeze Milestone)
 
 ### Milestone Summary

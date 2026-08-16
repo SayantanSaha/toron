@@ -9,7 +9,7 @@
 Toron decouples infrastructure settings ([`config.yaml`](./config.yaml)) from routing rules ([`routes.yaml`](./routes.yaml)). It functions simultaneously as a static site host, reverse proxy gateway, gRPC router, Layer 4 TCP/UDP load balancer, and edge WAF security gateway.
 
 * **Core Architecture**: Event-driven TCP reactor engine driving a thread-safe worker pool for concurrent request dispatching.
-* **Protocols Supported**: HTTP/1.1, HTTP/2 Cleartext (`h2c`), HTTP/3 QUIC (UDP), WebSocket (RFC 6455 & RFC 8441 Extended CONNECT), Layer 4 TCP/UDP, and gRPC.
+* **Protocols & Discovery**: HTTP/1.1, HTTP/2 Cleartext (`h2c`), HTTP/3 QUIC (UDP), WebSocket (RFC 6455 & RFC 8441), Layer 4 TCP/UDP, gRPC, and vendor-agnostic OCI container auto-discovery (Docker, Podman, Finch, Nerdctl).
 * **Edge Security & Compliance**: OWASP Top 10 WAF inspection (SQLi, XSS, Path Traversal, RCE), custom regex rules, fast-path CIDR IP ACLs, constant-time authentication, CRLF header sanitization, OWASP security headers, and SSRF guards.
 * **Resilience & Traffic Control**: Multi-algorithm load balancing (`round_robin`, `random`, `sticky_cookie`, `ip_hash`), active HTTP/gRPC health probing, 3-state Circuit Breaker, RFC 7234 response caching, and Token Bucket rate limiting.
 * **Observability & Management**: Built-in Web Control Center & Security Audit Dashboard UI (`/internal/dashboard/`), Prometheus `/metrics` endpoint, SIEM-ready JSON audit logger, and W3C `traceparent` OpenTelemetry header propagation.
@@ -521,6 +521,50 @@ Includes a standalone test cluster of 10 dummy upstream microservices running on
 ```powershell
 # Start 10 dummy microservices in background terminal
 go run ./dummy-services
+```
+
+---
+
+### 26. Vendor-Agnostic OCI Container Auto-Discovery Engine (`pkg/discovery`)
+
+Toron features a zero-dependency, vendor-agnostic OCI container auto-discovery engine that monitors Docker Engine (`/var/run/docker.sock`), Podman (`/run/podman/podman.sock`), Finch, and Nerdctl via Unix domain sockets in real time. It parses container metadata labels and dynamically registers/deregisters upstream backend targets in Toron's routing matrix with zero downtime.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+discovery:
+  enabled: true
+  engine: "auto"              # Options: "auto", "docker", "podman"
+  socket_path: "auto"          # Auto-probes standard socket locations if "auto"
+  poll_interval: 10s           # Fallback periodic scan interval
+  default_weight: 1            # Default round-robin balancing weight
+```
+
+**Supported Container Label Taxonomy**:
+- `toron.enable: "true"` (Required opt-in flag)
+- `toron.host: "api.example.com"` (Host / domain routing rule)
+- `toron.prefix: "/v1"` (Subpath prefix routing rule)
+- `toron.port: "8080"` (Target container port)
+- `toron.weight: "5"` (Load balancing weight)
+- `toron.health_check: "/healthz"` (HTTP health probe path)
+
+**CLI Container Launch Examples**:
+```bash
+# Launch a Docker container with Toron routing labels
+docker run -d \
+  --name user-service-1 \
+  --label "toron.enable=true" \
+  --label "toron.host=api.example.com" \
+  --label "toron.prefix=/v1/users" \
+  --label "toron.port=8080" \
+  my-user-api:latest
+
+# Launch a Podman container with Toron routing labels
+podman run -d \
+  --name order-service-1 \
+  --label "toron.enable=true" \
+  --label "toron.host=shop.example.com" \
+  --label "toron.port=9090" \
+  my-order-api:latest
 ```
 
 ---

@@ -163,6 +163,14 @@ server:
       output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
       format: "json"
 
+# Vendor-Agnostic OCI Container Auto-Discovery Engine
+discovery:
+  enabled: true
+  engine: "auto"              # Options: "auto", "docker", "podman"
+  socket_path: "auto"          # Auto-probes standard socket locations if "auto"
+  poll_interval: 10s           # Fallback periodic scan interval
+  default_weight: 1            # Default round-robin balancing weight
+
 logging:
   level: "info"
   format: "text"

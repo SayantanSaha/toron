@@ -11,10 +11,11 @@ import (
 
 // AppConfig is the root configuration structure for Toron.
 type AppConfig struct {
-	Server  ServerConfig  `yaml:"server" json:"server"`
-	Static  StaticConfig  `yaml:"static" json:"static"`
-	Proxy   ProxyConfig   `yaml:"proxy" json:"proxy"`
-	Logging LoggingConfig `yaml:"logging" json:"logging"`
+	Server    ServerConfig    `yaml:"server" json:"server"`
+	Static    StaticConfig    `yaml:"static" json:"static"`
+	Proxy     ProxyConfig     `yaml:"proxy" json:"proxy"`
+	Logging   LoggingConfig   `yaml:"logging" json:"logging"`
+	Discovery DiscoveryConfig `yaml:"discovery" json:"discovery"`
 }
 
 // HTTP2Config captures HTTP/2 protocol settings.
@@ -74,6 +75,15 @@ type CacheConfig struct {
 	DefaultTTL     time.Duration `yaml:"default_ttl" json:"default_ttl"`
 	MaxEntries     int           `yaml:"max_entries" json:"max_entries"`
 	MaxPayloadSize int           `yaml:"max_payload_size" json:"max_payload_size"`
+}
+
+// DiscoveryConfig captures OCI container auto-discovery settings.
+type DiscoveryConfig struct {
+	Enabled       bool          `yaml:"enabled" json:"enabled"`
+	Engine        string        `yaml:"engine" json:"engine"`
+	SocketPath    string        `yaml:"socket_path" json:"socket_path"`
+	PollInterval  time.Duration `yaml:"poll_interval" json:"poll_interval"`
+	DefaultWeight int           `yaml:"default_weight" json:"default_weight"`
 }
 
 // JWTConfig captures JWT authentication settings.

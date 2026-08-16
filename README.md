@@ -821,3 +821,16 @@ routes:
       disabled_rules:
         - "SQLI-001"
 ```
+
+---
+
+## 📜 License & Dual-Licensing Terms
+
+Toron Web Server is dual-licensed under **GNU Affero General Public License v3.0 (AGPL-3.0)** and a **Commercial License**:
+
+* **Open Source & Free Use (GNU AGPLv3)**: Free of charge for **Personal**, **Educational**, **Academic Research**, and **Open-Source** projects under the terms of the GNU Affero General Public License v3.0.
+* **Commercial Use (Paid)**: Commercial entities, for-profit production deployments, or SaaS integration without AGPL-3.0 copyleft obligations require a separate paid **Commercial License Agreement**.
+
+See the full [`LICENSE`](./LICENSE) file for legal details or contact `sayantan.somu@gmail.com` for commercial licensing terms.
+
+

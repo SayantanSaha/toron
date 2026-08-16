@@ -2,7 +2,7 @@ graphify-out/
 node_modules/
 cover
 cover.out
-*.exe
 certs/
 toron
 dummy
+bin/

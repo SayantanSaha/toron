@@ -1,5 +1,16 @@
 # Release Notes
 
+## 2026-08-16 - Toron v1.2.0 Feature Release (Prototype 37: Native Kubernetes Ingress Controller)
+
+### Milestone Summary
+- **Native Zero-Dependency Kubernetes Ingress Controller (`pkg/ingress`)**: Implemented Kubernetes `networking.k8s.io/v1` Ingress Controller translating `Ingress`, `Service`, `Endpoints`, and TLS `Secret` resources into Toron's core routing matrix (`TASK-047`, `REQ-047`).
+- **Zero External Dependencies**: Pure Go stdlib HTTP & TLS client communicating with Kubernetes API server without importing `k8s.io/client-go`.
+- **In-Cluster Auto-Authentication**: Automated ServiceAccount bearer token and Root CA certificate loading from `/var/run/secrets/kubernetes.io/serviceaccount/`.
+- **Real-Time Endpoint Watching**: Streaming watch worker (`watch=true`) dynamically updates load balancing targets as pod IP endpoints scale or shift.
+
+### Related Tasks
+- `TASK-047`: Implement Native Kubernetes Ingress Controller Engine
+
 ## 2026-08-16 - Toron v1.1.0 Feature Release (Prototype 36: Vendor-Agnostic OCI Container Auto-Discovery Engine)
 
 ### Milestone Summary

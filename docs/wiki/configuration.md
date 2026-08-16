@@ -171,6 +171,14 @@ discovery:
   poll_interval: 10s           # Fallback periodic scan interval
   default_weight: 1            # Default round-robin balancing weight
 
+# Native Kubernetes Ingress Controller Engine
+ingress:
+  enabled: true
+  ingress_class: "toron"                            # Target ingress class name
+  kube_apiserver: "https://kubernetes.default.svc"   # K8s API server endpoint
+  service_account_dir: "/var/run/secrets/kubernetes.io/serviceaccount"
+  resync_period: 30s                                # Fallback periodic resync interval
+
 logging:
   level: "info"
   format: "text"

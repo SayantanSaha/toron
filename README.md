@@ -569,6 +569,44 @@ podman run -d \
 
 ---
 
+### 27. Native Zero-Dependency Kubernetes Ingress Controller (`pkg/ingress`)
+
+Toron operates natively as a Kubernetes Ingress Controller (`networking.k8s.io/v1`). Using pure Go stdlib HTTP & TLS, Toron connects to the Kubernetes API server via in-cluster ServiceAccount authentication, watches `Ingress`, `Service`, `Endpoints`, and `Secret` resources in real time, and dynamically synchronizes cluster routing rules and pod IP endpoints into Toron's core routing engine.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+ingress:
+  enabled: true
+  ingress_class: "toron"                            # Target ingress class name
+  kube_apiserver: "https://kubernetes.default.svc"   # K8s API server endpoint
+  service_account_dir: "/var/run/secrets/kubernetes.io/serviceaccount"
+  resync_period: 30s                                # Fallback periodic resync interval
+```
+
+**Sample Ingress Resource Manifest**:
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api-ingress
+  namespace: default
+spec:
+  ingressClassName: toron
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /v1
+            pathType: Prefix
+            backend:
+              service:
+                name: user-service
+                port:
+                  number: 8080
+```
+
+---
+
 ## 🛠️ Building & Running Toron
 
 ### Prerequisites

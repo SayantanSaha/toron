@@ -16,6 +16,7 @@ type AppConfig struct {
 	Proxy     ProxyConfig     `yaml:"proxy" json:"proxy"`
 	Logging   LoggingConfig   `yaml:"logging" json:"logging"`
 	Discovery DiscoveryConfig `yaml:"discovery" json:"discovery"`
+	Ingress   IngressConfig   `yaml:"ingress" json:"ingress"`
 }
 
 // HTTP2Config captures HTTP/2 protocol settings.
@@ -84,6 +85,16 @@ type DiscoveryConfig struct {
 	SocketPath    string        `yaml:"socket_path" json:"socket_path"`
 	PollInterval  time.Duration `yaml:"poll_interval" json:"poll_interval"`
 	DefaultWeight int           `yaml:"default_weight" json:"default_weight"`
+}
+
+// IngressConfig captures native Kubernetes Ingress Controller settings.
+type IngressConfig struct {
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
+	IngressClass      string        `yaml:"ingress_class" json:"ingress_class"`
+	KubeAPIServer     string        `yaml:"kube_apiserver" json:"kube_apiserver"`
+	KubeConfigPath    string        `yaml:"kubeconfig_path" json:"kubeconfig_path"`
+	ServiceAccountDir string        `yaml:"service_account_dir" json:"service_account_dir"`
+	ResyncPeriod      time.Duration `yaml:"resync_period" json:"resync_period"`
 }
 
 // JWTConfig captures JWT authentication settings.

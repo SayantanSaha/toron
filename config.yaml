@@ -122,6 +122,14 @@ discovery:
   poll_interval: 10s         # Background periodic scan interval
   default_weight: 1          # Default load balancing weight for discovered upstreams
 
+# Native Kubernetes Ingress Controller Engine
+ingress:
+  enabled: true             # Enable native zero-dependency Kubernetes Ingress Controller
+  ingress_class: "toron"    # Target IngressClass name (or kubernetes.io/ingress.class annotation)
+  kube_apiserver: "https://kubernetes.default.svc" # K8s API server endpoint
+  service_account_dir: "/var/run/secrets/kubernetes.io/serviceaccount"
+  resync_period: 30s        # Background periodic resync interval
+
 # Logging and Telemetry Output Settings
 logging:
   level: "info"

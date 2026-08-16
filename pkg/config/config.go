@@ -11,13 +11,14 @@ import (
 
 // AppConfig is the root configuration structure for Toron.
 type AppConfig struct {
-	Server    ServerConfig    `yaml:"server" json:"server"`
-	Static    StaticConfig    `yaml:"static" json:"static"`
-	Proxy     ProxyConfig     `yaml:"proxy" json:"proxy"`
-	Logging   LoggingConfig   `yaml:"logging" json:"logging"`
-	Discovery DiscoveryConfig `yaml:"discovery" json:"discovery"`
-	Ingress   IngressConfig   `yaml:"ingress" json:"ingress"`
-	Sidecar   SidecarConfig   `yaml:"sidecar" json:"sidecar"`
+	Server     ServerConfig     `yaml:"server" json:"server"`
+	Static     StaticConfig     `yaml:"static" json:"static"`
+	Proxy      ProxyConfig      `yaml:"proxy" json:"proxy"`
+	Logging    LoggingConfig    `yaml:"logging" json:"logging"`
+	Discovery  DiscoveryConfig  `yaml:"discovery" json:"discovery"`
+	Ingress    IngressConfig    `yaml:"ingress" json:"ingress"`
+	Sidecar    SidecarConfig    `yaml:"sidecar" json:"sidecar"`
+	Transcoder TranscoderConfig `yaml:"transcoder" json:"transcoder"`
 }
 
 // HTTP2Config captures HTTP/2 protocol settings.
@@ -122,6 +123,21 @@ type TrafficSplitRoute struct {
 type SplitBackend struct {
 	Target string `yaml:"target" json:"target"`
 	Weight int    `yaml:"weight" json:"weight"`
+}
+
+// TranscoderConfig captures REST JSON to gRPC Protobuf transcoding rules.
+type TranscoderConfig struct {
+	Enabled bool                  `yaml:"enabled" json:"enabled"`
+	Routes  []TranscoderRouteRule `yaml:"routes" json:"routes"`
+}
+
+// TranscoderRouteRule captures a REST HTTP route to binary gRPC RPC mapping.
+type TranscoderRouteRule struct {
+	HTTPMethod    string            `yaml:"http_method" json:"http_method"`
+	HTTPPath      string            `yaml:"http_path" json:"http_path"`
+	GRPCMethod    string            `yaml:"grpc_method" json:"grpc_method"`
+	UpstreamURL   string            `yaml:"upstream_url" json:"upstream_url"`
+	FieldMappings map[string]string `yaml:"field_mappings" json:"field_mappings"`
 }
 
 // JWTConfig captures JWT authentication settings.

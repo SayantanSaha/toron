@@ -631,6 +631,25 @@ sidecar:
 
 ---
 
+### 29. REST-to-gRPC Transcoding Engine (`pkg/transcoder`)
+
+Toron features a zero-dependency REST-to-gRPC Transcoding Engine (`pkg/transcoder`). It translates incoming RESTful JSON HTTP calls (e.g. `GET /v1/users/123`) into binary Protobuf-encoded HTTP/2 gRPC requests (e.g. `POST /user.UserService/GetUser`), extracts path/query params into JSON payload maps, and converts returning binary gRPC frames and `grpc-status` headers into REST JSON HTTP responses.
+
+**Sample Configuration (`config.yaml`)**:
+```yaml
+transcoder:
+  enabled: true
+  routes:
+    - http_method: "GET"
+      http_path: "/v1/users/:id"
+      grpc_method: "/user.UserService/GetUser"
+      upstream_url: "http://localhost:9005"
+      field_mappings:
+        id: "userId"
+```
+
+---
+
 ## 🛠️ Building & Running Toron
 
 ### Prerequisites

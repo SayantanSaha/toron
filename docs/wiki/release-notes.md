@@ -1,5 +1,16 @@
 # Release Notes
 
+## 2026-08-16 - Toron v1.4.0 Feature Release (Prototype 39: REST-to-gRPC Transcoding Engine)
+
+### Milestone Summary
+- **REST-to-gRPC Transcoding Engine (`pkg/transcoder`)**: Implemented direct JSON HTTP REST (`GET /v1/users/:id`) to binary Protobuf HTTP/2 gRPC (`POST /user.UserService/GetUser`) request and response translation (`TASK-049`, `REQ-049`).
+- **Zero External Dependencies**: Pure Go stdlib implementation using `encoding/binary`, `encoding/json`, `net/http`, and `toron/pkg/httpparser` without protobuf compiler tools.
+- **gRPC 5-Byte Wire Framing**: Automated encoding and decoding of gRPC wire frames (`[0x00][4-byte length] + payload`).
+- **gRPC Status Mapping**: Automatic conversion of gRPC trailer status codes (`grpc-status: 0` -> 200 OK, `grpc-status: 5` -> 404 Not Found, `grpc-status: 16` -> 401 Unauthorized) to standard HTTP status codes.
+
+### Related Tasks
+- `TASK-049`: Implement REST-to-gRPC Transcoding Engine
+
 ## 2026-08-16 - Toron v1.3.0 Feature Release (Prototype 38: Service Mesh Sidecar Mode)
 
 ### Milestone Summary

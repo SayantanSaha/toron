@@ -195,6 +195,17 @@ sidecar:
         - target: "http://service-v2:8080"
           weight: 20
 
+# REST-to-gRPC Transcoding Engine
+transcoder:
+  enabled: true
+  routes:
+    - http_method: "GET"
+      http_path: "/v1/users/:id"
+      grpc_method: "/user.UserService/GetUser"
+      upstream_url: "http://localhost:9005"
+      field_mappings:
+        id: "userId"
+
 logging:
   level: "info"
   format: "text"

@@ -100,6 +100,16 @@ clean:
 	@echo "==> Cleaning build artifacts..."
 	rm -rf $(BUILD_DIR) toron dummy
 
+## docker-build: Builds the Toron Docker image using multi-stage Dockerfile
+docker-build:
+	@echo "==> Building Toron Docker image (toron:latest)..."
+	docker build -t toron:latest .
+
+## docker-run: Runs Toron inside a Docker container
+docker-run: docker-build
+	@echo "==> Running Toron Docker container..."
+	docker run -d --name toron -p 8080:8080 -p 8443:8443 -v /var/run/docker.sock:/var/run/docker.sock toron:latest
+
 ## docker-up: Starts Docker Compose container microservices
 docker-up:
 	@echo "==> Launching Docker Compose microservices..."

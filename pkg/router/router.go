@@ -287,16 +287,31 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string) HandlerFunc {
 			relPath = "/index.html"
 		}
 
-		// Security: Prevent path traversal
+		// Security: Prevent path traversal & symlink escape
 		cleanRel := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(relPath, "/")))
 		targetPath := filepath.Join(absDir, cleanRel)
 
 		relFromDir, err := filepath.Rel(absDir, targetPath)
-		if err != nil || strings.HasPrefix(relFromDir, "..") || strings.HasPrefix(relFromDir, ".") && len(relFromDir) > 1 && relFromDir[1] == '.' {
+		if err != nil || strings.HasPrefix(relFromDir, "..") || (strings.HasPrefix(relFromDir, ".") && len(relFromDir) > 1 && relFromDir[1] == '.') {
 			res.SetStatus(http.StatusForbidden)
 			res.Header.Set("Content-Type", "application/json")
 			_, _ = res.WriteString(`{"error":"403 Forbidden: Path Traversal Disallowed"}`)
 			return
+		}
+
+		// Physical symlink target verification
+		realAbsDir, err := filepath.EvalSymlinks(absDir)
+		if err != nil {
+			realAbsDir = absDir
+		}
+		if evalTarget, err := filepath.EvalSymlinks(targetPath); err == nil {
+			relFromReal, err := filepath.Rel(realAbsDir, evalTarget)
+			if err != nil || strings.HasPrefix(relFromReal, "..") || (strings.HasPrefix(relFromReal, ".") && len(relFromReal) > 1 && relFromReal[1] == '.') {
+				res.SetStatus(http.StatusForbidden)
+				res.Header.Set("Content-Type", "application/json")
+				_, _ = res.WriteString(`{"error":"403 Forbidden: Symlink Path Traversal Disallowed"}`)
+				return
+			}
 		}
 
 		fileInfo, err := os.Stat(targetPath)

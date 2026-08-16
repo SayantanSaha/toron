@@ -121,6 +121,29 @@ func TestInternalAPIRoutes(t *testing.T) {
 		}
 	})
 
+	t.Run("POST /internal/api/proxy-test SSRF Rejection", func(t *testing.T) {
+		ssrfPayloads := []string{
+			`{"path":"http://evil.com/ssrf","method":"GET"}`,
+			`{"path":"//evil.com/ssrf","method":"GET"}`,
+			`{"path":"https://169.254.169.254/latest/meta-data","method":"GET"}`,
+		}
+
+		for _, body := range ssrfPayloads {
+			req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+			req.Body = bytes.NewBufferString(body)
+
+			res := httpparser.NewResponse()
+			r.ServeHTTP(req, res)
+
+			if res.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected 400 Bad Request for SSRF payload %s, got %d", body, res.StatusCode)
+			}
+		}
+	})
+
 	t.Run("GET /internal/api/security/incidents", func(t *testing.T) {
 		req, err := httpparser.NewRequest("GET", "/internal/api/security/incidents", "HTTP/1.1")
 		if err != nil {

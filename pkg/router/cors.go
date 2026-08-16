@@ -1,7 +1,9 @@
 package router
 
 import (
+	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -25,6 +27,20 @@ func isOriginAllowed(origin string, allowOrigins []string) bool {
 		return false
 	}
 	origin = strings.TrimSpace(origin)
+	if origin == "" {
+		return false
+	}
+
+	u, err := url.Parse(origin)
+	if err != nil || u.Scheme == "" || u.Host == "" {
+		return false
+	}
+
+	originHost := strings.ToLower(u.Host)
+	if h, _, err := net.SplitHostPort(originHost); err == nil {
+		originHost = h
+	}
+
 	for _, pattern := range allowOrigins {
 		pattern = strings.TrimSpace(pattern)
 		if pattern == "*" {
@@ -34,12 +50,20 @@ func isOriginAllowed(origin string, allowOrigins []string) bool {
 			return true
 		}
 		if strings.Contains(pattern, "*") {
-			parts := strings.Split(pattern, "*")
-			if len(parts) == 2 {
-				prefix := parts[0]
-				suffix := parts[1]
-				if strings.HasPrefix(origin, prefix) && strings.HasSuffix(origin, suffix) {
-					return true
+			patURL, err := url.Parse(pattern)
+			if err == nil && patURL.Scheme != "" && patURL.Host != "" {
+				if !strings.EqualFold(u.Scheme, patURL.Scheme) {
+					continue
+				}
+				patHost := strings.ToLower(patURL.Host)
+				if h, _, err := net.SplitHostPort(patHost); err == nil {
+					patHost = h
+				}
+				if strings.HasPrefix(patHost, "*.") {
+					domainSuffix := patHost[1:] // e.g. ".example.com"
+					if strings.HasSuffix(originHost, domainSuffix) || originHost == patHost[2:] {
+						return true
+					}
 				}
 			}
 		}

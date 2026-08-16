@@ -280,6 +280,20 @@ function initSecurityTab() {
   fetchSecurityIncidents();
 }
 
+function escapeHTML(str) {
+  if (typeof str !== 'string') return str == null ? '' : String(str);
+  return str.replace(/[&<>"']/g, match => {
+    switch (match) {
+      case '&': return '&amp;';
+      case '<': return '&lt;';
+      case '>': return '&gt;';
+      case '"': return '&quot;';
+      case "'": return '&#39;';
+      default: return match;
+    }
+  });
+}
+
 async function fetchSecurityIncidents() {
   const tbody = document.getElementById('security-incidents-tbody');
   const badge = document.getElementById('incident-count-badge');
@@ -335,22 +349,22 @@ async function fetchSecurityIncidents() {
 
       return `
         <tr class="hover:bg-slate-800/30 transition">
-          <td class="py-2.5 px-3 text-slate-400 text-[11px] font-mono whitespace-nowrap">${formattedTime}</td>
-          <td class="py-2.5 px-3 text-slate-200 text-[11px] font-mono font-semibold">${item.client_ip || '127.0.0.1'}</td>
+          <td class="py-2.5 px-3 text-slate-400 text-[11px] font-mono whitespace-nowrap">${escapeHTML(formattedTime)}</td>
+          <td class="py-2.5 px-3 text-slate-200 text-[11px] font-mono font-semibold">${escapeHTML(item.client_ip || '127.0.0.1')}</td>
           <td class="py-2.5 px-3">
             <span class="text-[10px] px-2 py-0.5 rounded font-mono font-bold border ${catBadgeClass}">
-              ${(item.category || 'THREAT').toUpperCase()}
+              ${escapeHTML((item.category || 'THREAT').toUpperCase())}
             </span>
           </td>
-          <td class="py-2.5 px-3 text-indigo-400 font-mono text-[11px]">${item.rule_id || 'RULE-000'}</td>
+          <td class="py-2.5 px-3 text-indigo-400 font-mono text-[11px]">${escapeHTML(item.rule_id || 'RULE-000')}</td>
           <td class="py-2.5 px-3 text-slate-300 font-mono text-[11px]">
-            <span class="text-slate-400 font-semibold">${item.method || 'GET'}</span>
-            <span class="text-slate-200 truncate max-w-xs inline-block align-bottom">${item.path || '/'}</span>
+            <span class="text-slate-400 font-semibold">${escapeHTML(item.method || 'GET')}</span>
+            <span class="text-slate-200 truncate max-w-xs inline-block align-bottom">${escapeHTML(item.path || '/')}</span>
           </td>
-          <td class="py-2.5 px-3 text-center text-amber-400 font-mono font-bold">${item.anomaly_score || 5}</td>
+          <td class="py-2.5 px-3 text-center text-amber-400 font-mono font-bold">${escapeHTML(item.anomaly_score || 5)}</td>
           <td class="py-2.5 px-3 text-right">
             <span class="text-[10px] px-2 py-0.5 rounded font-mono border ${actionClass}">
-              ${actionLabel}
+              ${escapeHTML(actionLabel)}
             </span>
           </td>
         </tr>

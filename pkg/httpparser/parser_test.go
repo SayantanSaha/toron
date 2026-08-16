@@ -95,6 +95,23 @@ func TestResponse_Serialize(t *testing.T) {
 	}
 }
 
+func TestResponse_HeaderCRLFInjection(t *testing.T) {
+	res := httpparser.NewResponse()
+	res.SetStatus(200)
+	res.Header.Set("X-Injected\r\nHeader", "value\r\nSet-Cookie: session=stolen")
+	_, _ = res.WriteString("ok")
+
+	var buf bytes.Buffer
+	if err := res.Serialize(&buf); err != nil {
+		t.Fatalf("failed to serialize response: %v", err)
+	}
+
+	out := buf.String()
+	if bytes.Contains(buf.Bytes(), []byte("\r\nSet-Cookie:")) || bytes.Contains(buf.Bytes(), []byte("\nSet-Cookie:")) {
+		t.Errorf("header CRLF injection produced secondary header line! output: %q", out)
+	}
+}
+
 func TestIsWebSocketUpgrade(t *testing.T) {
 	wsReq := "GET /ws HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
 	opts := httpparser.DefaultParserOptions()

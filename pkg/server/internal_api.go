@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -258,15 +259,28 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		if testReq.Path == "" {
 			testReq.Path = "/health"
 		}
-		if !strings.HasPrefix(testReq.Path, "/") {
-			testReq.Path = "/" + testReq.Path
-		}
 		if testReq.Method == "" {
 			testReq.Method = "GET"
 		}
 
+		// Security: Prevent SSRF & Authority Overrides
+		parsedPath, err := url.Parse(testReq.Path)
+		if err != nil || parsedPath.Scheme != "" || parsedPath.Host != "" || parsedPath.User != nil {
+			res.SetStatus(http.StatusBadRequest)
+			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Invalid or disallowed proxy test target path"}`)
+			return
+		}
+
+		cleanPath := parsedPath.Path
+		if !strings.HasPrefix(cleanPath, "/") {
+			cleanPath = "/" + cleanPath
+		}
+		if parsedPath.RawQuery != "" {
+			cleanPath += "?" + parsedPath.RawQuery
+		}
+
 		serverPort := cfg.Port
-		targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", serverPort, testReq.Path)
+		targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", serverPort, cleanPath)
 
 		httpReq, err := http.NewRequest(strings.ToUpper(testReq.Method), targetURL, nil)
 		if err != nil {

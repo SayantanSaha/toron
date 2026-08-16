@@ -7,7 +7,14 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 )
+
+var headerReplacer = strings.NewReplacer("\r", "", "\n", "")
+
+func sanitizeHeader(s string) string {
+	return headerReplacer.Replace(s)
+}
 
 // Response represents an HTTP/1.1 response builder.
 type Response struct {
@@ -64,10 +71,12 @@ func (r *Response) Serialize(w io.Writer) error {
 	// Write Status Line
 	fmt.Fprintf(&buf, "HTTP/1.1 %d %s\r\n", r.StatusCode, statusText)
 
-	// Write Headers
+	// Write Headers with CRLF Injection Sanitization
 	for key, values := range r.Header {
+		cleanKey := sanitizeHeader(key)
 		for _, val := range values {
-			fmt.Fprintf(&buf, "%s: %s\r\n", key, val)
+			cleanVal := sanitizeHeader(val)
+			fmt.Fprintf(&buf, "%s: %s\r\n", cleanKey, cleanVal)
 		}
 	}
 

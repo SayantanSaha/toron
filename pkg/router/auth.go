@@ -139,14 +139,18 @@ func VerifyJWT(tokenString string, secret []byte, expectedIssuer, expectedAudien
 
 	var h hash.Hash
 	switch strings.ToUpper(hdr.Alg) {
-	case "HS256", "":
+	case "HS256":
 		h = hmac.New(sha256.New, secret)
 	case "HS384":
 		h = hmac.New(sha512.New384, secret)
 	case "HS512":
 		h = hmac.New(sha512.New, secret)
 	default:
-		return nil, fmt.Errorf("unsupported algorithm %q", hdr.Alg)
+		return nil, fmt.Errorf("unsupported or missing algorithm %q", hdr.Alg)
+	}
+
+	if len(secret) == 0 {
+		return nil, fmt.Errorf("empty secret key not permitted")
 	}
 
 	signingInput := parts[0] + "." + parts[1]
@@ -248,12 +252,19 @@ func verifyAPIKey(req *httpparser.Request, cfg APIKeyConfig) (string, bool) {
 		return "", false
 	}
 
+	// Hash incoming key to SHA-256 digest to ensure constant length comparison and eliminate length leaks
+	keyHash := sha256.Sum256([]byte(key))
+	matchedKey := ""
+	matched := false
+
 	for _, validKey := range cfg.Keys {
-		if subtle.ConstantTimeCompare([]byte(key), []byte(validKey)) == 1 {
-			return key, true
+		validHash := sha256.Sum256([]byte(validKey))
+		if subtle.ConstantTimeCompare(keyHash[:], validHash[:]) == 1 {
+			matchedKey = key
+			matched = true
 		}
 	}
-	return "", false
+	return matchedKey, matched
 }
 
 func verifyBasicAuth(req *httpparser.Request, cfg BasicAuthConfig) (string, bool) {
@@ -276,10 +287,16 @@ func verifyBasicAuth(req *httpparser.Request, cfg BasicAuthConfig) (string, bool
 
 	expectedPass, exists := cfg.Users[user]
 	if !exists {
+		// Perform constant-time dummy comparison to prevent username enumeration via timing side-channels
+		dummyHash := sha256.Sum256([]byte(pass))
+		_ = subtle.ConstantTimeCompare(dummyHash[:], dummyHash[:])
 		return "", false
 	}
 
-	if subtle.ConstantTimeCompare([]byte(pass), []byte(expectedPass)) == 1 {
+	passHash := sha256.Sum256([]byte(pass))
+	expectedHash := sha256.Sum256([]byte(expectedPass))
+
+	if subtle.ConstantTimeCompare(passHash[:], expectedHash[:]) == 1 {
 		return user, true
 	}
 	return "", false

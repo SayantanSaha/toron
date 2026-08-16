@@ -108,12 +108,28 @@ func (acl *IPAccessList) CheckIP(ip net.IP) (allowed bool, reason string) {
 }
 
 // ExtractClientIP extracts the remote client IP from an HTTP request safely.
+// Socket RemoteAddr is prioritized over client-supplied headers to prevent IP spoofing attacks.
 func ExtractClientIP(req *httpparser.Request) net.IP {
 	if req == nil {
 		return nil
 	}
 
-	// 1. Check X-Forwarded-For
+	// 1. Check socket RemoteAddr first if available to prevent header spoofing
+	if req.RawConn != nil {
+		if remoteAddr := req.RawConn.RemoteAddr(); remoteAddr != nil {
+			raw := remoteAddr.String()
+			if host, _, err := net.SplitHostPort(raw); err == nil {
+				if ip := net.ParseIP(host); ip != nil {
+					return ip
+				}
+			}
+			if ip := net.ParseIP(raw); ip != nil {
+				return ip
+			}
+		}
+	}
+
+	// 2. Fallback to X-Forwarded-For (for proxy scenarios / synthetic requests)
 	if req.Header != nil {
 		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
@@ -130,7 +146,7 @@ func ExtractClientIP(req *httpparser.Request) net.IP {
 			}
 		}
 
-		// 2. Check X-Real-IP
+		// 3. Check X-Real-IP
 		if xri := req.Header.Get("X-Real-IP"); xri != "" {
 			raw := strings.TrimSpace(xri)
 			if ip := net.ParseIP(raw); ip != nil {
@@ -140,21 +156,6 @@ func ExtractClientIP(req *httpparser.Request) net.IP {
 				if ip := net.ParseIP(host); ip != nil {
 					return ip
 				}
-			}
-		}
-	}
-
-	// 3. Fallback to RawConn.RemoteAddr()
-	if req.RawConn != nil {
-		if remoteAddr := req.RawConn.RemoteAddr(); remoteAddr != nil {
-			raw := remoteAddr.String()
-			if host, _, err := net.SplitHostPort(raw); err == nil {
-				if ip := net.ParseIP(host); ip != nil {
-					return ip
-				}
-			}
-			if ip := net.ParseIP(raw); ip != nil {
-				return ip
 			}
 		}
 	}

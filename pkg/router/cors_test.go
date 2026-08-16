@@ -119,6 +119,36 @@ func TestCORS_SubdomainWildcard(t *testing.T) {
 	}
 }
 
+func TestCORS_SubdomainWildcardBypassSecurity(t *testing.T) {
+	cfg := CORSConfig{
+		Enabled:      true,
+		AllowOrigins: []string{"https://*.toron.dev"},
+	}
+
+	middleware := NewCORSMiddleware(cfg)
+	handler := middleware(func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+	})
+
+	invalidOrigins := []string{
+		"https://attacker.com/.toron.dev",
+		"https://eviltoron.dev.attacker.com",
+		"https://attacker.com",
+	}
+
+	for _, invalidOrigin := range invalidOrigins {
+		req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+		req.Header.Set("Origin", invalidOrigin)
+
+		res := httpparser.NewResponse()
+		handler(req, res)
+
+		if origin := res.Header.Get("Access-Control-Allow-Origin"); origin != "" {
+			t.Errorf("unauthorized origin %q was allowed with Access-Control-Allow-Origin: %q!", invalidOrigin, origin)
+		}
+	}
+}
+
 func TestCORS_ActualRequestWithoutOrigin(t *testing.T) {
 	cfg := CORSConfig{
 		Enabled:      true,

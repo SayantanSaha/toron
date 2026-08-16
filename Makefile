@@ -55,15 +55,23 @@ build-windows-arm64:
 ## build-all: Cross-compiles binaries for macOS, Linux, and Windows (ARM64 & AMD64)
 build-all: build-darwin-arm64 build-linux-arm64 build-linux-amd64 build-windows-amd64 build-windows-arm64
 
-## install: Executes universal auto-installer (install.sh)
-install:
-	@echo "==> Running universal auto-installer..."
-	sudo ./install.sh
+ifeq ($(OS),Windows_NT)
+    INSTALL_CMD = cmd /c install.bat
+    UNINSTALL_CMD = cmd /c install.bat /uninstall
+else
+    INSTALL_CMD = sudo ./install.sh
+    UNINSTALL_CMD = sudo ./install.sh --uninstall
+endif
 
-## uninstall: Removes Toron binary, config (/etc/toron), and background services
+## install: Executes universal auto-installer (install.sh on Unix, install.bat on Windows)
+install:
+	@echo "==> Running auto-installer..."
+	$(INSTALL_CMD)
+
+## uninstall: Removes Toron binary, config, and background services
 uninstall:
 	@echo "==> Uninstalling Toron..."
-	sudo ./install.sh --uninstall
+	$(UNINSTALL_CMD)
 
 ## dummy: Compiles the dummy microservice cluster binary into bin/
 dummy:

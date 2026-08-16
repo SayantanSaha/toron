@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: toron-system
+  labels:
+    app.kubernetes.io/name: toron
+    app.kubernetes.io/part-of: toron-ingress
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: toron-ingress-sa
+  namespace: toron-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: toron-ingress-role
+rules:
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "ingressclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["services", "endpoints", "secrets", "pods"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: toron-ingress-binding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: toron-ingress-role
+subjects:
+  - kind: ServiceAccount
+    name: toron-ingress-sa
+    namespace: toron-system
+---
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: toron
+  annotations:
+    ingressclass.kubernetes.io/is-default-class: "true"
+spec:
+  controller: toron.io/ingress-controller

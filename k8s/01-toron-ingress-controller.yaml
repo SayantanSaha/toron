@@ -1,0 +1,77 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: toron-ingress-config
+  namespace: toron-system
+data:
+  config.yaml: |
+    server:
+      host: "0.0.0.0"
+      port: 8080
+      worker_pool_size: 64
+      read_timeout: 5s
+      write_timeout: 5s
+      idle_timeout: 30s
+    ingress:
+      enabled: true
+      ingress_class: "toron"
+      kube_apiserver: "https://kubernetes.default.svc"
+      service_account_dir: "/var/run/secrets/kubernetes.io/serviceaccount"
+      resync_period: 15s
+    logging:
+      level: "info"
+      format: "text"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toron-ingress-controller
+  namespace: toron-system
+  labels:
+    app: toron-ingress-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: toron-ingress-controller
+  template:
+    metadata:
+      labels:
+        app: toron-ingress-controller
+    spec:
+      serviceAccountName: toron-ingress-sa
+      containers:
+        - name: toron
+          image: toron:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-config"
+            - "/etc/toron/config.yaml"
+          ports:
+            - name: http
+              containerPort: 8080
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/toron/config.yaml
+              subPath: config.yaml
+      volumes:
+        - name: config-volume
+          configMap:
+            name: toron-ingress-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: toron-ingress-service
+  namespace: toron-system
+  labels:
+    app: toron-ingress-controller
+spec:
+  type: NodePort
+  selector:
+    app: toron-ingress-controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      nodePort: 30080

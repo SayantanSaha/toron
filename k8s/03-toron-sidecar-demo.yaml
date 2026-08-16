@@ -1,0 +1,91 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: toron-sidecar-config
+  namespace: demo-apps
+data:
+  config.yaml: |
+    server:
+      host: "0.0.0.0"
+      port: 15000               # Sidecar admin/management port (avoiding port 8080 used by app)
+      http3:
+        enabled: false
+    sidecar:
+      enabled: true
+      mode: "dual"              # Runs both Ingress (15006) and Egress (15001) proxies
+      ingress_port: 15006       # Inbound traffic listener for pod
+      egress_port: 15001        # Outbound traffic listener with weighted canary splits
+      app_port: 8080            # Target local container port (127.0.0.1:8080)
+      strict_mtls: false
+      traffic_splits:
+        - prefix: "/api"
+          backends:
+            - target: "http://user-service-v1.demo-apps.svc.cluster.local:8080"
+              weight: 80
+            - target: "http://user-service-v2.demo-apps.svc.cluster.local:8080"
+              weight: 20
+    proxy:
+      enabled: false
+    logging:
+      level: "info"
+      format: "text"
+  routes.yaml: |
+    proxy:
+      enabled: false
+      routes: []
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app-with-toron-sidecar
+  namespace: demo-apps
+  labels:
+    app: client-with-sidecar
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: client-with-sidecar
+  template:
+    metadata:
+      labels:
+        app: client-with-sidecar
+    spec:
+      containers:
+        # Main application container
+        - name: app
+          image: hashicorp/http-echo:latest
+          args:
+            - "-listen=:8080"
+            - "-text=Response from App Container with Toron Sidecar"
+          ports:
+            - containerPort: 8080
+
+        # Toron Service Mesh Sidecar container
+        - name: toron-sidecar
+          image: toron:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - "-config"
+            - "/etc/toron/config.yaml"
+            - "-routes"
+            - "/etc/toron/routes.yaml"
+          ports:
+            - name: sidecar-admin
+              containerPort: 15000
+            - name: sidecar-ingress
+              containerPort: 15006
+            - name: sidecar-egress
+              containerPort: 15001
+          volumeMounts:
+            - name: sidecar-config-volume
+              mountPath: /etc/toron/config.yaml
+              subPath: config.yaml
+            - name: sidecar-config-volume
+              mountPath: /etc/toron/routes.yaml
+              subPath: routes.yaml
+      volumes:
+        - name: sidecar-config-volume
+          configMap:
+            name: toron-sidecar-config
+

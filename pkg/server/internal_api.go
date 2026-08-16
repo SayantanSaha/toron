@@ -140,9 +140,27 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	r.GET("/internal/api/routes", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 
-		routesList := cfg.Routes
-		if routesList == nil {
-			routesList = make([]RouteInfo, 0)
+		routesList := append([]RouteInfo{}, cfg.Routes...)
+
+		if r != nil {
+			activeSnapshots := r.GetPrefixRoutes()
+			for _, snap := range activeSnapshots {
+				found := false
+				for _, existing := range routesList {
+					if existing.Host == snap.Host && existing.Prefix == snap.Prefix {
+						found = true
+						break
+					}
+				}
+				if !found && snap.Prefix != "" && snap.Prefix != "/metrics" && !strings.HasPrefix(snap.Prefix, "/internal/") {
+					routesList = append(routesList, RouteInfo{
+						Type:    snap.Type,
+						Host:    snap.Host,
+						Prefix:  snap.Prefix,
+						Headers: snap.Headers,
+					})
+				}
+			}
 		}
 
 		payload := map[string]interface{}{

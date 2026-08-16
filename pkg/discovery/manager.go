@@ -133,6 +133,7 @@ func (m *Manager) syncInitialContainers(ctx context.Context) {
 	providers := m.providers
 	m.mu.RUnlock()
 
+	activeIDs := make(map[string]bool)
 	for _, p := range providers {
 		containers, err := p.ListContainers(ctx)
 		if err != nil {
@@ -140,8 +141,25 @@ func (m *Manager) syncInitialContainers(ctx context.Context) {
 			continue
 		}
 		for _, c := range containers {
-			m.handleContainerStart(c)
+			if _, ok := ParseContainerLabels(c, m.cfg.DefaultWeight); ok {
+				activeIDs[c.ID] = true
+				m.handleContainerStart(c)
+			}
 		}
+	}
+
+	// Purge any previously active containers that are no longer running
+	m.mu.Lock()
+	var stoppedIDs []string
+	for id := range m.activeRoutes {
+		if !activeIDs[id] {
+			stoppedIDs = append(stoppedIDs, id)
+		}
+	}
+	m.mu.Unlock()
+
+	for _, id := range stoppedIDs {
+		m.handleContainerStop(id)
 	}
 }
 
@@ -222,5 +240,8 @@ func (m *Manager) handleContainerStop(containerID string) {
 
 	delete(m.activeRoutes, containerID)
 	log.Printf("[DISCOVERY] Deregistered OCI container route: %s (%s)", route.ContainerName, containerID)
-	// Router targets will naturally adjust on sync
+
+	if m.router != nil {
+		m.router.RemovePrefixRoute(route.Host, route.Prefix)
+	}
 }

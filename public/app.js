@@ -84,6 +84,8 @@ function initHealthMatrix() {
   }
 }
 
+let TARGET_HEALTH_MAP = {};
+
 async function probeAllNodes() {
   try {
     const res = await fetch('/internal/api/upstreams/health');
@@ -92,9 +94,17 @@ async function probeAllNodes() {
     if (data.upstreams && Array.isArray(data.upstreams)) {
       data.upstreams.forEach(svc => {
         const badge = document.getElementById(`badge-status-${svc.id}`);
+        const isHealthy = svc.status === 'CLOSED' || svc.status === 'HEALTHY' || svc.status === 'OK';
+        TARGET_HEALTH_MAP[svc.port] = isHealthy;
+
         if (badge) {
-          badge.textContent = svc.status || 'HEALTHY';
-          badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium traefik-badge-emerald';
+          if (isHealthy) {
+            badge.textContent = 'HEALTHY';
+            badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-medium traefik-badge-emerald';
+          } else {
+            badge.textContent = 'UNREACHABLE';
+            badge.className = 'text-[10px] px-1.5 py-0.5 rounded font-bold traefik-badge-rose';
+          }
         }
       });
     }
@@ -106,6 +116,8 @@ async function probeAllNodes() {
 // --- 3. DYNAMIC STATUS & ROUTE POLLING ---
 async function pollStatus() {
   try {
+    await probeAllNodes();
+
     const res = await fetch('/internal/api/status');
     if (!res.ok) return;
     const data = await res.json();
@@ -148,7 +160,7 @@ async function fetchAndRenderRoutes() {
     });
 
     const statOci = document.getElementById('stat-oci-count');
-    if (statOci) statOci.textContent = `${ociCount > 0 ? ociCount : 3} Containers`;
+    if (statOci) statOci.textContent = `${ociCount} Containers`;
 
     container.innerHTML = data.routes.map(r => {
       const isAutoDiscovered = r.host === 'container.toron.local' || r.host === 'auto-discovered.local' || (r.host && r.host.includes('.local'));
@@ -165,18 +177,32 @@ async function fetchAndRenderRoutes() {
       const headerHTML = r.headers ? Object.entries(r.headers).map(([k, v]) => `<span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">Header: <code class="text-indigo-400">${k}: ${v}</code></span>`).join(' ') : '';
 
       const targetsHTML = (r.targets && r.targets.length > 0)
-        ? r.targets.map(t => `
-            <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 flex items-center justify-between">
-              <div>
-                <div class="text-xs font-mono text-white">${t}</div>
-                <div class="text-[11px] text-slate-400">${isAutoDiscovered ? 'OCI Microservice Container' : 'Upstream Target'}</div>
+        ? r.targets.map(t => {
+            let portStr = '';
+            const match = t.match(/:(\d+)/);
+            if (match) portStr = match[1];
+
+            const isHealthy = portStr ? (TARGET_HEALTH_MAP[portStr] !== false) : true;
+            const targetBadge = isHealthy
+              ? `<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded traefik-badge-emerald">
+                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  Healthy
+                 </span>`
+              : `<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded traefik-badge-rose font-bold">
+                  <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                  Unreachable
+                 </span>`;
+
+            return `
+              <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 flex items-center justify-between">
+                <div>
+                  <div class="text-xs font-mono text-white">${t}</div>
+                  <div class="text-[11px] text-slate-400">${isAutoDiscovered ? 'OCI Microservice Container' : 'Upstream Target'}</div>
+                </div>
+                ${targetBadge}
               </div>
-              <span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded traefik-badge-emerald">
-                <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                Healthy
-              </span>
-            </div>
-          `).join('')
+            `;
+          }).join('')
         : `<div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-sky-400 font-mono">Dynamic Upstream Engine Stream</div>`;
 
       return `

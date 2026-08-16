@@ -17,7 +17,8 @@ const (
 // ParseContainerLabels extracts Toron route configuration from container labels or annotations.
 // Returns (route, true) if toron.enable is true and valid port information is present; otherwise (nil, false).
 func ParseContainerLabels(container Container, defaultWeight int) (*DiscoveredRoute, bool) {
-	if container.Labels == nil {
+	// Filter out non-running containers (e.g. exited, stopped, created, dead)
+	if container.State != "" && container.State != "running" {
 		return nil, false
 	}
 

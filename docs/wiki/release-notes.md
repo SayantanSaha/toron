@@ -1,5 +1,49 @@
 # Release Notes
 
+## 2026-08-16 - Toron v1.4.0 Feature Release (Prototype 39: REST-to-gRPC Transcoding Engine)
+
+### Milestone Summary
+- **REST-to-gRPC Transcoding Engine (`pkg/transcoder`)**: Implemented direct JSON HTTP REST (`GET /v1/users/:id`) to binary Protobuf HTTP/2 gRPC (`POST /user.UserService/GetUser`) request and response translation (`TASK-049`, `REQ-049`).
+- **Zero External Dependencies**: Pure Go stdlib implementation using `encoding/binary`, `encoding/json`, `net/http`, and `toron/pkg/httpparser` without protobuf compiler tools.
+- **gRPC 5-Byte Wire Framing**: Automated encoding and decoding of gRPC wire frames (`[0x00][4-byte length] + payload`).
+- **gRPC Status Mapping**: Automatic conversion of gRPC trailer status codes (`grpc-status: 0` -> 200 OK, `grpc-status: 5` -> 404 Not Found, `grpc-status: 16` -> 401 Unauthorized) to standard HTTP status codes.
+
+### Related Tasks
+- `TASK-049`: Implement REST-to-gRPC Transcoding Engine
+
+## 2026-08-16 - Toron v1.3.0 Feature Release (Prototype 38: Service Mesh Sidecar Mode)
+
+### Milestone Summary
+- **Service Mesh Sidecar Mode (`pkg/sidecar`)**: Implemented lightweight pod-level proxy mode enforcing pod-to-pod Mutual TLS (mTLS) encryption and dynamic weighted traffic splitting (`TASK-048`, `REQ-048`).
+- **Zero External Dependencies**: Pure Go stdlib HTTP & TLS client/server listeners operating on dedicated local ports (`15006` ingress, `15001` egress).
+- **Strict Mutual TLS**: Support for `RequireAndVerifyClientCert` with Root CA validation pools (`ca_file`).
+- **Weighted Traffic Splitting**: Thread-safe atomic weighted round-robin selector (`WeightedSplitter`) for canary traffic distribution (e.g. 80/20 ratio).
+
+### Related Tasks
+- `TASK-048`: Implement Service Mesh Sidecar Mode Engine
+
+## 2026-08-16 - Toron v1.2.0 Feature Release (Prototype 37: Native Kubernetes Ingress Controller)
+
+### Milestone Summary
+- **Native Zero-Dependency Kubernetes Ingress Controller (`pkg/ingress`)**: Implemented Kubernetes `networking.k8s.io/v1` Ingress Controller translating `Ingress`, `Service`, `Endpoints`, and TLS `Secret` resources into Toron's core routing matrix (`TASK-047`, `REQ-047`).
+- **Zero External Dependencies**: Pure Go stdlib HTTP & TLS client communicating with Kubernetes API server without importing `k8s.io/client-go`.
+- **In-Cluster Auto-Authentication**: Automated ServiceAccount bearer token and Root CA certificate loading from `/var/run/secrets/kubernetes.io/serviceaccount/`.
+- **Real-Time Endpoint Watching**: Streaming watch worker (`watch=true`) dynamically updates load balancing targets as pod IP endpoints scale or shift.
+
+### Related Tasks
+- `TASK-047`: Implement Native Kubernetes Ingress Controller Engine
+
+## 2026-08-16 - Toron v1.1.0 Feature Release (Prototype 36: Vendor-Agnostic OCI Container Auto-Discovery Engine)
+
+### Milestone Summary
+- **Vendor-Agnostic OCI Container Auto-Discovery Engine (`pkg/discovery`)**: Implemented dynamic container discovery engine monitoring Unix domain sockets across Docker Engine, Podman, Finch, and Nerdctl (`TASK-046`, `REQ-046`).
+- **Zero External Dependencies**: Pure Go stdlib HTTP transport (`net.DialContext("unix", ...)`) over Unix domain sockets without 3rd-party Docker or Containerd SDKs.
+- **Unified `toron.*` Metadata Label Taxonomy**: Automatic extraction of container routing metadata (`toron.enable`, `toron.host`, `toron.prefix`, `toron.port`, `toron.weight`, `toron.health_check`).
+- **Real-Time Lifecycle Event Streaming**: Background worker streams container `start`, `die`, and `stop` events and dynamically inserts/removes upstreams from `router.Router` with zero downtime.
+
+### Related Tasks
+- `TASK-046`: Implement Vendor-Agnostic OCI Container Auto-Discovery Engine
+
 ## 2026-08-16 - Toron v1.0.0 Official Release (Feature Freeze Milestone)
 
 ### Milestone Summary

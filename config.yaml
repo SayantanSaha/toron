@@ -114,6 +114,49 @@ server:
       output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
       format: "json"          # Output format (json)
 
+# Vendor-Agnostic OCI Container Auto-Discovery Engine
+discovery:
+  enabled: true             # Enable automatic OCI container discovery over Unix socket
+  engine: "auto"            # Runtime engine auto-detection ("auto", "docker", "podman")
+  socket_path: "auto"        # Unix domain socket path ("auto" probes standard paths)
+  poll_interval: 10s         # Background periodic scan interval
+  default_weight: 1          # Default load balancing weight for discovered upstreams
+
+# Native Kubernetes Ingress Controller Engine
+ingress:
+  enabled: false            # Enable native Kubernetes Ingress Controller
+  ingress_class: "toron"    # Ingress class filter
+  kube_apiserver: "https://kubernetes.default.svc"
+  service_account_dir: "/var/run/secrets/kubernetes.io/serviceaccount"
+  resync_period: 30s        # Background periodic resync interval
+
+# Service Mesh Sidecar Mode Engine
+sidecar:
+  enabled: false            # Enable Service Mesh Sidecar mode
+  mode: "dual"              # Operational mode ("ingress", "egress", or "dual")
+  ingress_port: 15006       # Pod inbound mTLS listener port
+  egress_port: 15001        # Pod outbound proxy listener port
+  app_port: 8080            # Local app container target port (127.0.0.1:8080)
+  strict_mtls: false        # Enforce RequireAndVerifyClientCert mTLS
+  traffic_splits:           # Weighted canary traffic splitting
+    - prefix: "/api"
+      backends:
+        - target: "http://service-v1:8080"
+          weight: 80
+        - target: "http://service-v2:8080"
+          weight: 20
+
+# REST-to-gRPC Transcoding Engine
+transcoder:
+  enabled: true             # Enable REST JSON to binary Protobuf gRPC transcoding
+  routes:
+    - http_method: "GET"
+      http_path: "/v1/users/:id"
+      grpc_method: "/user.UserService/GetUser"
+      upstream_url: "http://localhost:9005"
+      field_mappings:
+        id: "userId"
+
 # Logging and Telemetry Output Settings
 logging:
   level: "info"

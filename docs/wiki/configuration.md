@@ -163,6 +163,49 @@ server:
       output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
       format: "json"
 
+# Vendor-Agnostic OCI Container Auto-Discovery Engine
+discovery:
+  enabled: true
+  engine: "auto"              # Options: "auto", "docker", "podman"
+  socket_path: "auto"          # Auto-probes standard socket locations if "auto"
+  poll_interval: 10s           # Fallback periodic scan interval
+  default_weight: 1            # Default round-robin balancing weight
+
+# Native Kubernetes Ingress Controller Engine
+ingress:
+  enabled: true
+  ingress_class: "toron"                            # Target ingress class name
+  kube_apiserver: "https://kubernetes.default.svc"   # K8s API server endpoint
+  service_account_dir: "/var/run/secrets/kubernetes.io/serviceaccount"
+  resync_period: 30s                                # Fallback periodic resync interval
+
+# Service Mesh Sidecar Mode Engine
+sidecar:
+  enabled: true
+  mode: "dual"              # Operational mode: "ingress", "egress", or "dual"
+  ingress_port: 15006       # Pod inbound mTLS listener port
+  egress_port: 15001        # Pod outbound proxy listener port
+  app_port: 8080            # Local app container target port (127.0.0.1:8080)
+  strict_mtls: true         # Enforce RequireAndVerifyClientCert mTLS
+  traffic_splits:           # Weighted canary traffic splitting
+    - prefix: "/api"
+      backends:
+        - target: "http://service-v1:8080"
+          weight: 80
+        - target: "http://service-v2:8080"
+          weight: 20
+
+# REST-to-gRPC Transcoding Engine
+transcoder:
+  enabled: true
+  routes:
+    - http_method: "GET"
+      http_path: "/v1/users/:id"
+      grpc_method: "/user.UserService/GetUser"
+      upstream_url: "http://localhost:9005"
+      field_mappings:
+        id: "userId"
+
 logging:
   level: "info"
   format: "text"

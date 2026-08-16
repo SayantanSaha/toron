@@ -494,3 +494,49 @@ func RecoveryMiddleware() MiddlewareFunc {
 		}
 	}
 }
+
+// RouteSnapshot represents a thread-safe view of a registered prefix route.
+type RouteSnapshot struct {
+	Type    string            `json:"type"`
+	Host    string            `json:"host,omitempty"`
+	Prefix  string            `json:"prefix"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// GetPrefixRoutes returns a thread-safe snapshot of all active prefix routes.
+func (r *Router) GetPrefixRoutes() []RouteSnapshot {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	snapshots := make([]RouteSnapshot, 0, len(r.prefixRoutes))
+	for _, pr := range r.prefixRoutes {
+		snapshots = append(snapshots, RouteSnapshot{
+			Type:    "upstream",
+			Host:    pr.host,
+			Prefix:  pr.prefix,
+			Headers: pr.headers,
+		})
+	}
+	return snapshots
+}
+
+// RemovePrefixRoute removes matching host and prefix routes from the prefix routing table.
+func (r *Router) RemovePrefixRoute(host, prefix string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	cleanHost := strings.ToLower(strings.TrimSpace(host))
+	cleanPrefix := "/" + strings.Trim(prefix, "/")
+	if cleanPrefix == "/" {
+		cleanPrefix = ""
+	}
+
+	filtered := make([]prefixRoute, 0, len(r.prefixRoutes))
+	for _, pr := range r.prefixRoutes {
+		if pr.host == cleanHost && pr.prefix == cleanPrefix {
+			continue
+		}
+		filtered = append(filtered, pr)
+	}
+	r.prefixRoutes = filtered
+}

@@ -11,10 +11,14 @@ import (
 
 // AppConfig is the root configuration structure for Toron.
 type AppConfig struct {
-	Server  ServerConfig  `yaml:"server" json:"server"`
-	Static  StaticConfig  `yaml:"static" json:"static"`
-	Proxy   ProxyConfig   `yaml:"proxy" json:"proxy"`
-	Logging LoggingConfig `yaml:"logging" json:"logging"`
+	Server     ServerConfig     `yaml:"server" json:"server"`
+	Static     StaticConfig     `yaml:"static" json:"static"`
+	Proxy      ProxyConfig      `yaml:"proxy" json:"proxy"`
+	Logging    LoggingConfig    `yaml:"logging" json:"logging"`
+	Discovery  DiscoveryConfig  `yaml:"discovery" json:"discovery"`
+	Ingress    IngressConfig    `yaml:"ingress" json:"ingress"`
+	Sidecar    SidecarConfig    `yaml:"sidecar" json:"sidecar"`
+	Transcoder TranscoderConfig `yaml:"transcoder" json:"transcoder"`
 }
 
 // HTTP2Config captures HTTP/2 protocol settings.
@@ -74,6 +78,66 @@ type CacheConfig struct {
 	DefaultTTL     time.Duration `yaml:"default_ttl" json:"default_ttl"`
 	MaxEntries     int           `yaml:"max_entries" json:"max_entries"`
 	MaxPayloadSize int           `yaml:"max_payload_size" json:"max_payload_size"`
+}
+
+// DiscoveryConfig captures OCI container auto-discovery settings.
+type DiscoveryConfig struct {
+	Enabled       bool          `yaml:"enabled" json:"enabled"`
+	Engine        string        `yaml:"engine" json:"engine"`
+	SocketPath    string        `yaml:"socket_path" json:"socket_path"`
+	PollInterval  time.Duration `yaml:"poll_interval" json:"poll_interval"`
+	DefaultWeight int           `yaml:"default_weight" json:"default_weight"`
+}
+
+// IngressConfig captures native Kubernetes Ingress Controller settings.
+type IngressConfig struct {
+	Enabled           bool          `yaml:"enabled" json:"enabled"`
+	IngressClass      string        `yaml:"ingress_class" json:"ingress_class"`
+	KubeAPIServer     string        `yaml:"kube_apiserver" json:"kube_apiserver"`
+	KubeConfigPath    string        `yaml:"kubeconfig_path" json:"kubeconfig_path"`
+	ServiceAccountDir string        `yaml:"service_account_dir" json:"service_account_dir"`
+	ResyncPeriod      time.Duration `yaml:"resync_period" json:"resync_period"`
+}
+
+// SidecarConfig captures Service Mesh Sidecar proxy mode settings.
+type SidecarConfig struct {
+	Enabled       bool                `yaml:"enabled" json:"enabled"`
+	Mode          string              `yaml:"mode" json:"mode"` // "ingress", "egress", "dual"
+	IngressPort   int                 `yaml:"ingress_port" json:"ingress_port"`
+	EgressPort    int                 `yaml:"egress_port" json:"egress_port"`
+	AppPort       int                 `yaml:"app_port" json:"app_port"`
+	StrictmTLS    bool                `yaml:"strict_mtls" json:"strict_mtls"`
+	CertFile      string              `yaml:"cert_file" json:"cert_file"`
+	KeyFile       string              `yaml:"key_file" json:"key_file"`
+	CAFile        string              `yaml:"ca_file" json:"ca_file"`
+	TrafficSplits []TrafficSplitRoute `yaml:"traffic_splits" json:"traffic_splits"`
+}
+
+// TrafficSplitRoute captures subpath weighted traffic splitting (canary releases).
+type TrafficSplitRoute struct {
+	Prefix   string         `yaml:"prefix" json:"prefix"`
+	Backends []SplitBackend `yaml:"backends" json:"backends"`
+}
+
+// SplitBackend defines a target URL and integer weight.
+type SplitBackend struct {
+	Target string `yaml:"target" json:"target"`
+	Weight int    `yaml:"weight" json:"weight"`
+}
+
+// TranscoderConfig captures REST JSON to gRPC Protobuf transcoding rules.
+type TranscoderConfig struct {
+	Enabled bool                  `yaml:"enabled" json:"enabled"`
+	Routes  []TranscoderRouteRule `yaml:"routes" json:"routes"`
+}
+
+// TranscoderRouteRule captures a REST HTTP route to binary gRPC RPC mapping.
+type TranscoderRouteRule struct {
+	HTTPMethod    string            `yaml:"http_method" json:"http_method"`
+	HTTPPath      string            `yaml:"http_path" json:"http_path"`
+	GRPCMethod    string            `yaml:"grpc_method" json:"grpc_method"`
+	UpstreamURL   string            `yaml:"upstream_url" json:"upstream_url"`
+	FieldMappings map[string]string `yaml:"field_mappings" json:"field_mappings"`
 }
 
 // JWTConfig captures JWT authentication settings.

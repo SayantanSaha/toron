@@ -105,7 +105,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 
 		payload := map[string]interface{}{
 			"server":           "Toron",
-			"version":          "1.0.0",
+			"version":          "1.5.0",
 			"uptime":           "healthy",
 			"engine":           "event-driven",
 			"port":             cfg.Port,

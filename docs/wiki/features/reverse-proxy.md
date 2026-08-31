@@ -34,24 +34,25 @@ Toron includes a native **Reverse Proxy** engine (`pkg/proxy`), allowing it to r
 - **Proxy Header Injection**: Injects standard origin headers (`X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `X-Real-IP`).
 - **Resilient Fallback**: Returns `502 Bad Gateway` if the upstream server is offline or times out.
 
-## Configuration in `config.yaml`
+## Configuration in `routes.yaml`
 
 ```yaml
-proxy:
-  enabled: true
-  routes:
-    # Header routing + Round-Robin load balancing across ports 9001-9003
-    - prefix: "/api"
-      headers:
-        X-Version: "v2"
-      algorithm: "round_robin"
-      targets:
-        - "http://localhost:9001"
-        - "http://localhost:9002"
-        - "http://localhost:9003"
-    # Path prefix routing + Single target on port 9008
-    - prefix: "/services/auth"
-      target: "http://localhost:9008"
+routes:
+  # Header routing + Round-Robin load balancing across ports 9001-9003
+  - type: "upstream"
+    prefix: "/api"
+    headers:
+      X-Version: "v2"
+    algorithm: "round_robin"
+    targets:
+      - "http://localhost:9001"
+      - "http://localhost:9002"
+      - "http://localhost:9003"
+
+  # Path prefix routing + Single target on port 9008
+  - type: "upstream"
+    prefix: "/services/auth"
+    target: "http://localhost:9008"
 ```
 
 ## Programmatic Route Registration

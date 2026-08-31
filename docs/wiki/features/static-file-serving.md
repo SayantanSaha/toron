@@ -36,14 +36,16 @@ Toron provides native static file serving capabilities, allowing developers to h
 
 ## Configuration Example
 
-In `config.yaml`:
+In `routes.yaml`:
 
 ```yaml
-static:
-  enabled: true
-  prefix: "/"
-  dir: "./public"
+routes:
+  - type: "static"
+    prefix: "/internal/dashboard"
+    dir: "./public"
 ```
+
+*(Alternatively, legacy static file hosting can also be configured under `static:` in `config.yaml`)*
 
 ## Programmatic Route Registration
 

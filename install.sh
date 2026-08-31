@@ -310,7 +310,7 @@ EOF
             local newsyslog_file="/etc/newsyslog.d/toron.conf"
             log_info "Writing newsyslog configuration at ${newsyslog_file}..."
 
-            cat <<EOF > "${newsyslog_file}"
+            cat <<'EOF' > "${newsyslog_file}"
 # logfilename                      [owner:group]  mode count size when  flags [/pid_file] [sig_num]
 /var/log/toron/*.log                              644  7     *    $D0   Z
 EOF

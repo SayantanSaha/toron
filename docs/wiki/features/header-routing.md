@@ -34,20 +34,21 @@ Toron supports **Header-Based Routing**, allowing requests to be routed to speci
 - **Canary & A/B Testing**: Direct requests with `X-Canary: true` to experimental deployment targets.
 - **Multi-Tenant Routing**: Direct `X-Tenant-ID: acme` requests to isolated database or server clusters.
 
-## Configuration in `config.yaml`
+## Configuration in `routes.yaml`
 
 ```yaml
-proxy:
-  enabled: true
-  routes:
-    - prefix: "/api"
-      headers:
-        X-Version: "v2"
-      target: "http://localhost:9092"
-    - prefix: "/api"
-      headers:
-        X-Version: "v1"
-      target: "http://localhost:9091"
+routes:
+  - type: "upstream"
+    prefix: "/api"
+    headers:
+      X-Version: "v2"
+    target: "http://localhost:9092"
+
+  - type: "upstream"
+    prefix: "/api"
+    headers:
+      X-Version: "v1"
+    target: "http://localhost:9091"
 ```
 
 ## Programmatic Route Registration

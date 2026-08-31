@@ -36,19 +36,18 @@ Toron includes an **Active Health Checker** and **3-State Circuit Breaker** (`pk
 - **`Open` (Tripped)**: Target has reached $N$ consecutive failures. Requests immediately skip this target.
 - **`HalfOpen` (Probing Recovery)**: After `cooldown_period` elapses, trial probes test target recovery. If successful, state resets to `Closed`.
 
-## Configuration in `config.yaml`
+## Configuration in `routes.yaml`
 
 ```yaml
-proxy:
-  enabled: true
-  routes:
-    - prefix: "/api"
-      algorithm: "round_robin"
-      targets:
-        - "http://localhost:9001"
-        - "http://localhost:9002"
-      health_check_path: "/health"
-      health_check_interval: 5s
-      consecutive_failures: 3
-      cooldown_period: 10s
+routes:
+  - type: "upstream"
+    prefix: "/api"
+    algorithm: "round_robin"
+    targets:
+      - "http://localhost:9001"
+      - "http://localhost:9002"
+    health_check_path: "/health"
+    health_check_interval: 5s
+    consecutive_failures: 3
+    cooldown_period: 10s
 ```

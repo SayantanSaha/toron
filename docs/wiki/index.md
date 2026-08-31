@@ -28,9 +28,9 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.0.0 Official Release)
+# Toron Documentation Wiki (v1.5.0 Release)
 
-Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go. **Toron v1.0.0 is officially feature-frozen** spanning Prototypes 1 through 35.
+Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
 ## Wiki Navigation
 
@@ -54,7 +54,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [OCI Container Auto-Discovery](./features/oci-container-auto-discovery.md) – Vendor-agnostic Docker & Podman Unix socket container auto-discovery.
 - [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding and proxy headers.
 - [gRPC Edge Gateway & Health Probing](./features/grpc-gateway.md) – Native `grpc.health.v1` probing and HTTP/2 trailers preservation.
-- [Load Balancing & Session Affinity](./features/load-balancing.md) – Round-robin, random, sticky cookie, and IP hash balancers.
+- [Advanced Load Balancing Engine](./features/advanced-load-balancing.md) – 8 strategies: round-robin, weighted, least conn, least latency, sticky cookie, and IP hash.
 - [Circuit Breaker & Health Checks](./features/circuit-breaker.md) – 3-state circuit breaker and active upstream health probing.
 - [Header-Based HTTP Routing](./features/header-routing.md) – API versioning and conditional header routing.
 - [Domain-Based Virtual Host Routing](./features/domain-routing.md) – Multi-tenant host header dispatching.
@@ -76,4 +76,4 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (Prototypes 1–26).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.0).

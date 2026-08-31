@@ -35,7 +35,7 @@ related_to:
 
 ## Overview
 
-Toron utilizes a decoupled dual-file YAML configuration architecture separating infrastructure parameters ([`config.yaml`](file:///D:/Work/server/config.yaml)) from application routing rules ([`routes.yaml`](file:///D:/Work/server/routes.yaml)).
+Toron utilizes a decoupled dual-file YAML configuration architecture separating infrastructure parameters ([`config.yaml`](../../config.yaml)) from application routing rules ([`routes.yaml`](../../routes.yaml)).
 
 ## Specifying Configuration Files
 
@@ -52,7 +52,7 @@ If no flags are passed, Toron automatically checks for `config.yaml` and `routes
 Validate YAML configuration syntax before starting listeners:
 
 ```bash
-toron.exe -t
+toron -t
 ```
 
 ---
@@ -99,12 +99,14 @@ server:
     cache_dir: "./certs"
     challenge_type: "http-01" # "http-01" or "tls-alpn-01"
 
-  # Transparent Response Compression (Gzip & Deflate)
+  # Transparent Response Compression (Zstd, Brotli, Gzip & Deflate)
   compression:
     enabled: true
     min_length: 512
     level: -1
     encodings:
+      - "zstd"
+      - "br"
       - "gzip"
       - "deflate"
 
@@ -139,7 +141,7 @@ server:
     expose_headers:
       - "X-Cache"
       - "X-Toron-WAF-Anomaly-Score"
-    allow_credentials: true
+    allow_credentials: false
     max_age: 86400
 
   # Web Application Firewall (WAF) & Layer 7 Threat Inspection
@@ -173,7 +175,7 @@ discovery:
 
 # Native Kubernetes Ingress Controller Engine
 ingress:
-  enabled: true
+  enabled: false             # Enable native Kubernetes Ingress Controller
   ingress_class: "toron"                            # Target ingress class name
   kube_apiserver: "https://kubernetes.default.svc"   # K8s API server endpoint
   service_account_dir: "/var/run/secrets/kubernetes.io/serviceaccount"
@@ -181,12 +183,12 @@ ingress:
 
 # Service Mesh Sidecar Mode Engine
 sidecar:
-  enabled: true
+  enabled: false             # Enable Service Mesh Sidecar mode
   mode: "dual"              # Operational mode: "ingress", "egress", or "dual"
   ingress_port: 15006       # Pod inbound mTLS listener port
   egress_port: 15001        # Pod outbound proxy listener port
   app_port: 8080            # Local app container target port (127.0.0.1:8080)
-  strict_mtls: true         # Enforce RequireAndVerifyClientCert mTLS
+  strict_mtls: false        # Enforce RequireAndVerifyClientCert mTLS
   traffic_splits:           # Weighted canary traffic splitting
     - prefix: "/api"
       backends:

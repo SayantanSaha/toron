@@ -200,6 +200,9 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `targets` | `list` | List of upstream target URLs for load balancing clusters |
 | `algorithm` | `string` | Balancing algorithm: `round_robin`, `weighted_round_robin`, `least_conn`, `weighted_least_conn`, `least_latency`, `random`, `sticky_cookie`, `ip_hash` |
 | `sticky_cookie_name` | `string` | Cookie name used for session affinity (default: `"TORON_STICKY"`) |
+| `strip_prefix` | `boolean` | Strip route prefix from URL path before forwarding upstream (default: `true`) |
+| `rewrite_redirects` | `boolean` | Intercept and rewrite 3xx `Location` redirect URLs to include route prefix (default: `true`) |
+| `rewrite_cookie_path` | `boolean` | Rewrite `Set-Cookie: Path=/` attributes to `Path=<prefix>` (default: `true`) |
 | `rate_limit` | `string` | Token bucket rate limit spec (e.g. `"100/min"`, `"10/s"`) |
 | `health_check_type` | `string` | Health probe protocol: `"http"` (default) or `"grpc"` |
 | `health_check_path` | `string` | HTTP endpoint path for active health probes (e.g. `"/health"`) |

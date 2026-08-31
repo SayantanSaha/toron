@@ -365,6 +365,9 @@ func main() {
 					CooldownPeriod:      pr.CooldownPeriod,
 					RateLimit:           pr.RateLimit,
 					StickyCookieName:    pr.StickyCookieName,
+					StripPrefix:         pr.StripPrefix,
+					RewriteRedirects:    pr.RewriteRedirects,
+					RewriteCookiePath:   pr.RewriteCookiePath,
 					Auth:                authCfg,
 					WAF:                 pr.WAF,
 				}

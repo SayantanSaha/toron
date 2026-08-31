@@ -248,6 +248,9 @@ type ProxyRouteConfig struct {
 	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
 	RateLimit           string            `yaml:"rate_limit" json:"rate_limit"`
 	StickyCookieName    string            `yaml:"sticky_cookie_name" json:"sticky_cookie_name"`
+	StripPrefix         *bool             `yaml:"strip_prefix,omitempty" json:"strip_prefix,omitempty"`
+	RewriteRedirects    *bool             `yaml:"rewrite_redirects,omitempty" json:"rewrite_redirects,omitempty"`
+	RewriteCookiePath   *bool             `yaml:"rewrite_cookie_path,omitempty" json:"rewrite_cookie_path,omitempty"`
 	Auth                AuthConfig            `yaml:"auth" json:"auth"`
 	TLS                 RouteTLSConfig        `yaml:"tls" json:"tls"`
 	CORS                CORSConfig            `yaml:"cors" json:"cors"`
@@ -359,6 +362,30 @@ func (p *ProxyRouteConfig) GetAlgorithm() string {
 		return "round_robin"
 	}
 	return strings.TrimSpace(p.Algorithm)
+}
+
+// ShouldStripPrefix returns true if the route prefix should be stripped before forwarding (default: true).
+func (p *ProxyRouteConfig) ShouldStripPrefix() bool {
+	if p.StripPrefix != nil {
+		return *p.StripPrefix
+	}
+	return true
+}
+
+// ShouldRewriteRedirects returns true if 3xx redirect Location headers should be rewritten to include prefix (default: true).
+func (p *ProxyRouteConfig) ShouldRewriteRedirects() bool {
+	if p.RewriteRedirects != nil {
+		return *p.RewriteRedirects
+	}
+	return true
+}
+
+// ShouldRewriteCookiePath returns true if Set-Cookie Path attributes should be rewritten to include prefix (default: true).
+func (p *ProxyRouteConfig) ShouldRewriteCookiePath() bool {
+	if p.RewriteCookiePath != nil {
+		return *p.RewriteCookiePath
+	}
+	return true
 }
 
 // LoggingConfig captures logging settings.

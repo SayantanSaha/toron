@@ -390,9 +390,12 @@ func NewLoadBalancerWithOptions(algo Algorithm, targets []*UpstreamTarget, cooki
 
 // ReverseProxy handles proxying HTTP requests to upstream target URL(s).
 type ReverseProxy struct {
-	TargetURL *url.URL     // Single primary target (for backward compatibility)
-	Balancer  LoadBalancer // Load balancer interface for target selection
-	Client    *http.Client
+	TargetURL         *url.URL     // Single primary target (for backward compatibility)
+	Balancer          LoadBalancer // Load balancer interface for target selection
+	Client            *http.Client
+	StripPrefix       bool
+	RewriteRedirects  bool
+	RewriteCookiePath bool
 }
 
 // NewReverseProxy creates a ReverseProxy instance for a single target URL string.
@@ -413,6 +416,9 @@ type ProxyOptions struct {
 	CooldownPeriod      time.Duration
 	RateLimit           string
 	StickyCookieName    string
+	StripPrefix         *bool
+	RewriteRedirects    *bool
+	RewriteCookiePath   *bool
 	Auth                any
 	WAF                 any
 }
@@ -462,10 +468,26 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		return nil, err
 	}
 
+	stripPrefix := true
+	if opts.StripPrefix != nil {
+		stripPrefix = *opts.StripPrefix
+	}
+	rewriteRedirects := true
+	if opts.RewriteRedirects != nil {
+		rewriteRedirects = *opts.RewriteRedirects
+	}
+	rewriteCookiePath := true
+	if opts.RewriteCookiePath != nil {
+		rewriteCookiePath = *opts.RewriteCookiePath
+	}
+
 	return &ReverseProxy{
-		TargetURL: upstreamTargets[0].URL,
-		Balancer:  lb,
-		Client:    client,
+		TargetURL:         upstreamTargets[0].URL,
+		Balancer:          lb,
+		Client:            client,
+		StripPrefix:       stripPrefix,
+		RewriteRedirects:  rewriteRedirects,
+		RewriteCookiePath: rewriteCookiePath,
 	}, nil
 }
 
@@ -513,7 +535,7 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 
 	targetURL := targetNode.URL
 	relPath := req.Path
-	if prefix != "" {
+	if p.StripPrefix && prefix != "" {
 		relPath = strings.TrimPrefix(req.Path, prefix)
 	}
 	if relPath == "" {
@@ -555,9 +577,18 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 
 	// Inject X-Forwarded-* headers
 	outReq.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
-	outReq.Header.Set("X-Forwarded-Proto", "http")
+	proto := "http"
+	if req.Header.Get("X-Forwarded-Proto") != "" {
+		proto = req.Header.Get("X-Forwarded-Proto")
+	} else if strings.EqualFold(req.Proto, "https") || req.Proto == "HTTP/2.0" || req.Proto == "HTTP/3.0" {
+		proto = "https"
+	}
+	outReq.Header.Set("X-Forwarded-Proto", proto)
 	if clientIP := req.Header.Get("X-Real-IP"); clientIP != "" {
 		outReq.Header.Set("X-Forwarded-For", clientIP)
+	}
+	if prefix != "" {
+		outReq.Header.Set("X-Forwarded-Prefix", prefix)
 	}
 
 	// Propagate / Inject W3C traceparent header
@@ -586,6 +617,24 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	for key, values := range outResp.Header {
 		for _, val := range values {
 			res.Header.Add(key, val)
+		}
+	}
+
+	// Intercept and rewrite 3xx redirects (Location header) if enabled
+	if p.RewriteRedirects && prefix != "" && outResp.StatusCode >= 300 && outResp.StatusCode < 400 {
+		if loc := res.Header.Get("Location"); loc != "" {
+			res.Header.Set("Location", RewriteRedirectLocation(loc, prefix, targetURL, req))
+		}
+	}
+
+	// Intercept and rewrite Set-Cookie Path if enabled
+	if p.RewriteCookiePath && prefix != "" {
+		if cookies, ok := res.Header["set-cookie"]; ok && len(cookies) > 0 {
+			rewritten := make([]string, len(cookies))
+			for i, c := range cookies {
+				rewritten[i] = RewriteCookiePath(c, prefix)
+			}
+			res.Header["set-cookie"] = rewritten
 		}
 	}
 
@@ -677,6 +726,9 @@ func (p *ReverseProxy) serveWebSocketProxy(req *httpparser.Request, res *httppar
 	if req.Header.Get("Host") == "" {
 		fmt.Fprintf(&reqBuf, "Host: %s\r\n", outURL.Host)
 	}
+	if prefix != "" && req.Header.Get("X-Forwarded-Prefix") == "" {
+		fmt.Fprintf(&reqBuf, "X-Forwarded-Prefix: %s\r\n", prefix)
+	}
 	reqBuf.WriteString("\r\n")
 
 	if _, err := upstreamConn.Write(reqBuf.Bytes()); err != nil {
@@ -730,11 +782,119 @@ type proxyPrefixConn struct {
 	prefix []byte
 }
 
-func (c *proxyPrefixConn) Read(b []byte) (n int, err error) {
+func (c *proxyPrefixConn) Read(b []byte) (int, error) {
 	if len(c.prefix) > 0 {
-		n = copy(b, c.prefix)
+		n := copy(b, c.prefix)
 		c.prefix = c.prefix[n:]
 		return n, nil
 	}
 	return c.Conn.Read(b)
+}
+
+// RewriteRedirectLocation adjusts a 3xx redirect Location header to prepend the proxy route prefix.
+// It handles:
+// 1. Relative paths: "/dashboard" -> "/api/dashboard"
+// 2. Target-internal URLs: "http://127.0.0.1:9001/dashboard" -> "/api/dashboard" (or public URL)
+// 3. External URLs: "https://accounts.google.com/oauth" -> preserved as-is
+func RewriteRedirectLocation(loc, prefix string, targetURL *url.URL, req *httpparser.Request) string {
+	if loc == "" || prefix == "" {
+		return loc
+	}
+
+	cleanPrefix := "/" + strings.Trim(prefix, "/")
+
+	// Case 1: Relative Path starting with "/"
+	if strings.HasPrefix(loc, "/") {
+		if loc == cleanPrefix || strings.HasPrefix(loc, cleanPrefix+"/") {
+			return loc
+		}
+		return singleJoiningSlash(cleanPrefix, loc)
+	}
+
+	// Case 2: Parse as URL
+	u, err := url.Parse(loc)
+	if err != nil {
+		return loc
+	}
+
+	// If no scheme and no host, it's relative
+	if u.Scheme == "" && u.Host == "" {
+		if u.Path == cleanPrefix || strings.HasPrefix(u.Path, cleanPrefix+"/") {
+			return loc
+		}
+		u.Path = singleJoiningSlash(cleanPrefix, u.Path)
+		return u.String()
+	}
+
+	// Check if redirect target matches the upstream backend host
+	if targetURL != nil && strings.EqualFold(u.Host, targetURL.Host) {
+		newPath := u.Path
+		if newPath != cleanPrefix && !strings.HasPrefix(newPath, cleanPrefix+"/") {
+			newPath = singleJoiningSlash(cleanPrefix, newPath)
+		}
+		u.Path = newPath
+
+		// Map host to client request Host / X-Forwarded-Host if available
+		clientHost := req.Header.Get("X-Forwarded-Host")
+		if clientHost == "" {
+			clientHost = req.Header.Get("Host")
+		}
+		if clientHost != "" {
+			u.Host = clientHost
+			clientProto := req.Header.Get("X-Forwarded-Proto")
+			if clientProto != "" {
+				u.Scheme = clientProto
+			}
+		} else {
+			// Return relative path + query + fragment
+			rel := u.Path
+			if u.RawQuery != "" {
+				rel += "?" + u.RawQuery
+			}
+			if u.Fragment != "" {
+				rel += "#" + u.Fragment
+			}
+			return rel
+		}
+		return u.String()
+	}
+
+	// Case 3: External third-party redirect (e.g. OAuth, external CDN) -> untouched
+	return loc
+}
+
+// RewriteCookiePath adjusts the Path attribute in a Set-Cookie header string to be scoped under prefix.
+// Example: "session=xyz; Path=/; HttpOnly" -> "session=xyz; Path=/api; HttpOnly"
+func RewriteCookiePath(cookieStr, prefix string) string {
+	if cookieStr == "" || prefix == "" {
+		return cookieStr
+	}
+
+	cleanPrefix := "/" + strings.Trim(prefix, "/")
+	parts := strings.Split(cookieStr, ";")
+	foundPath := false
+
+	for i, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if strings.HasPrefix(strings.ToLower(trimmed), "path=") {
+			foundPath = true
+			oldPath := strings.TrimSpace(trimmed[5:])
+			var newPath string
+			if oldPath == "" || oldPath == "/" {
+				newPath = cleanPrefix
+			} else if oldPath == cleanPrefix || strings.HasPrefix(oldPath, cleanPrefix+"/") {
+				newPath = oldPath
+			} else {
+				newPath = singleJoiningSlash(cleanPrefix, oldPath)
+			}
+			parts[i] = " Path=" + newPath
+		}
+	}
+
+	if !foundPath {
+		// If no Path attribute was explicitly specified, append Path=<cleanPrefix>
+		return cookieStr + "; Path=" + cleanPrefix
+	}
+
+	return strings.Join(parts, ";")
 }

@@ -5,11 +5,13 @@
 ### Milestone Summary
 - **Advanced Load Balancing Engine (`pkg/proxy`)**: Implemented high-throughput pluggable load balancing suite supporting 8 strategies: `round_robin`, `weighted_round_robin`, `random`, `weighted_random`, `least_conn`, `weighted_least_conn`, `least_latency` (EMA response-time tracking), `sticky_cookie`, and `ip_hash` (`TASK-050`, `REQ-050`, `ADR-045`).
 - **Universal Auto-Installer & Service Manager (`install.sh` / `install.bat`)**: Automated zero-dependency deployment script supporting Linux (`systemd`), macOS (`launchd`), and Windows (`sc.exe`) on both ARM64 and AMD64 architectures with automatic daemon loading, daily log rotation, and clean uninstallation (`TASK-051`, `REQ-051`, `ADR-046`).
+- **Prefix Management & 3xx Redirect/Cookie Rewriting (`pkg/proxy`)**: Automated inbound `X-Forwarded-Prefix` injection, 3xx `Location` redirect rewriting, and `Set-Cookie: Path=` scoping for prefix-routed legacy and modern microservices (`TASK-052`, `REQ-052`, `ADR-047`).
 - **Standardized Configuration Standard**: Enforced `/etc/toron/` (`config.yaml`, `routes.yaml`, `public/`) system configuration and `/var/log/toron/` centralized logging paths across system daemons.
 
 ### Related Tasks
 - `TASK-050`: Implementation Breakdown for Advanced Load Balancing Algorithms
 - `TASK-051`: Implement Universal Auto-Installer & Service Manager (`install.sh`)
+- `TASK-052`: Implement Reverse Proxy Prefix Management & Redirect/Cookie Rewriting
 
 ## 2026-08-16 - Toron v1.4.0 Feature Release (Prototype 39: REST-to-gRPC Transcoding Engine)
 

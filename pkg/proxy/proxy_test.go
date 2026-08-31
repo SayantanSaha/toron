@@ -357,3 +357,154 @@ func TestProxy_TraceparentPropagation(t *testing.T) {
 		t.Errorf("expected traceparent preserving trace ID 4bf92f3577b34da6a3ce929d0e0e4736, got %q", capturedTraceparent)
 	}
 }
+
+func TestReverseProxy_XForwardedPrefixAndRedirectRewrite(t *testing.T) {
+	var capturedPrefix string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPrefix = r.Header.Get("X-Forwarded-Prefix")
+		// Simulate backend issuing a relative 302 redirect
+		w.Header().Set("Location", "/login?ref=dashboard")
+		w.Header().Set("Set-Cookie", "session=abc1234; Path=/; HttpOnly")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer upstreamServer.Close()
+
+	px, err := proxy.NewReverseProxy(upstreamServer.URL, 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/api/dashboard", "HTTP/1.1")
+	req.Header.Set("Host", "example.com")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/api")
+
+	if capturedPrefix != "/api" {
+		t.Errorf("expected X-Forwarded-Prefix /api, got %q", capturedPrefix)
+	}
+	if res.StatusCode != http.StatusFound {
+		t.Errorf("expected status 302, got %d", res.StatusCode)
+	}
+
+	// Verify Location was rewritten to include /api
+	expectedLoc := "/api/login?ref=dashboard"
+	if loc := res.Header.Get("Location"); loc != expectedLoc {
+		t.Errorf("expected rewritten Location %q, got %q", expectedLoc, loc)
+	}
+
+	// Verify Set-Cookie Path was rewritten to /api
+	expectedCookie := "session=abc1234; Path=/api; HttpOnly"
+	if cookie := res.Header.Get("Set-Cookie"); cookie != expectedCookie {
+		t.Errorf("expected rewritten Set-Cookie %q, got %q", expectedCookie, cookie)
+	}
+}
+
+func TestReverseProxy_AbsoluteRedirectRewrite(t *testing.T) {
+	var upstreamURL string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate backend issuing an absolute internal redirect matching its own URL
+		w.Header().Set("Location", upstreamURL+"/auth/callback")
+		w.WriteHeader(http.StatusMovedPermanently)
+	}))
+	defer upstreamServer.Close()
+	upstreamURL = upstreamServer.URL
+
+	px, err := proxy.NewReverseProxy(upstreamServer.URL, 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/services/legacy/start", "HTTP/1.1")
+	req.Header.Set("Host", "gateway.example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/services/legacy")
+
+	expectedLoc := "https://gateway.example.com/services/legacy/auth/callback"
+	if loc := res.Header.Get("Location"); loc != expectedLoc {
+		t.Errorf("expected rewritten absolute Location %q, got %q", expectedLoc, loc)
+	}
+}
+
+func TestReverseProxy_ExternalRedirectPreserved(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate OAuth external redirect
+		w.Header().Set("Location", "https://accounts.google.com/o/oauth2/v2/auth?client_id=123")
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer upstreamServer.Close()
+
+	px, err := proxy.NewReverseProxy(upstreamServer.URL, 2*time.Second)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/api/oauth", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/api")
+
+	expectedLoc := "https://accounts.google.com/o/oauth2/v2/auth?client_id=123"
+	if loc := res.Header.Get("Location"); loc != expectedLoc {
+		t.Errorf("expected untouched external Location %q, got %q", expectedLoc, loc)
+	}
+}
+
+func TestReverseProxy_StripPrefixDisabled(t *testing.T) {
+	var capturedPath string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstreamServer.Close()
+
+	stripPrefixFalse := false
+	opts := proxy.ProxyOptions{
+		Targets:     []string{upstreamServer.URL},
+		StripPrefix: &stripPrefixFalse,
+	}
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/api/v1/users", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/api")
+
+	// Since StripPrefix is false, upstream must receive the full path /api/v1/users
+	if capturedPath != "/api/v1/users" {
+		t.Errorf("expected upstream path /api/v1/users with strip_prefix=false, got %q", capturedPath)
+	}
+}
+
+func TestReverseProxy_RewriteRedirectsDisabled(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Location", "/raw-backend-path")
+		w.WriteHeader(http.StatusFound)
+	}))
+	defer upstreamServer.Close()
+
+	rewriteRedirectsFalse := false
+	opts := proxy.ProxyOptions{
+		Targets:          []string{upstreamServer.URL},
+		RewriteRedirects: &rewriteRedirectsFalse,
+	}
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/api/test", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/api")
+
+	// Since RewriteRedirects is false, Location header must remain verbatim "/raw-backend-path"
+	if loc := res.Header.Get("Location"); loc != "/raw-backend-path" {
+		t.Errorf("expected raw Location /raw-backend-path with rewrite_redirects=false, got %q", loc)
+	}
+}

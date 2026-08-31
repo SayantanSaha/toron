@@ -246,3 +246,56 @@ func TestCache_WebSocketBypass(t *testing.T) {
 		t.Fatalf("expected status 101, got %d", res1.StatusCode)
 	}
 }
+
+func TestCache_DistinctStaticPaths(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	r.Use(NewCacheMiddleware(cfg))
+
+	r.GET("/internal/dashboard/style.css", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/css")
+		_, _ = res.WriteString("body { color: red; }")
+	})
+	r.GET("/internal/dashboard/app.js", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/javascript")
+		_, _ = res.WriteString("console.log('hello');")
+	})
+
+	// Request CSS
+	reqCSS := &httpparser.Request{
+		Method:     "GET",
+		Path:       "/internal/dashboard/style.css",
+		RequestURI: "/internal/dashboard/style.css",
+		Proto:      "HTTP/2.0",
+		Header:     make(httpparser.Header),
+	}
+	resCSS := httpparser.NewResponse()
+	r.ServeHTTP(reqCSS, resCSS)
+
+	if resCSS.Header.Get("Content-Type") != "text/css" {
+		t.Fatalf("expected text/css, got %s", resCSS.Header.Get("Content-Type"))
+	}
+	if resCSS.Body.String() != "body { color: red; }" {
+		t.Fatalf("unexpected CSS body: %s", resCSS.Body.String())
+	}
+
+	// Request JS (must NOT return cached CSS)
+	reqJS := &httpparser.Request{
+		Method:     "GET",
+		Path:       "/internal/dashboard/app.js",
+		RequestURI: "/internal/dashboard/app.js",
+		Proto:      "HTTP/2.0",
+		Header:     make(httpparser.Header),
+	}
+	resJS := httpparser.NewResponse()
+	r.ServeHTTP(reqJS, resJS)
+
+	if resJS.Header.Get("Content-Type") != "application/javascript" {
+		t.Fatalf("expected application/javascript, got %s", resJS.Header.Get("Content-Type"))
+	}
+	if resJS.Body.String() != "console.log('hello');" {
+		t.Fatalf("unexpected JS body: %s", resJS.Body.String())
+	}
+}

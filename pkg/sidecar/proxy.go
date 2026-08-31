@@ -197,15 +197,20 @@ func (p *ProxyEngine) proxyToURL(w http.ResponseWriter, r *http.Request, targetU
 
 	// Adapt stdlib http.Request to Toron Request
 	hdr := make(httpparser.Header)
-	for k, vv := range r.Header {
-		hdr[k] = vv
+	reqURI := r.RequestURI
+	if reqURI == "" && r.URL != nil {
+		reqURI = r.URL.RequestURI()
 	}
-
+	if reqURI == "" && r.URL != nil {
+		reqURI = r.URL.Path
+	}
 	toronReq := &httpparser.Request{
-		Method: r.Method,
-		Path:   r.URL.Path,
-		Proto:  r.Proto,
-		Header: hdr,
+		Method:     r.Method,
+		RequestURI: reqURI,
+		URL:        r.URL,
+		Path:       r.URL.Path,
+		Proto:      r.Proto,
+		Header:     hdr,
 	}
 	toronRes := httpparser.NewResponse()
 

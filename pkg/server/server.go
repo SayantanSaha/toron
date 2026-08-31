@@ -278,11 +278,20 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 
 func (s *Server) http2AdapterHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reqURI := r.RequestURI
+		if reqURI == "" && r.URL != nil {
+			reqURI = r.URL.RequestURI()
+		}
+		if reqURI == "" && r.URL != nil {
+			reqURI = r.URL.Path
+		}
 		req := &httpparser.Request{
-			Method: r.Method,
-			Path:   r.URL.Path,
-			Proto:  r.Proto,
-			Header: make(httpparser.Header),
+			Method:     r.Method,
+			RequestURI: reqURI,
+			URL:        r.URL,
+			Path:       r.URL.Path,
+			Proto:      r.Proto,
+			Header:     make(httpparser.Header),
 		}
 		for k, vv := range r.Header {
 			for _, v := range vv {

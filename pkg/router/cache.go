@@ -178,7 +178,11 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 			clientPragma := strings.ToLower(req.Header.Get("Pragma"))
 			clientBypass := clientCC.NoCache || clientCC.NoStore || (clientCC.MaxAge != nil && *clientCC.MaxAge == 0) || strings.Contains(clientPragma, "no-cache")
 
-			cacheKey := req.Method + ":" + extractHost(req) + ":" + req.RequestURI
+			uri := req.RequestURI
+			if uri == "" {
+				uri = req.Path
+			}
+			cacheKey := req.Method + ":" + extractHost(req) + ":" + uri
 			now := time.Now()
 
 			if !clientBypass {

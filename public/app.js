@@ -1,5 +1,6 @@
 /**
- * 👑 Toron Edge Gateway — Control Center & Dashboard v2.0
+ * 👑 Toron Edge Gateway — Control Center & Dashboard v2.0 (Traefik Edition)
+ * Inspired by Traefik Proxy Dashboard Architecture & Design System
  * Minimalist, Mobile-First, Light/Dark/System Theme Synchronization
  * Pure Vanilla JavaScript (ES6+) — Zero External Dependencies
  */
@@ -49,7 +50,7 @@ function initThemeEngine() {
   function updateThemeButtons(currentMode) {
     [btnLight, btnDark, btnSystem].forEach(btn => {
       if (!btn) return;
-      btn.classList.remove('bg-white', 'dark:bg-slate-800', 'text-indigo-600', 'dark:text-indigo-400', 'shadow-xs');
+      btn.classList.remove('bg-white', 'dark:bg-slate-800', 'text-cyan-600', 'dark:text-cyan-400', 'shadow-xs');
       btn.classList.add('text-slate-500', 'dark:text-slate-400');
     });
 
@@ -58,7 +59,7 @@ function initThemeEngine() {
     if (currentMode === 'dark') activeBtn = btnDark;
 
     if (activeBtn) {
-      activeBtn.classList.add('bg-white', 'dark:bg-slate-800', 'text-indigo-600', 'dark:text-indigo-400', 'shadow-xs');
+      activeBtn.classList.add('bg-white', 'dark:bg-slate-800', 'text-cyan-600', 'dark:text-cyan-400', 'shadow-xs');
       activeBtn.classList.remove('text-slate-500', 'dark:text-slate-400');
     }
   }
@@ -86,7 +87,7 @@ function initThemeEngine() {
 // 2. TAB NAVIGATION
 // ============================================================================
 function initTabNavigation() {
-  const tabs = document.querySelectorAll('#desktop-tabs .tab-pill');
+  const tabs = document.querySelectorAll('#desktop-tabs .traefik-tab');
   const sections = document.querySelectorAll('.tab-content');
 
   tabs.forEach(tab => {
@@ -156,9 +157,10 @@ async function pollStatus() {
 
     // OCI Container discovery count
     const statOci = document.getElementById('stat-oci-count');
-    if (statOci && data.discovery) {
-      statOci.textContent = `${data.discovery.containers_count || 0} Containers`;
-    }
+    const providerOci = document.getElementById('provider-oci-count');
+    const ociCount = data.discovery ? (data.discovery.containers_count || 0) : 0;
+    if (statOci) statOci.textContent = `${ociCount} Containers`;
+    if (providerOci) providerOci.textContent = `${ociCount}`;
 
     // Security & WAF metrics
     if (data.security) {
@@ -173,7 +175,7 @@ async function pollStatus() {
       if (statSecThreshold) statSecThreshold.textContent = `${data.security.waf_anomaly_threshold || 5} Score`;
 
       const statMesh = document.getElementById('stat-mesh-status');
-      if (statMesh) statMesh.textContent = data.security.mtls_enabled ? 'mTLS Active' : 'Ready';
+      if (statMesh) statMesh.textContent = data.security.mtls_enabled ? 'mTLS Active' : 'mTLS Ready';
     }
 
     fetchAndRenderRoutes();
@@ -184,7 +186,7 @@ async function pollStatus() {
 }
 
 // ============================================================================
-// 5. DYNAMIC ROUTE RENDERING
+// 5. TRAEFIK-STYLE ROUTE RENDERING
 // ============================================================================
 let cachedRoutes = [];
 
@@ -207,55 +209,105 @@ async function fetchAndRenderRoutes() {
     const statRouters = document.getElementById('stat-routers-count');
     if (statRouters) statRouters.textContent = `${routesCount} Routes`;
 
-    // Populate tester dropdown if empty
+    // Populate tester dropdown if needed
     populateTesterDropdown(data.routes);
 
-    container.innerHTML = data.routes.map(r => {
-      const isAutoDiscovered = r.source === 'oci' || Boolean(r.container_name) || (r.host && r.host.includes('.local'));
+    container.innerHTML = data.routes.map((r, idx) => {
+      const isOci = r.source === 'oci' || Boolean(r.container_name) || (r.host && r.host.includes('.local'));
+      const isStatic = r.type === 'static';
       const isTranscoder = r.prefix === '/v1/users/:id' || r.prefix.includes('/v1/users');
-      const containerLabel = r.container_name ? `🐋 OCI: ${r.container_name}` : `🐋 OCI Container`;
 
-      let badgeHTML = `<span class="badge-chip badge-indigo font-mono uppercase">${r.algorithm || 'Round-Robin'}</span>`;
-      if (isAutoDiscovered) {
-        badgeHTML = `<span class="badge-chip badge-cyan font-mono">${containerLabel}</span>`;
-      } else if (isTranscoder) {
-        badgeHTML = `<span class="badge-chip badge-indigo font-mono">🔀 REST-to-gRPC</span>`;
-      } else if (r.type === 'static') {
-        badgeHTML = `<span class="badge-chip badge-cyan font-mono">📁 Static Assets</span>`;
+      // Provider badge
+      let providerPill = `<span class="tr-badge tr-badge-emerald font-mono">📄 File</span>`;
+      if (isOci) {
+        providerPill = `<span class="tr-badge tr-badge-cyan font-mono">🐋 Docker (${r.container_name || 'Container'})</span>`;
+      } else if (r.source === 'k8s') {
+        providerPill = `<span class="tr-badge tr-badge-indigo font-mono">☸️ Kubernetes</span>`;
       }
 
-      const hostHTML = r.host ? `<span class="text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono border border-slate-200 dark:border-slate-700">Host: <code class="text-indigo-600 dark:text-indigo-400 font-bold">${r.host}</code></span>` : '';
-      
-      const headerHTML = r.headers ? Object.entries(r.headers).map(([k, v]) => `<span class="text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono border border-slate-200 dark:border-slate-700">Header: <code class="text-indigo-600 dark:text-indigo-400">${k}: ${v}</code></span>`).join(' ') : '';
+      // Build Traefik Rule Syntax: `Host(`example.com`) && PathPrefix(`/path`)`
+      let ruleExpression = `PathPrefix(\`${r.prefix}\`)`;
+      if (r.host) {
+        ruleExpression = `Host(\`${r.host}\`) && ${ruleExpression}`;
+      }
+      if (r.headers && Object.keys(r.headers).length > 0) {
+        const headerRules = Object.entries(r.headers).map(([k, v]) => `Header(\`${k}\`, \`${v}\`)`).join(' && ');
+        ruleExpression = `${ruleExpression} && ${headerRules}`;
+      }
 
-      const targetsHTML = (r.targets && r.targets.length > 0)
-        ? r.targets.map(t => {
-            return `<span class="text-xs px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 font-mono">
-              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block mr-1"></span>${t}
-            </span>`;
-          }).join(' ')
-        : (r.dir ? `<span class="text-xs text-slate-500 dark:text-slate-400 font-mono">Dir: ${r.dir}</span>` : `<span class="text-xs text-slate-400 dark:text-slate-500 italic">Self-handled endpoint</span>`);
+      // Middlewares chain (WAF, StripPrefix, Transcoder, Load Balancer)
+      const middlewarePills = [];
+      middlewarePills.push(`<span class="text-[10px] px-2 py-0.5 rounded bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300 border border-rose-200 dark:border-rose-800/60 font-mono">🛡️ WAF Guard</span>`);
+
+      if (isTranscoder) {
+        middlewarePills.push(`<span class="text-[10px] px-2 py-0.5 rounded bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300 border border-sky-200 dark:border-sky-800/60 font-mono">🔀 REST-to-gRPC</span>`);
+      }
+
+      if (r.algorithm) {
+        middlewarePills.push(`<span class="text-[10px] px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 font-mono">⚖️ ${r.algorithm}</span>`);
+      }
+
+      // Targets / Service representation
+      let targetsHTML = '';
+      if (r.targets && r.targets.length > 0) {
+        targetsHTML = r.targets.map(t => `
+          <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200">
+            <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
+            <span>${t}</span>
+          </div>
+        `).join(' ');
+      } else if (r.dir) {
+        targetsHTML = `
+          <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 font-mono text-xs text-amber-800 dark:text-amber-300">
+            <span>📁 ${r.dir}</span>
+          </div>
+        `;
+      } else {
+        targetsHTML = `<span class="text-xs text-slate-400 dark:text-slate-500 italic">Self-handled internal API</span>`;
+      }
+
+      const routerName = r.container_name ? `router-${r.container_name}@docker` : `router-${r.prefix.replace(/[^a-zA-Z0-9]/g, '_')}@file`;
 
       return `
-        <div class="route-card p-4 sm:p-5 rounded-xl t-card space-y-3">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-            <div class="flex items-center space-x-2.5">
-              <span class="px-2 py-0.5 rounded-md text-[10px] font-bold font-mono ${r.type === 'static' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300' : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-300'}">
-                ${r.type === 'static' ? 'STATIC' : 'ANY'}
-              </span>
-              <span class="font-bold text-sm sm:text-base font-mono text-slate-900 dark:text-white">${r.prefix}</span>
-            </div>
-            <div>${badgeHTML}</div>
-          </div>
+        <div class="route-card p-4 sm:p-5 rounded-xl traefik-panel space-y-3.5">
           
-          <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-            ${hostHTML}
-            ${headerHTML}
-            <div class="flex flex-wrap items-center gap-1.5">
-              <span class="text-xs text-slate-500 dark:text-slate-400 font-medium">Targets:</span>
+          <!-- Top Row: Name, Protocol, Provider, Status -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+            <div class="flex items-center space-x-2.5">
+              <span class="px-2 py-0.5 rounded text-[10px] font-bold font-mono ${isStatic ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300' : 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/60 dark:text-cyan-300'}">
+                ${isStatic ? 'STATIC' : 'HTTP'}
+              </span>
+              <span class="font-bold text-xs sm:text-sm font-mono text-slate-800 dark:text-slate-200 truncate">${routerName}</span>
+            </div>
+            <div class="flex items-center space-x-2">
+              ${providerPill}
+              <span class="tr-badge tr-badge-emerald text-[10px]">SUCCESS</span>
+            </div>
+          </div>
+
+          <!-- Traefik Rule Matcher Box -->
+          <div class="p-2.5 sm:p-3 rounded-lg traefik-rule-box text-xs">
+            <div class="text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500 mb-1">Rule Matcher</div>
+            <div class="text-cyan-700 dark:text-cyan-300 font-semibold break-all">${ruleExpression}</div>
+          </div>
+
+          <!-- Bottom: Service Target & Middlewares Chain -->
+          <div class="pt-2 border-t border-slate-100 dark:border-slate-800/80 flex flex-col md:flex-row md:items-center justify-between gap-3">
+            
+            <!-- Service Targets -->
+            <div class="flex flex-wrap items-center gap-2">
+              <span class="text-xs text-slate-400 font-medium flex items-center gap-1">➔ Target Service:</span>
               ${targetsHTML}
             </div>
+
+            <!-- Middlewares -->
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-xs text-slate-400 font-medium mr-1">Middlewares:</span>
+              ${middlewarePills.join(' ')}
+            </div>
+
           </div>
+
         </div>
       `;
     }).join('');
@@ -266,7 +318,7 @@ async function fetchAndRenderRoutes() {
 }
 
 // ============================================================================
-// 6. DYNAMIC UPSTREAM HEALTH MATRIX
+// 6. TRAEFIK-STYLE UPSTREAM HEALTH MATRIX
 // ============================================================================
 async function fetchUpstreamHealth() {
   const container = document.getElementById('upstream-services-grid');
@@ -289,7 +341,7 @@ async function fetchUpstreamHealth() {
 
     if (upstreams.length === 0) {
       container.innerHTML = `
-        <div class="col-span-full p-8 text-center rounded-xl t-card text-slate-400 italic text-xs">
+        <div class="col-span-full p-8 text-center rounded-xl traefik-panel text-slate-400 italic text-xs">
           No upstream targets configured. Add proxy targets in routes.yaml or run OCI containers to see live health matrix.
         </div>
       `;
@@ -300,17 +352,17 @@ async function fetchUpstreamHealth() {
       const isHealthy = svc.status === 'HEALTHY';
       const isOpen = svc.status === 'OPEN';
       const statusColor = isHealthy ? 'text-emerald-600 dark:text-emerald-400' : (isOpen ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400');
-      const badgeStyle = isHealthy ? 'badge-emerald' : (isOpen ? 'badge-amber' : 'badge-rose');
+      const badgeStyle = isHealthy ? 'tr-badge-emerald' : (isOpen ? 'tr-badge-amber' : 'tr-badge-rose');
       const pulseColor = isHealthy ? 'bg-emerald-500' : (isOpen ? 'bg-amber-500' : 'bg-rose-500');
 
       return `
-        <div class="p-4 rounded-xl t-card space-y-3">
+        <div class="p-4 rounded-xl traefik-panel space-y-3">
           <div class="flex items-center justify-between">
             <div class="flex items-center space-x-2 min-w-0">
               <span class="w-2.5 h-2.5 rounded-full ${pulseColor} animate-pulse flex-shrink-0"></span>
               <span class="font-bold text-xs truncate text-slate-900 dark:text-white">${svc.name || ('Port ' + svc.port)}</span>
             </div>
-            <span class="badge-chip ${badgeStyle} text-[10px] font-mono">${svc.status}</span>
+            <span class="tr-badge ${badgeStyle} text-[10px] font-mono">${svc.status}</span>
           </div>
 
           <div class="text-[11px] space-y-1 text-slate-500 dark:text-slate-400 font-mono">
@@ -373,7 +425,7 @@ async function fetchSecurityIncidents() {
         <td class="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">${inc.path}</td>
         <td class="py-2.5 px-3 text-amber-600 dark:text-amber-400">${inc.rule_id}</td>
         <td class="py-2.5 px-3 text-right">
-          <span class="badge-chip badge-rose text-[10px]">BLOCKED</span>
+          <span class="tr-badge tr-badge-rose text-[10px]">BLOCKED</span>
         </td>
       </tr>
     `).join('');

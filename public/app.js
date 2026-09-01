@@ -1,163 +1,179 @@
 /**
- * Toron Web Server Dashboard — Traefik-Inspired Logic
- * Controls tab navigation, metrics polling, dynamic route rendering, and API tester.
+ * 👑 Toron Edge Gateway — Control Center & Dashboard v2.0
+ * Minimalist, Mobile-First, Light/Dark/System Theme Synchronization
+ * Pure Vanilla JavaScript (ES6+) — Zero External Dependencies
  */
 
 document.addEventListener('DOMContentLoaded', () => {
-  initTabs();
-  initHealthMatrix();
-  initTester();
+  initThemeEngine();
+  initTabNavigation();
+  initRouteSearch();
+  initApiTester();
+  initRefreshButton();
+
+  // Initial data hydration
   pollStatus();
-  setInterval(pollStatus, 4000);
+  fetchUpstreamHealth();
+
+  // Periodic real-time telemetry polling (every 4 seconds)
+  setInterval(() => {
+    pollStatus();
+  }, 4000);
 });
 
-// --- 1. TAB NAVIGATION ---
-function initTabs() {
-  const desktopButtons = document.querySelectorAll('#desktop-tabs .tab-btn');
-  const tabContents = document.querySelectorAll('.tab-content');
+// ============================================================================
+// 1. THREE-STATE THEME ENGINE (Light, Dark, System Sync)
+// ============================================================================
+function initThemeEngine() {
+  const btnLight = document.getElementById('theme-btn-light');
+  const btnDark = document.getElementById('theme-btn-dark');
+  const btnSystem = document.getElementById('theme-btn-system');
 
-  function switchTab(targetTabId) {
-    tabContents.forEach(content => content.classList.add('hidden'));
-
-    const activeContent = document.getElementById(targetTabId);
-    if (activeContent) {
-      activeContent.classList.remove('hidden');
-    }
-
-    desktopButtons.forEach(btn => {
-      if (btn.getAttribute('data-tab') === targetTabId) {
-        btn.className = 'tab-btn active px-4 py-2 text-xs font-semibold rounded-lg text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 transition flex items-center space-x-2';
-      } else {
-        btn.className = 'tab-btn px-4 py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition flex items-center space-x-2';
-      }
-    });
+  function getSavedTheme() {
+    return localStorage.getItem('toron-theme') || 'system';
   }
 
-  desktopButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      switchTab(btn.getAttribute('data-tab'));
+  function applyTheme(mode) {
+    const isDark = mode === 'dark' || (mode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    
+    if (isDark) {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+
+    localStorage.setItem('toron-theme', mode);
+    updateThemeButtons(mode);
+  }
+
+  function updateThemeButtons(currentMode) {
+    [btnLight, btnDark, btnSystem].forEach(btn => {
+      if (!btn) return;
+      btn.classList.remove('bg-white', 'dark:bg-slate-800', 'text-indigo-600', 'dark:text-indigo-400', 'shadow-xs');
+      btn.classList.add('text-slate-500', 'dark:text-slate-400');
     });
+
+    let activeBtn = btnSystem;
+    if (currentMode === 'light') activeBtn = btnLight;
+    if (currentMode === 'dark') activeBtn = btnDark;
+
+    if (activeBtn) {
+      activeBtn.classList.add('bg-white', 'dark:bg-slate-800', 'text-indigo-600', 'dark:text-indigo-400', 'shadow-xs');
+      activeBtn.classList.remove('text-slate-500', 'dark:text-slate-400');
+    }
+  }
+
+  if (btnLight) btnLight.addEventListener('click', () => applyTheme('light'));
+  if (btnDark) btnDark.addEventListener('click', () => applyTheme('dark'));
+  if (btnSystem) btnSystem.addEventListener('click', () => applyTheme('system'));
+
+  // Listen to OS system color scheme changes in real time
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => {
+    if (getSavedTheme() === 'system') {
+      if (e.matches) {
+        document.documentElement.classList.add('dark');
+      } else {
+        document.documentElement.classList.remove('dark');
+      }
+    }
   });
 
-  const btnRefresh = document.getElementById('btn-refresh');
-  if (btnRefresh) {
-    btnRefresh.addEventListener('click', pollStatus);
-  }
+  // Apply initial theme state
+  applyTheme(getSavedTheme());
 }
 
-// --- 2. UPSTREAM HEALTH MATRIX ---
-let TARGET_HEALTH_MAP = {};
+// ============================================================================
+// 2. TAB NAVIGATION
+// ============================================================================
+function initTabNavigation() {
+  const tabs = document.querySelectorAll('#desktop-tabs .tab-pill');
+  const sections = document.querySelectorAll('.tab-content');
 
-function initHealthMatrix() {
-  const probeBtn = document.getElementById('btn-probe-all');
-  if (probeBtn) {
-    probeBtn.addEventListener('click', probeAllNodes);
-  }
-}
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      const targetId = tab.getAttribute('data-tab');
 
-async function probeAllNodes() {
-  const container = document.getElementById('upstream-services-grid');
-  const statUpstreams = document.getElementById('stat-upstreams-count');
-  const tabBadgeServices = document.getElementById('tab-badge-services');
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
 
-  try {
-    const res = await fetch('/internal/api/upstreams/health');
-    if (!res.ok) return;
-    const data = await res.json();
-
-    if (data.upstreams && Array.isArray(data.upstreams)) {
-      if (statUpstreams) {
-        statUpstreams.textContent = `${data.total_nodes || data.upstreams.length} Nodes`;
-      }
-      if (tabBadgeServices) {
-        tabBadgeServices.textContent = data.total_nodes || data.upstreams.length;
-      }
-
-      data.upstreams.forEach(svc => {
-        const isHealthy = svc.status === 'CLOSED' || svc.status === 'HEALTHY' || svc.status === 'OK';
-        TARGET_HEALTH_MAP[svc.port] = isHealthy;
-        TARGET_HEALTH_MAP[svc.name] = isHealthy;
+      sections.forEach(sec => {
+        if (sec.id === targetId) {
+          sec.classList.remove('hidden');
+        } else {
+          sec.classList.add('hidden');
+        }
       });
 
-      if (container) {
-        if (data.upstreams.length === 0) {
-          container.innerHTML = `
-            <div class="col-span-full p-6 text-center text-xs text-slate-500 italic traefik-card rounded-xl">
-              No active upstream targets configured in routes.yaml.
-            </div>
-          `;
-        } else {
-          container.innerHTML = data.upstreams.map(svc => {
-            const isHealthy = svc.status === 'CLOSED' || svc.status === 'HEALTHY' || svc.status === 'OK';
-            const badgeClass = isHealthy ? 'traefik-badge-emerald' : 'traefik-badge-rose';
-            const badgeText = isHealthy ? 'HEALTHY' : (svc.status || 'UNREACHABLE');
-            const latencyStr = svc.latency_ms > 0 ? `${svc.latency_ms.toFixed(1)}ms` : 'offline';
-
-            return `
-              <div class="p-3 rounded-xl traefik-card space-y-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs font-mono font-bold text-white">:${svc.port}</span>
-                  <span class="text-[10px] px-1.5 py-0.5 rounded font-medium ${badgeClass}">
-                    ${badgeText}
-                  </span>
-                </div>
-                <div class="text-[11px] text-slate-400 leading-tight">
-                  <div class="font-medium text-slate-300 truncate" title="${svc.name}">${svc.name}</div>
-                  <div class="text-[10px] text-indigo-400 font-mono mt-0.5 truncate">${svc.route}</div>
-                  <div class="text-[9px] text-slate-500 font-mono mt-0.5 flex justify-between">
-                    <span>${svc.algo || 'Balancing'}</span>
-                    <span class="text-cyan-400 font-mono">${latencyStr}</span>
-                  </div>
-                </div>
-              </div>
-            `;
-          }).join('');
-        }
+      if (targetId === 'tab-services') {
+        fetchUpstreamHealth();
       }
-    }
-  } catch (err) {
-    console.error('Probe failed:', err);
-  }
+    });
+  });
 }
 
-// --- 3. DYNAMIC STATUS & ROUTE POLLING ---
+// ============================================================================
+// 3. ROUTE SEARCH & FILTERING
+// ============================================================================
+function initRouteSearch() {
+  const searchInput = document.getElementById('route-search-input');
+  if (!searchInput) return;
+
+  searchInput.addEventListener('input', (e) => {
+    const query = e.target.value.toLowerCase().trim();
+    const routeCards = document.querySelectorAll('.route-card');
+
+    routeCards.forEach(card => {
+      const cardText = card.textContent.toLowerCase();
+      if (cardText.includes(query)) {
+        card.classList.remove('hidden');
+      } else {
+        card.classList.add('hidden');
+      }
+    });
+  });
+}
+
+// ============================================================================
+// 4. TELEMETRY & ENGINE STATUS POLLING
+// ============================================================================
 async function pollStatus() {
   try {
-    await probeAllNodes();
-
     const res = await fetch('/internal/api/status');
     if (!res.ok) return;
     const data = await res.json();
 
-    const headerVersion = document.getElementById('header-version');
-    if (headerVersion && data.version) {
-      headerVersion.textContent = `v${data.version}`;
+    // Version badge
+    const headerVer = document.getElementById('header-version');
+    if (headerVer && data.version) {
+      headerVer.textContent = `v${data.version}`;
     }
 
-    const statWaf = document.getElementById('stat-waf-status');
-    if (statWaf && data.security) {
-      statWaf.textContent = (data.security.waf_mode || 'ENFORCE').toUpperCase();
+    // Workers count
+    const statWorkers = document.getElementById('stat-workers-count');
+    if (statWorkers && data.worker_pool_size) {
+      statWorkers.textContent = `${data.worker_pool_size} Workers`;
     }
 
-    const statWafRules = document.getElementById('stat-waf-rules');
-    if (statWafRules && data.security) {
-      const totalRules = (data.security.waf_rules_count || 10) + (data.security.waf_custom_rules_count || 0);
-      statWafRules.textContent = `${totalRules} Rules`;
-    }
-
-    const statWafThreshold = document.getElementById('stat-waf-threshold');
-    if (statWafThreshold && data.security) {
-      statWafThreshold.textContent = `${data.security.waf_anomaly_threshold || 5} Score`;
-    }
-
-    const statMesh = document.getElementById('stat-mesh-status');
-    if (statMesh && data.security) {
-      statMesh.textContent = data.security.mtls_enabled ? 'mTLS Active' : 'mTLS Ready';
-    }
-
+    // OCI Container discovery count
     const statOci = document.getElementById('stat-oci-count');
     if (statOci && data.discovery) {
       statOci.textContent = `${data.discovery.containers_count || 0} Containers`;
+    }
+
+    // Security & WAF metrics
+    if (data.security) {
+      const totalRules = (data.security.waf_rules_count || 10) + (data.security.waf_custom_rules_count || 0);
+      const statWafRules = document.getElementById('stat-waf-rules');
+      if (statWafRules) statWafRules.textContent = `${totalRules} OWASP Rules`;
+
+      const statSecRules = document.getElementById('stat-sec-rules');
+      if (statSecRules) statSecRules.textContent = `${totalRules} Rules`;
+
+      const statSecThreshold = document.getElementById('stat-sec-threshold');
+      if (statSecThreshold) statSecThreshold.textContent = `${data.security.waf_anomaly_threshold || 5} Score`;
+
+      const statMesh = document.getElementById('stat-mesh-status');
+      if (statMesh) statMesh.textContent = data.security.mtls_enabled ? 'mTLS Active' : 'Ready';
     }
 
     fetchAndRenderRoutes();
@@ -166,6 +182,11 @@ async function pollStatus() {
     console.error('Failed to poll engine status:', e);
   }
 }
+
+// ============================================================================
+// 5. DYNAMIC ROUTE RENDERING
+// ============================================================================
+let cachedRoutes = [];
 
 async function fetchAndRenderRoutes() {
   const container = document.getElementById('routes-container');
@@ -177,6 +198,7 @@ async function fetchAndRenderRoutes() {
     const data = await res.json();
 
     if (!data.routes || !Array.isArray(data.routes)) return;
+    cachedRoutes = data.routes;
 
     const routesCount = data.routes.length;
     const tabBadge = document.getElementById('tab-badge-routers');
@@ -185,203 +207,316 @@ async function fetchAndRenderRoutes() {
     const statRouters = document.getElementById('stat-routers-count');
     if (statRouters) statRouters.textContent = `${routesCount} Routes`;
 
-    let ociCount = 0;
-    data.routes.forEach(r => {
-      if (r.source === 'oci' || r.container_name || r.host === 'container.toron.local' || r.host === 'auto-discovered.local' || (r.host && r.host.includes('.local'))) {
-        ociCount++;
-      }
-    });
-
-    const statOci = document.getElementById('stat-oci-count');
-    if (statOci) statOci.textContent = `${ociCount} Containers`;
+    // Populate tester dropdown if empty
+    populateTesterDropdown(data.routes);
 
     container.innerHTML = data.routes.map(r => {
-      const isAutoDiscovered = r.source === 'oci' || Boolean(r.container_name) || r.host === 'container.toron.local' || r.host === 'auto-discovered.local' || (r.host && r.host.includes('.local'));
+      const isAutoDiscovered = r.source === 'oci' || Boolean(r.container_name) || (r.host && r.host.includes('.local'));
       const isTranscoder = r.prefix === '/v1/users/:id' || r.prefix.includes('/v1/users');
-      const containerLabel = r.container_name ? `🐋 OCI: ${r.container_name}` : `🐋 OCI Auto-Discovered`;
+      const containerLabel = r.container_name ? `🐋 OCI: ${r.container_name}` : `🐋 OCI Container`;
 
-      let badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-indigo font-semibold">${r.algorithm || 'Round-Robin'}</span>`;
+      let badgeHTML = `<span class="badge-chip badge-indigo font-mono uppercase">${r.algorithm || 'Round-Robin'}</span>`;
       if (isAutoDiscovered) {
-        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-cyan font-semibold flex items-center gap-1">${containerLabel}</span>`;
+        badgeHTML = `<span class="badge-chip badge-cyan font-mono">${containerLabel}</span>`;
       } else if (isTranscoder) {
-        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-sky font-semibold flex items-center gap-1">🔀 REST-to-gRPC</span>`;
-      } else if (r.algorithm === 'weighted_round_robin') {
-        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-cyan font-semibold flex items-center gap-1">⚖️ Weighted Round-Robin</span>`;
-      } else if (r.algorithm === 'weighted_random') {
-        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-violet font-semibold flex items-center gap-1">🎲 Weighted Random</span>`;
-      } else if (r.algorithm === 'least_conn') {
-        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-emerald font-semibold flex items-center gap-1">⚡ Least Connections</span>`;
-      } else if (r.algorithm === 'weighted_least_conn') {
-        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-emerald font-semibold flex items-center gap-1">⚡ Weighted Least Conn</span>`;
-      } else if (r.algorithm === 'least_latency') {
-        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-amber font-semibold flex items-center gap-1">⏱️ Lowest Latency</span>`;
+        badgeHTML = `<span class="badge-chip badge-indigo font-mono">🔀 REST-to-gRPC</span>`;
+      } else if (r.type === 'static') {
+        badgeHTML = `<span class="badge-chip badge-cyan font-mono">📁 Static Assets</span>`;
       }
 
-      const hostHTML = r.host ? `<span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">Host: <code class="text-indigo-400">${r.host}</code></span>` : '';
-      const headerHTML = r.headers ? Object.entries(r.headers).map(([k, v]) => `<span class="text-xs px-2 py-0.5 rounded-full bg-slate-800 text-slate-300 border border-slate-700 font-mono">Header: <code class="text-indigo-400">${k}: ${v}</code></span>`).join(' ') : '';
+      const hostHTML = r.host ? `<span class="text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono border border-slate-200 dark:border-slate-700">Host: <code class="text-indigo-600 dark:text-indigo-400 font-bold">${r.host}</code></span>` : '';
+      
+      const headerHTML = r.headers ? Object.entries(r.headers).map(([k, v]) => `<span class="text-xs px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 font-mono border border-slate-200 dark:border-slate-700">Header: <code class="text-indigo-600 dark:text-indigo-400">${k}: ${v}</code></span>`).join(' ') : '';
 
       const targetsHTML = (r.targets && r.targets.length > 0)
         ? r.targets.map(t => {
-            let portStr = '';
-            const match = t.match(/:(\d+)/);
-            if (match) portStr = match[1];
-
-            const isHealthy = portStr ? (TARGET_HEALTH_MAP[portStr] !== false) : true;
-            const targetBadge = isHealthy
-              ? `<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded traefik-badge-emerald">
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  Healthy
-                 </span>`
-              : `<span class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded traefik-badge-rose font-bold">
-                  <span class="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
-                  Unreachable
-                 </span>`;
-
-            return `
-              <div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 flex items-center justify-between">
-                <div>
-                  <div class="text-xs font-mono text-white">${t}</div>
-                  <div class="text-[11px] text-slate-400">${isAutoDiscovered ? 'OCI Microservice Container' : 'Upstream Target'}</div>
-                </div>
-                ${targetBadge}
-              </div>
-            `;
-          }).join('')
-        : `<div class="p-3 rounded-lg bg-slate-950/60 border border-slate-800 text-xs text-sky-400 font-mono">Dynamic Upstream Engine Stream</div>`;
+            return `<span class="text-xs px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800/60 font-mono">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 inline-block mr-1"></span>${t}
+            </span>`;
+          }).join(' ')
+        : (r.dir ? `<span class="text-xs text-slate-500 dark:text-slate-400 font-mono">Dir: ${r.dir}</span>` : `<span class="text-xs text-slate-400 dark:text-slate-500 italic">Self-handled endpoint</span>`);
 
       return `
-        <div class="p-5 rounded-xl traefik-card space-y-4">
-          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800/60">
-            <div class="flex items-center space-x-2 flex-wrap gap-y-1">
-              <span class="px-2 py-1 text-xs font-bold rounded bg-indigo-500/20 text-indigo-300 font-mono">${r.type === 'static' ? 'STATIC' : 'ANY'}</span>
-              <span class="text-base font-bold text-white font-mono">${r.prefix}</span>
-              ${hostHTML}
-              ${headerHTML}
+        <div class="route-card p-4 sm:p-5 rounded-xl t-card space-y-3">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <div class="flex items-center space-x-2.5">
+              <span class="px-2 py-0.5 rounded-md text-[10px] font-bold font-mono ${r.type === 'static' ? 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300' : 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/60 dark:text-indigo-300'}">
+                ${r.type === 'static' ? 'STATIC' : 'ANY'}
+              </span>
+              <span class="font-bold text-sm sm:text-base font-mono text-slate-900 dark:text-white">${r.prefix}</span>
             </div>
-            <div class="flex items-center space-x-2">
-              ${badgeHTML}
-            </div>
+            <div>${badgeHTML}</div>
           </div>
-          <div class="space-y-2">
-            <h4 class="text-xs font-semibold text-slate-400 uppercase tracking-wider">Upstream Targets & Clusters</h4>
-            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          
+          <div class="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+            ${hostHTML}
+            ${headerHTML}
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-xs text-slate-500 dark:text-slate-400 font-medium">Targets:</span>
               ${targetsHTML}
             </div>
           </div>
         </div>
       `;
     }).join('');
-    // Dynamic Tester URL Dropdown Population
-    const urlSelect = document.getElementById('tester-url');
-    if (urlSelect) {
-      const currentSelected = urlSelect.value;
-      let optionsHTML = `
-        <option value="/health" data-host="">GET /health (Server Health)</option>
-        <option value="/internal/api/status" data-host="">GET /internal/api/status (Engine Metrics)</option>
-        <option value="/internal/api/routes" data-host="">GET /internal/api/routes (Route Table)</option>
-        <option value="/internal/api/upstreams/health" data-host="">GET /internal/api/upstreams/health (Upstream Probes)</option>
-      `;
 
-      data.routes.forEach(r => {
-        if (r.prefix && r.prefix !== '/' && !r.prefix.startsWith('/internal')) {
-          const hostAttr = r.host || '';
-          const label = `GET ${r.prefix} ${r.host ? '(Host: ' + r.host + ')' : ''}`;
-          optionsHTML += `<option value="${r.prefix}" data-host="${hostAttr}">${label}</option>`;
-        }
-      });
-
-      urlSelect.innerHTML = optionsHTML;
-      if (currentSelected) {
-        urlSelect.value = currentSelected;
-      }
-    }
   } catch (e) {
-    console.error('Failed to render dynamic routes:', e);
+    console.error('Failed to fetch routes:', e);
   }
 }
 
+// ============================================================================
+// 6. DYNAMIC UPSTREAM HEALTH MATRIX
+// ============================================================================
+async function fetchUpstreamHealth() {
+  const container = document.getElementById('upstream-services-grid');
+  if (!container) return;
+
+  try {
+    const res = await fetch('/internal/api/upstreams/health');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const upstreams = data.upstreams || [];
+    const totalCount = data.total_nodes || upstreams.length;
+    const healthyCount = data.healthy_nodes || 0;
+
+    const tabBadge = document.getElementById('tab-badge-services');
+    if (tabBadge) tabBadge.textContent = totalCount;
+
+    const statUpstreams = document.getElementById('stat-upstreams-count');
+    if (statUpstreams) statUpstreams.textContent = `${totalCount} Nodes`;
+
+    if (upstreams.length === 0) {
+      container.innerHTML = `
+        <div class="col-span-full p-8 text-center rounded-xl t-card text-slate-400 italic text-xs">
+          No upstream targets configured. Add proxy targets in routes.yaml or run OCI containers to see live health matrix.
+        </div>
+      `;
+      return;
+    }
+
+    container.innerHTML = upstreams.map(svc => {
+      const isHealthy = svc.status === 'HEALTHY';
+      const isOpen = svc.status === 'OPEN';
+      const statusColor = isHealthy ? 'text-emerald-600 dark:text-emerald-400' : (isOpen ? 'text-amber-600 dark:text-amber-400' : 'text-rose-600 dark:text-rose-400');
+      const badgeStyle = isHealthy ? 'badge-emerald' : (isOpen ? 'badge-amber' : 'badge-rose');
+      const pulseColor = isHealthy ? 'bg-emerald-500' : (isOpen ? 'bg-amber-500' : 'bg-rose-500');
+
+      return `
+        <div class="p-4 rounded-xl t-card space-y-3">
+          <div class="flex items-center justify-between">
+            <div class="flex items-center space-x-2 min-w-0">
+              <span class="w-2.5 h-2.5 rounded-full ${pulseColor} animate-pulse flex-shrink-0"></span>
+              <span class="font-bold text-xs truncate text-slate-900 dark:text-white">${svc.name || ('Port ' + svc.port)}</span>
+            </div>
+            <span class="badge-chip ${badgeStyle} text-[10px] font-mono">${svc.status}</span>
+          </div>
+
+          <div class="text-[11px] space-y-1 text-slate-500 dark:text-slate-400 font-mono">
+            <div class="flex justify-between">
+              <span>Port:</span>
+              <span class="font-bold text-slate-700 dark:text-slate-300">:${svc.port}</span>
+            </div>
+            <div class="flex justify-between">
+              <span>Route:</span>
+              <span class="truncate max-w-[120px] text-slate-700 dark:text-slate-300">${svc.route || '/'}</span>
+            </div>
+            <div class="flex justify-between">
+              <span>Latency:</span>
+              <span class="font-bold ${statusColor}">${svc.latency_ms > 0 ? (svc.latency_ms.toFixed(2) + ' ms') : '---'}</span>
+            </div>
+            <div class="flex justify-between">
+              <span>HTTP Code:</span>
+              <span class="font-bold text-slate-700 dark:text-slate-300">${svc.http_code > 0 ? svc.http_code : 'N/A'}</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join('');
+
+  } catch (e) {
+    console.error('Failed to fetch upstream health:', e);
+  }
+}
+
+// ============================================================================
+// 7. SECURITY INCIDENTS AUDIT STREAM
+// ============================================================================
 async function fetchSecurityIncidents() {
-  const tableBody = document.getElementById('incidents-table-body');
-  if (!tableBody) return;
+  const tbody = document.getElementById('incidents-table-body');
+  if (!tbody) return;
 
   try {
     const res = await fetch('/internal/api/security/incidents');
     if (!res.ok) return;
     const data = await res.json();
 
-    if (data.incidents && Array.isArray(data.incidents) && data.incidents.length > 0) {
-      tableBody.innerHTML = data.incidents.map(inc => `
-        <tr class="hover:bg-slate-800/40">
-          <td class="py-2.5 px-3 text-slate-400">${new Date(inc.timestamp).toLocaleTimeString()}</td>
-          <td class="py-2.5 px-3 text-indigo-400 font-mono">${inc.client_ip}</td>
-          <td class="py-2.5 px-3 text-white font-mono">${inc.path}</td>
-          <td class="py-2.5 px-3 text-amber-400 font-mono">${inc.rule_id}</td>
-          <td class="py-2.5 px-3 text-right"><span class="traefik-badge-rose px-2 py-0.5 rounded">${inc.action}</span></td>
-        </tr>
-      `).join('');
+    const blockedCountEl = document.getElementById('sec-blocked-count');
+    if (blockedCountEl) {
+      blockedCountEl.textContent = `${data.total_blocked || 0}`;
     }
+
+    if (!data.incidents || data.incidents.length === 0) {
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="5" class="py-6 text-center text-slate-400 italic">No security violations detected. Server operating securely.</td>
+        </tr>
+      `;
+      return;
+    }
+
+    tbody.innerHTML = data.incidents.map(inc => `
+      <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+        <td class="py-2.5 px-3 text-slate-500 dark:text-slate-400">${new Date(inc.timestamp).toLocaleTimeString()}</td>
+        <td class="py-2.5 px-3 text-slate-700 dark:text-slate-300">${inc.client_ip}</td>
+        <td class="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">${inc.path}</td>
+        <td class="py-2.5 px-3 text-amber-600 dark:text-amber-400">${inc.rule_id}</td>
+        <td class="py-2.5 px-3 text-right">
+          <span class="badge-chip badge-rose text-[10px]">BLOCKED</span>
+        </td>
+      </tr>
+    `).join('');
+
   } catch (e) {
-    console.error('Failed to fetch security incidents:', e);
+    // Audit stream is silent when idle
   }
 }
 
-// --- 4. INTERACTIVE API TESTER ---
-function initTester() {
+// ============================================================================
+// 8. INTERACTIVE API CONSOLE
+// ============================================================================
+function populateTesterDropdown(routes) {
+  const select = document.getElementById('tester-url');
+  if (!select || select.children.length > 2) return;
+
+  const currentVal = select.value;
+  select.innerHTML = '';
+
+  const defaultEndpoints = [
+    { prefix: '/health', host: '', name: 'GET /health (Server Health)' },
+    { prefix: '/internal/api/status', host: '', name: 'GET /internal/api/status (Engine Metrics)' },
+  ];
+
+  const addedPrefixes = new Set();
+
+  defaultEndpoints.forEach(ep => {
+    addedPrefixes.add(ep.prefix);
+    const opt = document.createElement('option');
+    opt.value = ep.prefix;
+    opt.setAttribute('data-host', ep.host);
+    opt.textContent = ep.name;
+    select.appendChild(opt);
+  });
+
+  routes.forEach(r => {
+    if (!addedPrefixes.has(r.prefix) && r.prefix !== '/metrics') {
+      addedPrefixes.add(r.prefix);
+      const opt = document.createElement('option');
+      opt.value = r.prefix;
+      opt.setAttribute('data-host', r.host || '');
+      const hostLabel = r.host ? ` [Host: ${r.host}]` : '';
+      opt.textContent = `ANY ${r.prefix}${hostLabel}`;
+      select.appendChild(opt);
+    }
+  });
+
+  select.value = currentVal || '/health';
+
+  select.addEventListener('change', () => {
+    const selectedOption = select.options[select.selectedIndex];
+    const host = selectedOption ? selectedOption.getAttribute('data-host') : '';
+    const hostInput = document.getElementById('tester-host-header');
+    if (hostInput) {
+      hostInput.value = host || '';
+    }
+  });
+}
+
+function initApiTester() {
   const form = document.getElementById('tester-form');
-  const urlSelect = document.getElementById('tester-url');
-  const hostInput = document.getElementById('tester-host-header');
   const resStatus = document.getElementById('res-status');
   const resBody = document.getElementById('res-body');
+  const btnCopy = document.getElementById('btn-copy-response');
 
-  if (urlSelect && hostInput) {
-    urlSelect.addEventListener('change', () => {
-      const selectedOption = urlSelect.options[urlSelect.selectedIndex];
-      const hostVal = selectedOption ? selectedOption.getAttribute('data-host') : '';
-      hostInput.value = hostVal || '';
+  if (btnCopy) {
+    btnCopy.addEventListener('click', () => {
+      if (resBody) {
+        navigator.clipboard.writeText(resBody.textContent).then(() => {
+          btnCopy.textContent = 'Copied!';
+          setTimeout(() => { btnCopy.textContent = 'Copy JSON'; }, 2000);
+        });
+      }
     });
   }
 
   if (form) {
     form.addEventListener('submit', async (e) => {
       e.preventDefault();
-      
-      const targetUrl = urlSelect.value;
-      const hostVal = hostInput.value.trim();
+      const method = document.getElementById('tester-method')?.value || 'GET';
+      const path = document.getElementById('tester-url')?.value || '/health';
+      const hostHeader = document.getElementById('tester-host-header')?.value || '';
 
-      resStatus.textContent = 'EXECUTING...';
-      resStatus.className = 'font-mono text-indigo-400 font-bold animate-pulse';
-      resBody.textContent = 'Sending request to Toron gateway...';
-
-      const headers = {};
-      if (hostVal) {
-        headers['Host'] = hostVal;
-      }
+      if (resStatus) resStatus.textContent = 'Executing...';
+      if (resBody) resBody.textContent = 'Waiting for response from gateway...';
 
       const startTime = performance.now();
 
       try {
-        const response = await fetch(targetUrl, { headers });
-        const latency = (performance.now() - startTime).toFixed(1);
-        
-        resStatus.textContent = `${response.status} ${response.statusText} (${latency}ms)`;
-        resStatus.className = response.ok ? 'font-mono text-emerald-400 font-bold' : 'font-mono text-rose-400 font-bold';
+        const headers = {};
+        if (hostHeader) headers['Host'] = hostHeader;
 
-        const contentType = response.headers.get('content-type') || '';
-        let bodyText = '';
-        
-        if (contentType.includes('json')) {
-          const jsonObj = await response.json();
-          bodyText = JSON.stringify(jsonObj, null, 2);
-        } else {
-          bodyText = await response.text();
+        const res = await fetch('/internal/api/proxy-test', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ path, method, headers })
+        });
+
+        const elapsed = (performance.now() - startTime).toFixed(1);
+
+        if (!res.ok) {
+          if (resStatus) resStatus.textContent = `HTTP ${res.status} (${elapsed}ms)`;
+          if (resBody) resBody.textContent = await res.text();
+          return;
         }
 
-        resBody.textContent = bodyText;
+        const data = await res.json();
+        if (resStatus) {
+          resStatus.textContent = `HTTP ${data.status_code || 200} (${elapsed}ms)`;
+          resStatus.className = (data.status_code >= 200 && data.status_code < 300) ? 'font-mono text-xs font-bold text-emerald-600 dark:text-emerald-400' : 'font-mono text-xs font-bold text-rose-600 dark:text-rose-400';
+        }
+
+        try {
+          const parsed = JSON.parse(data.body);
+          if (resBody) resBody.textContent = JSON.stringify(parsed, null, 2);
+        } catch {
+          if (resBody) resBody.textContent = data.body || '(Empty Response Body)';
+        }
+
       } catch (err) {
-        resStatus.textContent = 'FAILED';
-        resStatus.className = 'font-mono text-rose-400 font-bold';
-        resBody.textContent = `Error executing request: ${err.message}`;
+        if (resStatus) resStatus.textContent = 'Connection Error';
+        if (resBody) resBody.textContent = `Failed to connect: ${err.message}`;
       }
+    });
+  }
+}
+
+// ============================================================================
+// 9. REFRESH & MANUAL PROBE TRIGGERS
+// ============================================================================
+function initRefreshButton() {
+  const btnRefresh = document.getElementById('btn-refresh');
+  if (btnRefresh) {
+    btnRefresh.addEventListener('click', () => {
+      pollStatus();
+      fetchUpstreamHealth();
+    });
+  }
+
+  const btnProbe = document.getElementById('btn-probe-all');
+  if (btnProbe) {
+    btnProbe.addEventListener('click', () => {
+      fetchUpstreamHealth();
     });
   }
 }

@@ -155,6 +155,11 @@ async function pollStatus() {
       statMesh.textContent = data.security.mtls_enabled ? 'mTLS Active' : 'mTLS Ready';
     }
 
+    const statOci = document.getElementById('stat-oci-count');
+    if (statOci && data.discovery) {
+      statOci.textContent = `${data.discovery.containers_count || 0} Containers`;
+    }
+
     fetchAndRenderRoutes();
     fetchSecurityIncidents();
   } catch (e) {
@@ -182,7 +187,7 @@ async function fetchAndRenderRoutes() {
 
     let ociCount = 0;
     data.routes.forEach(r => {
-      if (r.host === 'container.toron.local' || r.host === 'auto-discovered.local' || (r.host && r.host.includes('.local'))) {
+      if (r.source === 'oci' || r.container_name || r.host === 'container.toron.local' || r.host === 'auto-discovered.local' || (r.host && r.host.includes('.local'))) {
         ociCount++;
       }
     });
@@ -191,12 +196,13 @@ async function fetchAndRenderRoutes() {
     if (statOci) statOci.textContent = `${ociCount} Containers`;
 
     container.innerHTML = data.routes.map(r => {
-      const isAutoDiscovered = r.host === 'container.toron.local' || r.host === 'auto-discovered.local' || (r.host && r.host.includes('.local'));
+      const isAutoDiscovered = r.source === 'oci' || Boolean(r.container_name) || r.host === 'container.toron.local' || r.host === 'auto-discovered.local' || (r.host && r.host.includes('.local'));
       const isTranscoder = r.prefix === '/v1/users/:id' || r.prefix.includes('/v1/users');
+      const containerLabel = r.container_name ? `🐋 OCI: ${r.container_name}` : `🐋 OCI Auto-Discovered`;
 
       let badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-indigo font-semibold">${r.algorithm || 'Round-Robin'}</span>`;
       if (isAutoDiscovered) {
-        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-cyan font-semibold flex items-center gap-1">🐋 OCI Auto-Discovered</span>`;
+        badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-cyan font-semibold flex items-center gap-1">${containerLabel}</span>`;
       } else if (isTranscoder) {
         badgeHTML = `<span class="text-xs px-2.5 py-1 rounded-md traefik-badge-sky font-semibold flex items-center gap-1">🔀 REST-to-gRPC</span>`;
       } else if (r.algorithm === 'weighted_round_robin') {

@@ -18,36 +18,40 @@ import (
 
 // RouteInfo represents routing metadata for internal route listings.
 type RouteInfo struct {
-	Type      string            `json:"type"`
-	Host      string            `json:"host,omitempty"`
-	Prefix    string            `json:"prefix"`
-	Headers   map[string]string `json:"headers,omitempty"`
-	Dir       string            `json:"dir,omitempty"`
-	Algorithm string            `json:"algorithm,omitempty"`
-	Targets   []string          `json:"targets,omitempty"`
+	Type          string            `json:"type"`
+	Host          string            `json:"host,omitempty"`
+	Prefix        string            `json:"prefix"`
+	Headers       map[string]string `json:"headers,omitempty"`
+	Dir           string            `json:"dir,omitempty"`
+	Algorithm     string            `json:"algorithm,omitempty"`
+	Targets       []string          `json:"targets,omitempty"`
+	Source        string            `json:"source,omitempty"`
+	ContainerName string            `json:"container_name,omitempty"`
 }
 
 // InternalAPIConfig configures /internal/api/ route parameters without importing pkg/config.
 type InternalAPIConfig struct {
-	Port                   int              `json:"port"`
-	WorkerPoolSize         int              `json:"worker_pool_size"`
-	ProxyEnabled           bool             `json:"proxy_enabled"`
-	Routes                 []RouteInfo      `json:"routes"`
-	StaticEnabled          bool             `json:"static_enabled"`
-	StaticPrefix           string           `json:"static_prefix"`
-	StaticDir              string           `json:"static_dir"`
-	WAFEnabled             bool             `json:"waf_enabled"`
-	WAFMode                string           `json:"waf_mode"`
-	WAFAnomalyThreshold    int              `json:"waf_anomaly_threshold"`
-	WAFRulesCount          int              `json:"waf_rules_count"`
-	WAFCustomRulesCount    int              `json:"waf_custom_rules_count"`
-	WAFAllowedIPs          []string         `json:"waf_allowed_ips"`
-	WAFDeniedIPs           []string         `json:"waf_denied_ips"`
-	CORSEnabled            bool             `json:"cors_enabled"`
-	CORSAllowedOrigins     []string         `json:"cors_allowed_origins"`
-	SecurityHeadersEnabled bool             `json:"security_headers_enabled"`
-	MTLSEnabled            bool             `json:"mtls_enabled"`
-	AuditLogger            *waf.AuditLogger `json:"-"`
+	Port                   int                `json:"port"`
+	WorkerPoolSize         int                `json:"worker_pool_size"`
+	ProxyEnabled           bool               `json:"proxy_enabled"`
+	Routes                 []RouteInfo        `json:"routes"`
+	StaticEnabled          bool               `json:"static_enabled"`
+	StaticPrefix           string             `json:"static_prefix"`
+	StaticDir              string             `json:"static_dir"`
+	WAFEnabled             bool               `json:"waf_enabled"`
+	WAFMode                string             `json:"waf_mode"`
+	WAFAnomalyThreshold    int                `json:"waf_anomaly_threshold"`
+	WAFRulesCount          int                `json:"waf_rules_count"`
+	WAFCustomRulesCount    int                `json:"waf_custom_rules_count"`
+	WAFAllowedIPs          []string           `json:"waf_allowed_ips"`
+	WAFDeniedIPs           []string           `json:"waf_denied_ips"`
+	CORSEnabled            bool               `json:"cors_enabled"`
+	CORSAllowedOrigins     []string           `json:"cors_allowed_origins"`
+	SecurityHeadersEnabled bool               `json:"security_headers_enabled"`
+	MTLSEnabled            bool               `json:"mtls_enabled"`
+	DiscoveryEnabled       bool               `json:"discovery_enabled"`
+	DiscoveryFunc          func() []RouteInfo `json:"-"`
+	AuditLogger            *waf.AuditLogger   `json:"-"`
 }
 
 // UpstreamNodeHealth describes the health state of an individual upstream service node.
@@ -87,6 +91,37 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		cfg.WorkerPoolSize = 128
 	}
 
+	// Helper to get aggregated routes (static/proxy config + dynamic OCI discovery)
+	getAggregatedRoutes := func() []RouteInfo {
+		routesList := append([]RouteInfo{}, cfg.Routes...)
+		if cfg.DiscoveryFunc != nil {
+			for _, ociR := range cfg.DiscoveryFunc() {
+				routesList = append(routesList, ociR)
+			}
+		}
+		if r != nil {
+			activeSnapshots := r.GetPrefixRoutes()
+			for _, snap := range activeSnapshots {
+				found := false
+				for _, existing := range routesList {
+					if existing.Host == snap.Host && existing.Prefix == snap.Prefix {
+						found = true
+						break
+					}
+				}
+				if !found && snap.Prefix != "" && snap.Prefix != "/metrics" && !strings.HasPrefix(snap.Prefix, "/internal/") {
+					routesList = append(routesList, RouteInfo{
+						Type:    snap.Type,
+						Host:    snap.Host,
+						Prefix:  snap.Prefix,
+						Headers: snap.Headers,
+					})
+				}
+			}
+		}
+		return routesList
+	}
+
 	// 1. GET /internal/api/status
 	r.GET("/internal/api/status", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
@@ -103,6 +138,11 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			corsOrigins = make([]string, 0)
 		}
 
+		var ociCount int
+		if cfg.DiscoveryFunc != nil {
+			ociCount = len(cfg.DiscoveryFunc())
+		}
+
 		payload := map[string]interface{}{
 			"server":           "Toron",
 			"version":          "1.5.0",
@@ -111,6 +151,10 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			"port":             cfg.Port,
 			"worker_pool_size": cfg.WorkerPoolSize,
 			"metrics":          metrics.DefaultRegistry.GetSummaryJSON(),
+			"discovery": map[string]interface{}{
+				"enabled":          cfg.DiscoveryEnabled,
+				"containers_count": ociCount,
+			},
 			"security": map[string]interface{}{
 				"waf_enabled":            cfg.WAFEnabled,
 				"waf_mode":               cfg.WAFMode,
@@ -140,28 +184,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	r.GET("/internal/api/routes", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 
-		routesList := append([]RouteInfo{}, cfg.Routes...)
-
-		if r != nil {
-			activeSnapshots := r.GetPrefixRoutes()
-			for _, snap := range activeSnapshots {
-				found := false
-				for _, existing := range routesList {
-					if existing.Host == snap.Host && existing.Prefix == snap.Prefix {
-						found = true
-						break
-					}
-				}
-				if !found && snap.Prefix != "" && snap.Prefix != "/metrics" && !strings.HasPrefix(snap.Prefix, "/internal/") {
-					routesList = append(routesList, RouteInfo{
-						Type:    snap.Type,
-						Host:    snap.Host,
-						Prefix:  snap.Prefix,
-						Headers: snap.Headers,
-					})
-				}
-			}
-		}
+		routesList := getAggregatedRoutes()
 
 		payload := map[string]interface{}{
 			"proxy_enabled": cfg.ProxyEnabled,
@@ -193,7 +216,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		seenTargets := make(map[string]bool)
 		targetID := 1
 
-		for _, rInfo := range cfg.Routes {
+		for _, rInfo := range getAggregatedRoutes() {
 			if len(rInfo.Targets) == 0 {
 				continue
 			}

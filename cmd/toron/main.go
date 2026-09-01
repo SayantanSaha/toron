@@ -210,6 +210,17 @@ func main() {
 		auditLogger = globalWafEngine.AuditLogger()
 	}
 
+	// Initialize OCI Container Auto-Discovery Engine if enabled
+	var discMgr *discovery.Manager
+	if appCfg.Discovery.Enabled {
+		discMgr = discovery.NewManager(appCfg.Discovery, r)
+		if err := discMgr.Start(context.Background()); err != nil {
+			log.Printf("[TORON] Failed to start OCI Container Auto-Discovery: %v", err)
+		} else {
+			defer discMgr.Stop()
+		}
+	}
+
 	internalCfg := server.InternalAPIConfig{
 		Port:                   appCfg.Server.Port,
 		WorkerPoolSize:         appCfg.Server.WorkerPoolSize,
@@ -229,6 +240,25 @@ func main() {
 		CORSAllowedOrigins:     appCfg.Server.CORS.AllowOrigins,
 		SecurityHeadersEnabled: appCfg.Server.SecurityHeaders.Enabled,
 		MTLSEnabled:            appCfg.Server.TLS.Enabled,
+		DiscoveryEnabled:       appCfg.Discovery.Enabled,
+		DiscoveryFunc: func() []server.RouteInfo {
+			if discMgr == nil {
+				return nil
+			}
+			active := discMgr.ActiveRoutes()
+			res := make([]server.RouteInfo, 0, len(active))
+			for _, dr := range active {
+				res = append(res, server.RouteInfo{
+					Type:          "upstream",
+					Host:          dr.Host,
+					Prefix:        dr.Prefix,
+					Targets:       []string{dr.TargetURL()},
+					Source:        "oci",
+					ContainerName: dr.ContainerName,
+				})
+			}
+			return res
+		},
 		AuditLogger:            auditLogger,
 	}
 	server.RegisterInternalAPIRoutes(r, internalCfg)
@@ -382,16 +412,6 @@ func main() {
 	if appCfg.Static.Enabled && !staticEnabled {
 		log.Printf("[TORON] Serving static assets from %s under prefix %q...", appCfg.Static.Dir, appCfg.Static.Prefix)
 		_ = r.RoutePrefix(router.RouteTypeStatic, "", appCfg.Static.Prefix, nil, appCfg.Static.Dir, proxy.ProxyOptions{})
-	}
-
-	// Initialize OCI Container Auto-Discovery Engine if enabled
-	if appCfg.Discovery.Enabled {
-		discMgr := discovery.NewManager(appCfg.Discovery, r)
-		if err := discMgr.Start(context.Background()); err != nil {
-			log.Printf("[TORON] Failed to start OCI Container Auto-Discovery: %v", err)
-		} else {
-			defer discMgr.Stop()
-		}
 	}
 
 	// Initialize Kubernetes Ingress Controller Engine if enabled

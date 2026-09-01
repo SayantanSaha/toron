@@ -13,6 +13,7 @@ import (
 	"toron/pkg/httpparser"
 	"toron/pkg/metrics"
 	"toron/pkg/router"
+	"toron/pkg/version"
 	"toron/pkg/waf"
 )
 
@@ -145,7 +146,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 
 		payload := map[string]interface{}{
 			"server":           "Toron",
-			"version":          "1.5.0",
+			"version":          version.Get(),
 			"uptime":           "healthy",
 			"engine":           "event-driven",
 			"port":             cfg.Port,

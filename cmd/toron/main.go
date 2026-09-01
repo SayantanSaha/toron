@@ -20,6 +20,7 @@ import (
 	"toron/pkg/server"
 	"toron/pkg/sidecar"
 	"toron/pkg/transcoder"
+	"toron/pkg/version"
 	"toron/pkg/waf"
 )
 
@@ -27,13 +28,21 @@ func main() {
 	var configPath string
 	var routesPath string
 	var testConfig bool
+	var showVersion bool
 	flag.StringVar(&configPath, "config", "", "Path to YAML server configuration file (e.g. -config config.yaml)")
 	flag.StringVar(&configPath, "c", "", "Path to YAML server configuration file (short alias)")
 	flag.StringVar(&routesPath, "routes", "", "Path to YAML proxy routing configuration file (e.g. -routes routes.yaml)")
 	flag.StringVar(&routesPath, "r", "", "Path to YAML proxy routing configuration file (short alias)")
 	flag.BoolVar(&testConfig, "test-config", false, "Test configuration files syntax and exit without running server")
 	flag.BoolVar(&testConfig, "t", false, "Test configuration files syntax and exit (short alias)")
+	flag.BoolVar(&showVersion, "version", false, "Print Toron version and build information and exit")
+	flag.BoolVar(&showVersion, "v", false, "Print Toron version (short alias)")
 	flag.Parse()
+
+	if showVersion {
+		fmt.Println(version.Full())
+		os.Exit(0)
+	}
 
 	// If no flag provided, check if default files exist in current working directory
 	if configPath == "" {
@@ -271,7 +280,7 @@ func main() {
 
 	r.GET("/api/status", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
-		_, _ = res.WriteString(`{"server":"Toron","version":"1.0.0","uptime":"healthy","engine":"event-driven"}`)
+		_, _ = res.WriteString(fmt.Sprintf(`{"server":"Toron","version":%q,"uptime":"healthy","engine":"event-driven"}`, version.Get()))
 	})
 
 	// Initialize SNIRegistry for dynamic per-host TLS & mTLS dispatching

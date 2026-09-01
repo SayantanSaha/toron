@@ -7,6 +7,9 @@ rem ============================================================================
 setlocal enabledelayedexpansion
 
 set TORON_VERSION=1.5.0
+if exist "%~dp0VERSION" (
+    set /p TORON_VERSION=<"%~dp0VERSION"
+)
 set INSTALL_BIN_DIR=C:\Program Files\Toron
 set INSTALL_CONF_DIR=C:\ProgramData\Toron
 set INSTALL_LOG_DIR=C:\ProgramData\Toron\logs

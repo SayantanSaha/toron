@@ -6,6 +6,11 @@ BINARY_NAME=toron
 BUILD_DIR=bin
 MAIN_SRC=./cmd/toron
 
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo "1.5.0")
+GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_DATE ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
+LDFLAGS = -X toron/pkg/version.Version=$(VERSION) -X toron/pkg/version.GitCommit=$(GIT_COMMIT) -X toron/pkg/version.BuildDate=$(BUILD_DATE)
+
 .PHONY: all build dummy run test test-v clean docker-up docker-down graph help
 
 all: build
@@ -13,43 +18,43 @@ all: build
 ## build: Compiles the Toron edge gateway binary into bin/
 build:
 	@mkdir -p $(BUILD_DIR)
-	@echo "==> Building Toron binary in $(BUILD_DIR)/$(BINARY_NAME)..."
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_SRC)
+	@echo "==> Building Toron v$(VERSION) ($(GIT_COMMIT)) in $(BUILD_DIR)/$(BINARY_NAME)..."
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) $(MAIN_SRC)
 	@echo "==> Build complete: $(BUILD_DIR)/$(BINARY_NAME)"
 
 ## build-darwin-arm64: Compiles Toron binary for macOS Apple Silicon (ARM64)
 build-darwin-arm64:
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> Building Toron binary for macOS ARM64 in $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64..."
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_SRC)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_SRC)
 	@echo "==> macOS ARM64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64"
 
 ## build-linux-arm64: Compiles Toron binary for Linux ARM64 (aarch64)
 build-linux-arm64:
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> Building Toron binary for Linux ARM64 in $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 $(MAIN_SRC)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 $(MAIN_SRC)
 	@echo "==> Linux ARM64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64"
 
 ## build-linux-amd64: Compiles Toron binary for Linux AMD64 (x86_64)
 build-linux-amd64:
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> Building Toron binary for Linux AMD64 in $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64..."
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_SRC)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(MAIN_SRC)
 	@echo "==> Linux AMD64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64"
 
 ## build-windows-amd64: Compiles Toron binary for Windows AMD64 (x86_64)
 build-windows-amd64:
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> Building Toron binary for Windows AMD64 in $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe..."
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_SRC)
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe $(MAIN_SRC)
 	@echo "==> Windows AMD64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe"
 
 ## build-windows-arm64: Compiles Toron binary for Windows ARM64
 build-windows-arm64:
 	@mkdir -p $(BUILD_DIR)
 	@echo "==> Building Toron binary for Windows ARM64 in $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe..."
-	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe $(MAIN_SRC)
+	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe $(MAIN_SRC)
 	@echo "==> Windows ARM64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe"
 
 ## build-all: Cross-compiles binaries for macOS, Linux, and Windows (ARM64 & AMD64)

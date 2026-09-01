@@ -8,6 +8,7 @@
 - **Prefix Management & 3xx Redirect/Cookie Rewriting (`pkg/proxy`)**: Automated inbound `X-Forwarded-Prefix` injection, 3xx `Location` redirect rewriting, and `Set-Cookie: Path=` scoping for prefix-routed legacy and modern microservices (`TASK-052`, `REQ-052`, `ADR-047`).
 - **Dynamic Upstream Health Matrix & Telemetry Dashboard (`pkg/server`, `public/`)**: Removed all hardcoded mock ports and dummy services from the dashboard, replacing them with dynamic runtime route aggregation, concurrent target health probing, and dynamic API tester endpoints (`TASK-053`, `REQ-053`, `ADR-048`).
 - **Dashboard v2.0 Redesign (`public/`)**: Redesigned modern minimalist, mobile-first control center with 3-way light/dark/system theme synchronization, instant route search, and upgraded interactive API console (`TASK-054`, `REQ-054`, `ADR-049`).
+- **Centralized Version Management (`pkg/version`, `VERSION`)**: Unified single-source-of-truth semantic versioning across Go runtime, linker metadata injection (`-ldflags`), Makefile, and OS auto-installers with `-v`/`-version` CLI support (`TASK-055`, `REQ-055`, `ADR-050`).
 - **Standardized Configuration Standard**: Enforced `/etc/toron/` (`config.yaml`, `routes.yaml`, `public/`) system configuration and `/var/log/toron/` centralized logging paths across system daemons.
 
 ### Related Tasks
@@ -16,6 +17,7 @@
 - `TASK-052`: Implement Reverse Proxy Prefix Management & Redirect/Cookie Rewriting
 - `TASK-053`: Implement Dynamic Upstream Discovery & Data-Driven Dashboard
 - `TASK-054`: Implement Dashboard v2.0 UI Redesign & Multi-Theme Engine
+- `TASK-055`: Implement Centralized Version Tracking & Build Metadata Injection
 
 ## 2026-08-16 - Toron v1.4.0 Feature Release (Prototype 39: REST-to-gRPC Transcoding Engine)
 

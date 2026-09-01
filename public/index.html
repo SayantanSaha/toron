@@ -69,7 +69,7 @@
           <div>
             <div class="flex items-center space-x-2">
               <span class="font-extrabold text-base tracking-tight text-white">TORON</span>
-              <span class="text-[10px] font-bold px-2 py-0.5 rounded-full traefik-badge-cyan">v1.4.0-p39</span>
+              <span id="header-version" class="text-[10px] font-bold px-2 py-0.5 rounded-full traefik-badge-cyan">v1.5.0</span>
             </div>
             <span class="text-[10px] text-slate-400 block -mt-0.5">Cloud-Native Edge Gateway & Reverse Proxy</span>
           </div>
@@ -116,7 +116,7 @@
           <span class="p-1 rounded bg-indigo-500/10 text-indigo-400">🌐</span>
         </div>
         <div class="mt-2">
-          <div id="stat-routers-count" class="text-xl font-extrabold text-white font-mono">16 Routes</div>
+          <div id="stat-routers-count" class="text-xl font-extrabold text-white font-mono">0 Routes</div>
           <p class="text-[11px] text-slate-400 mt-0.5">Active L7 Rules</p>
         </div>
       </div>
@@ -128,7 +128,7 @@
           <span class="p-1 rounded bg-emerald-500/10 text-emerald-400">⚡</span>
         </div>
         <div class="mt-2">
-          <div id="stat-upstreams-count" class="text-xl font-extrabold text-emerald-400 font-mono">13 Nodes</div>
+          <div id="stat-upstreams-count" class="text-xl font-extrabold text-emerald-400 font-mono">0 Nodes</div>
           <p class="text-[11px] text-slate-400 mt-0.5">Load Balanced</p>
         </div>
       </div>
@@ -140,7 +140,7 @@
           <span class="p-1 rounded bg-cyan-500/10 text-cyan-400">🐋</span>
         </div>
         <div class="mt-2">
-          <div id="stat-oci-count" class="text-xl font-extrabold text-cyan-400 font-mono">3 Containers</div>
+          <div id="stat-oci-count" class="text-xl font-extrabold text-cyan-400 font-mono">0 Containers</div>
           <p class="text-[11px] text-slate-400 mt-0.5">Unix REST Stream</p>
         </div>
       </div>
@@ -188,11 +188,11 @@
       <nav class="flex space-x-2 overflow-x-auto py-2" id="desktop-tabs">
         <button data-tab="tab-routers" class="tab-btn active px-4 py-2 text-xs font-semibold rounded-lg text-indigo-400 bg-indigo-500/10 border border-indigo-500/20 transition flex items-center space-x-2">
           <span>🌐 HTTP Routers</span>
-          <span class="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/20 text-indigo-300 font-mono" id="tab-badge-routers">16</span>
+          <span class="px-1.5 py-0.5 text-[10px] rounded bg-indigo-500/20 text-indigo-300 font-mono" id="tab-badge-routers">0</span>
         </button>
         <button data-tab="tab-services" class="tab-btn px-4 py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition flex items-center space-x-2">
           <span>⚡ Upstream Services</span>
-          <span class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-500/20 text-emerald-300 font-mono">13</span>
+          <span class="px-1.5 py-0.5 text-[10px] rounded bg-emerald-500/20 text-emerald-300 font-mono" id="tab-badge-services">0</span>
         </button>
         <button data-tab="tab-mesh" class="tab-btn px-4 py-2 text-xs font-medium rounded-lg text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 transition flex items-center space-x-2">
           <span>🕸️ Mesh & Ingress</span>
@@ -387,7 +387,7 @@
       <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
         <div class="p-3.5 rounded-xl traefik-card">
           <span class="text-xs text-slate-400 block">OWASP Active Rules</span>
-          <span class="text-lg font-bold text-white font-mono">10 Rules</span>
+          <span id="stat-waf-rules" class="text-lg font-bold text-white font-mono">10 Rules</span>
         </div>
         <div class="p-3.5 rounded-xl traefik-card">
           <span class="text-xs text-slate-400 block">Threats Intercepted</span>
@@ -395,7 +395,7 @@
         </div>
         <div class="p-3.5 rounded-xl traefik-card">
           <span class="text-xs text-slate-400 block">Anomaly Threshold</span>
-          <span class="text-lg font-bold text-amber-400 font-mono">5 Score</span>
+          <span id="stat-waf-threshold" class="text-lg font-bold text-amber-400 font-mono">5 Score</span>
         </div>
         <div class="p-3.5 rounded-xl traefik-card">
           <span class="text-xs text-slate-400 block">Smuggling Guard</span>
@@ -442,17 +442,13 @@
             <div>
               <label class="block text-xs font-medium text-slate-400 mb-1">Target Endpoint</label>
               <select id="tester-url" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
-                <option value="/health">GET /health (Server Health)</option>
-                <option value="/container-api/health">GET /container-api/health (Host: container.toron.local)</option>
-                <option value="/auto-discovered/health">GET /auto-discovered/health (Host: auto-discovered.local)</option>
-                <option value="/v1/users/123">GET /v1/users/123 (REST-to-gRPC Transcoder)</option>
-                <option value="/services/cluster/info">GET /services/cluster/info (Cluster Round-Robin)</option>
-                <option value="/internal/api/status">GET /internal/api/status (Engine Metrics)</option>
+                <option value="/health" data-host="">GET /health (Server Health)</option>
+                <option value="/internal/api/status" data-host="">GET /internal/api/status (Engine Metrics)</option>
               </select>
             </div>
             <div>
               <label class="block text-xs font-medium text-slate-400 mb-1">Host Header Override</label>
-              <input type="text" id="tester-host-header" placeholder="container.toron.local" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
+              <input type="text" id="tester-host-header" placeholder="Optional Host Header" class="w-full bg-slate-950 border border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-white focus:outline-none focus:border-indigo-500">
             </div>
             <div class="flex items-end">
               <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold py-2 px-4 rounded-lg transition active:scale-95 shadow-lg shadow-indigo-600/20">

@@ -43,14 +43,17 @@ type ContainerEvent struct {
 
 // DiscoveredRoute captures routing specifications extracted from container labels or annotations.
 type DiscoveredRoute struct {
-	ContainerID     string
-	ContainerName   string
-	Host            string
-	Prefix          string
-	TargetIP        string
-	TargetPort      int
-	Weight          int
-	HealthCheckPath string
+	ContainerID       string
+	ContainerName     string
+	Host              string
+	Prefix            string
+	TargetIP          string
+	TargetPort        int
+	Weight            int
+	HealthCheckPath   string
+	StripPrefix       *bool
+	RewriteRedirects  *bool
+	RewriteCookiePath *bool
 }
 
 // TargetURL formats the upstream destination URL (e.g., http://172.17.0.2:8080).

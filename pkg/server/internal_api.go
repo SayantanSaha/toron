@@ -180,51 +180,95 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	r.GET("/internal/api/upstreams/health", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 
-		upstreamsDef := []struct {
-			id    int
-			port  int
-			name  string
-			route string
-			algo  string
-		}{
-			{1, 9001, "Dummy Service 1", "/api (v2)", "Round-Robin"},
-			{2, 9002, "Dummy Service 2", "/api (v2)", "Round-Robin"},
-			{3, 9003, "Dummy Service 3", "/api (v2)", "Round-Robin"},
-			{4, 9004, "Dummy Service 4", "/api (v1)", "Single Target"},
-			{5, 9005, "Dummy Service 5", "/services/cluster", "Round-Robin"},
-			{6, 9006, "Dummy Service 6", "/services/cluster", "Round-Robin"},
-			{7, 9007, "Dummy Service 7", "/services/cluster", "Round-Robin"},
-			{8, 9008, "Dummy Service 8", "/services/auth", "Single Target"},
-			{9, 9009, "Dummy Service 9", "/services/analytics", "Round-Robin"},
-			{10, 9010, "Dummy Service 10", "/services/analytics", "Round-Robin"},
+		type targetEntry struct {
+			id        int
+			port      int
+			name      string
+			route     string
+			algo      string
+			targetURL string
 		}
 
-		results := make([]UpstreamNodeHealth, len(upstreamsDef))
-		var wg sync.WaitGroup
-		client := &http.Client{Timeout: 2 * time.Second}
+		var targetEntries []targetEntry
+		seenTargets := make(map[string]bool)
+		targetID := 1
 
-		for i, def := range upstreamsDef {
+		for _, rInfo := range cfg.Routes {
+			if len(rInfo.Targets) == 0 {
+				continue
+			}
+			algo := rInfo.Algorithm
+			if algo == "" {
+				algo = "Round-Robin"
+			}
+			for _, t := range rInfo.Targets {
+				cleanTarget := strings.TrimSpace(t)
+				if cleanTarget == "" {
+					continue
+				}
+				key := fmt.Sprintf("%s|%s", rInfo.Prefix, cleanTarget)
+				if seenTargets[key] {
+					continue
+				}
+				seenTargets[key] = true
+
+				port := 80
+				u, err := url.Parse(cleanTarget)
+				if err == nil && u.Port() != "" {
+					if p, pErr := url.Parse("http://" + u.Host); pErr == nil {
+						_ = p
+					}
+					var pVal int
+					if _, scanErr := fmt.Sscanf(u.Port(), "%d", &pVal); scanErr == nil && pVal > 0 {
+						port = pVal
+					}
+				}
+
+				name := cleanTarget
+				if u != nil && u.Host != "" {
+					name = u.Host
+				}
+
+				routeLabel := rInfo.Prefix
+				if rInfo.Host != "" {
+					routeLabel = fmt.Sprintf("%s%s", rInfo.Host, rInfo.Prefix)
+				}
+
+				targetEntries = append(targetEntries, targetEntry{
+					id:        targetID,
+					port:      port,
+					name:      name,
+					route:     routeLabel,
+					algo:      algo,
+					targetURL: cleanTarget,
+				})
+				targetID++
+			}
+		}
+
+		results := make([]UpstreamNodeHealth, len(targetEntries))
+		var wg sync.WaitGroup
+		client := &http.Client{Timeout: 1500 * time.Millisecond}
+
+		for i, entry := range targetEntries {
 			wg.Add(1)
-			go func(idx int, targetDef struct {
-				id    int
-				port  int
-				name  string
-				route string
-				algo  string
-			}) {
+			go func(idx int, target targetEntry) {
 				defer wg.Done()
 				start := time.Now()
-				targetURL := fmt.Sprintf("http://localhost:%d/", targetDef.port)
+				probeURL := target.targetURL
+				if !strings.HasPrefix(probeURL, "http://") && !strings.HasPrefix(probeURL, "https://") {
+					probeURL = "http://" + probeURL
+				}
 
-				resp, err := client.Get(targetURL)
+				resp, err := client.Get(probeURL)
 				latency := float64(time.Since(start).Microseconds()) / 1000.0
 
 				node := UpstreamNodeHealth{
-					ID:        targetDef.id,
-					Port:      targetDef.port,
-					Name:      targetDef.name,
-					Route:     targetDef.route,
-					Algo:      targetDef.algo,
+					ID:        target.id,
+					Port:      target.port,
+					Name:      target.name,
+					Route:     target.route,
+					Algo:      target.algo,
 					LatencyMS: latency,
 				}
 
@@ -234,8 +278,8 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 				} else {
 					_ = resp.Body.Close()
 					node.HTTPCode = resp.StatusCode
-					if resp.StatusCode == http.StatusOK {
-						node.Status = "CLOSED"
+					if resp.StatusCode < 400 {
+						node.Status = "HEALTHY"
 					} else if resp.StatusCode >= 500 {
 						node.Status = fmt.Sprintf("OPEN (%d ERR)", resp.StatusCode)
 					} else {
@@ -243,14 +287,23 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 					}
 				}
 				results[idx] = node
-			}(i, def)
+			}(i, entry)
 		}
 
 		wg.Wait()
 
+		healthyCount := 0
+		for _, n := range results {
+			if n.Status == "HEALTHY" || n.Status == "CLOSED" || n.Status == "OK" {
+				healthyCount++
+			}
+		}
+
 		payload := map[string]interface{}{
-			"timestamp": time.Now().Format(time.RFC3339),
-			"upstreams": results,
+			"timestamp":     time.Now().Format(time.RFC3339),
+			"total_nodes":   len(results),
+			"healthy_nodes": healthyCount,
+			"upstreams":     results,
 		}
 		data, _ := json.Marshal(payload)
 		_, _ = res.Write(data)

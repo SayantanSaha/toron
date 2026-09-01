@@ -65,6 +65,9 @@ Attach `toron.*` metadata labels when starting containers:
 | **`toron.port`** | `integer` | Target port exposed inside container | `toron.port: "8080"` |
 | **`toron.weight`** | `integer` | Load balancing weight | `toron.weight: "5"` |
 | **`toron.health_check`**| `string` | Optional HTTP health probe path | `toron.health_check: "/healthz"` |
+| **`toron.strip_prefix`**| `boolean` | Strip route prefix before forwarding (default: `"true"`) | `toron.strip_prefix: "false"` |
+| **`toron.rewrite_redirects`**| `boolean` | Rewrite 3xx `Location` redirect URLs (default: `"true"`) | `toron.rewrite_redirects: "true"` |
+| **`toron.rewrite_cookie_path`**| `boolean` | Rewrite `Set-Cookie: Path=` attributes (default: `"true"`) | `toron.rewrite_cookie_path: "true"` |
 
 ---
 
@@ -74,12 +77,16 @@ Attach `toron.*` metadata labels when starting containers:
 
 ```bash
 docker run -d \
-  --name user-service-1 \
+  --name legacy-app-1 \
   --label "toron.enable=true" \
   --label "toron.host=api.example.com" \
-  --label "toron.prefix=/v1/users" \
+  --label "toron.prefix=/legacy-app" \
   --label "toron.port=8080" \
   --label "toron.weight=10" \
+  --label "toron.strip_prefix=true" \
+  --label "toron.rewrite_redirects=true" \
+  --label "toron.rewrite_cookie_path=true" \
+  --label "toron.health_check=/healthz" \
   my-user-api:latest
 ```
 

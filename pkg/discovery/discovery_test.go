@@ -80,6 +80,28 @@ func TestParseContainerLabels(t *testing.T) {
 			wantPort:      8080,
 			wantWeight:    2,
 		},
+		{
+			name: "enabled with prefix and redirect rewrite labels",
+			container: Container{
+				ID:        "c5",
+				Names:     []string{"legacy-service"},
+				Labels: map[string]string{
+					"toron.enable":               "true",
+					"toron.prefix":               "/legacy-app",
+					"toron.port":                 "8080",
+					"toron.strip_prefix":         "false",
+					"toron.rewrite_redirects":    "true",
+					"toron.rewrite_cookie_path": "true",
+				},
+				IPAddress: "172.18.0.10",
+			},
+			defaultWeight: 1,
+			wantOk:        true,
+			wantHost:      "",
+			wantPrefix:    "/legacy-app",
+			wantPort:      8080,
+			wantWeight:    1,
+		},
 	}
 
 	for _, tt := range tests {
@@ -105,6 +127,17 @@ func TestParseContainerLabels(t *testing.T) {
 			}
 			if route.TargetURL() == "" {
 				t.Errorf("TargetURL should not be empty")
+			}
+			if tt.name == "enabled with prefix and redirect rewrite labels" {
+				if route.StripPrefix == nil || *route.StripPrefix != false {
+					t.Errorf("expected StripPrefix=false, got %v", route.StripPrefix)
+				}
+				if route.RewriteRedirects == nil || *route.RewriteRedirects != true {
+					t.Errorf("expected RewriteRedirects=true, got %v", route.RewriteRedirects)
+				}
+				if route.RewriteCookiePath == nil || *route.RewriteCookiePath != true {
+					t.Errorf("expected RewriteCookiePath=true, got %v", route.RewriteCookiePath)
+				}
 			}
 		})
 	}

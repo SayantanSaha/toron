@@ -223,7 +223,10 @@ func (m *Manager) handleContainerStart(c Container) {
 
 	if m.router != nil {
 		opts := proxy.ProxyOptions{
-			Targets: []string{route.TargetURL()},
+			Targets:           []string{route.TargetURL()},
+			StripPrefix:       route.StripPrefix,
+			RewriteRedirects:  route.RewriteRedirects,
+			RewriteCookiePath: route.RewriteCookiePath,
 		}
 		_ = m.router.RoutePrefix("upstream", route.Host, route.Prefix, nil, "", opts)
 	}

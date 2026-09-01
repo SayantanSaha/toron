@@ -12,4 +12,5 @@
 5. Implement `RewriteRedirectLocation` for relative, internal backend absolute, and external third-party URL handling.
 6. Implement `RewriteCookiePath` for `Set-Cookie: Path=` rewriting.
 7. Add unit and integration test suite in `pkg/proxy/proxy_test.go`.
-8. Update wiki reference documentation in `docs/wiki/features/reverse-proxy.md` and `docs/wiki/reference/config-options.md`.
+8. Implement `toron.strip_prefix`, `toron.rewrite_redirects`, and `toron.rewrite_cookie_path` label parsing in `pkg/discovery/parser.go`, `provider.go`, and `manager.go` with tests in `discovery_test.go`.
+9. Update wiki reference documentation in `docs/wiki/features/reverse-proxy.md`, `docs/wiki/features/oci-container-auto-discovery.md`, and `docs/wiki/reference/config-options.md`.

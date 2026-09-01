@@ -13,6 +13,9 @@ services:
       toron.prefix: "/container-api"
       toron.port: "9001"
       toron.weight: "10"
+      toron.strip_prefix: "true"
+      toron.rewrite_redirects: "true"
+      toron.rewrite_cookie_path: "true"
 
   dummy-container-2:
     build:

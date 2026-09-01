@@ -92,8 +92,13 @@ func TestInternalAPIRoutes(t *testing.T) {
 		}
 
 		upstreams, ok := payload["upstreams"].([]interface{})
-		if !ok || len(upstreams) != 10 {
-			t.Fatalf("expected 10 upstreams, got %v", payload["upstreams"])
+		if !ok || len(upstreams) != 1 {
+			t.Fatalf("expected 1 dynamically discovered upstream, got %v", payload["upstreams"])
+		}
+
+		firstNode, isMap := upstreams[0].(map[string]interface{})
+		if !isMap || firstNode["port"] != float64(9001) {
+			t.Fatalf("expected discovered upstream on port 9001, got %v", upstreams[0])
 		}
 	})
 

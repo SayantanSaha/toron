@@ -6,12 +6,15 @@ import (
 )
 
 const (
-	LabelEnable      = "toron.enable"
-	LabelHost        = "toron.host"
-	LabelPrefix      = "toron.prefix"
-	LabelPort        = "toron.port"
-	LabelWeight      = "toron.weight"
-	LabelHealthCheck = "toron.health_check"
+	LabelEnable            = "toron.enable"
+	LabelHost              = "toron.host"
+	LabelPrefix            = "toron.prefix"
+	LabelPort              = "toron.port"
+	LabelWeight            = "toron.weight"
+	LabelHealthCheck       = "toron.health_check"
+	LabelStripPrefix       = "toron.strip_prefix"
+	LabelRewriteRedirects  = "toron.rewrite_redirects"
+	LabelRewriteCookiePath = "toron.rewrite_cookie_path"
 )
 
 // ParseContainerLabels extracts Toron route configuration from container labels or annotations.
@@ -67,6 +70,27 @@ func ParseContainerLabels(container Container, defaultWeight int) (*DiscoveredRo
 
 	healthCheck := strings.TrimSpace(container.Labels[LabelHealthCheck])
 
+	var stripPrefix *bool
+	if spStr, ok := container.Labels[LabelStripPrefix]; ok {
+		val := strings.ToLower(strings.TrimSpace(spStr))
+		b := val == "true" || val == "1" || val == "yes"
+		stripPrefix = &b
+	}
+
+	var rewriteRedirects *bool
+	if rrStr, ok := container.Labels[LabelRewriteRedirects]; ok {
+		val := strings.ToLower(strings.TrimSpace(rrStr))
+		b := val == "true" || val == "1" || val == "yes"
+		rewriteRedirects = &b
+	}
+
+	var rewriteCookiePath *bool
+	if rcStr, ok := container.Labels[LabelRewriteCookiePath]; ok {
+		val := strings.ToLower(strings.TrimSpace(rcStr))
+		b := val == "true" || val == "1" || val == "yes"
+		rewriteCookiePath = &b
+	}
+
 	cName := ""
 	if len(container.Names) > 0 {
 		cName = strings.TrimPrefix(container.Names[0], "/")
@@ -93,13 +117,16 @@ func ParseContainerLabels(container Container, defaultWeight int) (*DiscoveredRo
 	}
 
 	return &DiscoveredRoute{
-		ContainerID:     container.ID,
-		ContainerName:   cName,
-		Host:            host,
-		Prefix:          prefix,
-		TargetIP:        ip,
-		TargetPort:      targetPort,
-		Weight:          weight,
-		HealthCheckPath: healthCheck,
+		ContainerID:       container.ID,
+		ContainerName:     cName,
+		Host:              host,
+		Prefix:            prefix,
+		TargetIP:          ip,
+		TargetPort:        targetPort,
+		Weight:            weight,
+		HealthCheckPath:   healthCheck,
+		StripPrefix:       stripPrefix,
+		RewriteRedirects:  rewriteRedirects,
+		RewriteCookiePath: rewriteCookiePath,
 	}, true
 }

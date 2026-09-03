@@ -1,5 +1,27 @@
 # Release Notes
 
+## 2026-09-04 - Toron v1.5.1 Maintenance & Feature Release (HTTP/3 QUIC Listener Engine Integration)
+
+### Milestone Summary
+- **HTTP/3 QUIC Listener Engine Integration (`pkg/server`)**: Integrated `github.com/quic-go/quic-go/http3` server engine into Toron's core HTTP server (`ListenAndServeH3`, `H3Server`, `SetH3Server`), allowing native HTTP/3 transport over UDP with full router middleware reuse (`TASK-027`, `REQ-027`, `ADR-022`).
+- **Concurrent UDP Startup in `cmd/toron` (`cmd/toron/main.go`)**: Main application entrypoint now spawns a concurrent background goroutine running `srv.ListenAndServeH3()` bound to the configured UDP socket when TLS and HTTP/3 are enabled, running simultaneously alongside the primary HTTPS/TLS TCP listener without blocking server orchestration.
+- **Alt-Svc Protocol Upgrade Advertisement on HTTP/2 (`pkg/server`)**: Extended `http2AdapterHandler` to automatically inject `Alt-Svc: h3=":port"; ma=2592000` response headers across HTTP/2 (and HTTP/1.1) connections, notifying compliant clients and browsers to upgrade subsequent requests to HTTP/3 QUIC while preserving pre-existing `Alt-Svc` headers.
+- **Graceful QUIC Socket Shutdown (`pkg/server`)**: Enhanced `Server.Shutdown(ctx)` with `sync.RWMutex`-guarded `s.h3Server.Close()` invocation to ensure all UDP QUIC listeners and active streams are cleanly drained and closed, mapping `http.ErrServerClosed` to `ErrServerClosed` and suppressing false-positive shutdown errors in `cmd/toron/main.go`.
+
+### Added
+- **Thread-Safe HTTP/3 Server Pointer Management**: Added `H3Server()` and `SetH3Server(h *http3.Server)` to `pkg/server/server.go` protected by `sync.RWMutex`.
+- **HTTP/2 Adapter Alt-Svc Advertising**: Added automatic `Alt-Svc` header injection in `http2AdapterHandler()` in `pkg/server/server.go`.
+- **UDP QUIC Listener Orchestration**: Concurrent background listener in `cmd/toron/main.go` handling HTTP/3 over UDP port (default: 8443) when TLS is active.
+- **Unit & Regression Test Coverage (`pkg/server/server_test.go`)**:
+  - `TestServer_HTTP2Adapter_AltSvcHeader`: Tests `Alt-Svc` header injection with default port 8443, custom port 9443, disabled advertising, and existing header preservation.
+  - `TestServer_HTTP3_Shutdown`: Tests active HTTP/3 server shutdown (`Close()`) and nil-safety during graceful teardown.
+
+### Changed
+- **Graceful Shutdown**: `Server.Shutdown(ctx)` coordinates both TCP reactor shutdown and UDP QUIC socket termination (`s.h3Server.Close()`).
+
+### Related Tasks
+- `TASK-027`: Implement HTTP/3 Protocol Engine & QUIC Listener Support
+
 ## 2026-08-18 - Toron v1.5.0 Feature Release (Prototypes 40 & 41: Advanced Load Balancing & Universal Auto-Installer)
 
 ### Milestone Summary

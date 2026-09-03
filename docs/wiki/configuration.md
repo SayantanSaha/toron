@@ -4,29 +4,34 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-08-14
+updated: 2026-09-04
 
 depends_on:
   - REQ-007
   - REQ-019
+  - REQ-027
   - REQ-034
   - REQ-035
   - REQ-036
   - TASK-007
   - TASK-019
+  - TASK-027
   - TASK-034
   - TASK-035
   - TASK-036
 
 derived_from:
   - REQ-007
+  - REQ-027
   - ADR-002
+  - ADR-022
 
 documents:
   - CONFIGURATION-GUIDE
 
 related_to:
   - index.md
+  - features/http3.md
   - reference/config-options.md
   - reference/cli.md
 ---
@@ -211,6 +216,100 @@ transcoder:
 logging:
   level: "info"
   format: "text"
+```
+
+### HTTP/3 QUIC (UDP) Configuration (`server.http3`)
+
+Toron provides native HTTP/3 (RFC 9114) protocol support over QUIC (RFC 9000 UDP transport). When TLS and HTTP/3 are enabled, Toron automatically initiates a concurrent UDP listener running `quic-go/http3` alongside the primary TCP listener.
+
+#### Configuration Options
+
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `server.http3.enabled` | `boolean` | `true` | Enables or disables the HTTP/3 protocol engine and QUIC UDP socket listener. |
+| `server.http3.port` | `integer` | `8443` | UDP port on which Toron listens for incoming HTTP/3 QUIC datagrams. If `<= 0`, defaults to `8443`. |
+| `server.http3.alt_svc_header` | `boolean` | `true` | Automatically advertises HTTP/3 availability to HTTP/1.1 and HTTP/2 clients via `Alt-Svc: h3=":<port>"; ma=2592000` response headers. |
+
+> [!NOTE]
+> **Prerequisites for HTTP/3 QUIC**:
+> - HTTP/3 strictly mandates TLS 1.3 encryption. Toron will start the HTTP/3 UDP listener only when both `server.tls.enabled: true` and `server.http3.enabled: true`.
+> - The HTTP/3 QUIC listener uses the TLS certificate and private key configured under `server.tls` (`cert_file` and `key_file`, or automatically generated via `server.tls.auto_dev_cert: true`).
+> - During server shutdown, Toron performs graceful socket drainage via `s.h3Server.Close()`, cleanly terminating QUIC streams without socket leaks.
+
+#### Configuration Examples
+
+##### 1. Production Dual HTTPS & HTTP/3 Setup (Port 443)
+Accept incoming TLS TCP connections on standard port 443 (HTTP/1.1 and HTTP/2) and QUIC UDP datagrams on port 443 (HTTP/3), advertising automatic protocol upgrade to browsers:
+
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 443
+
+  tls:
+    enabled: true
+    cert_file: "/etc/toron/certs/fullchain.pem"
+    key_file: "/etc/toron/certs/privkey.pem"
+    auto_dev_cert: false
+
+  http3:
+    enabled: true
+    port: 443
+    alt_svc_header: true
+```
+
+##### 2. Local Development with Auto Dev Certificates
+Run HTTPS and HTTP/3 on port 8443 using Toron's built-in zero-config ECDSA P-256 self-signed development certificate:
+
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 8443
+
+  tls:
+    enabled: true
+    auto_dev_cert: true       # Generates ECDSA localhost certificate
+
+  http3:
+    enabled: true
+    port: 8443                # Listens on UDP :8443
+    alt_svc_header: true      # Injects Alt-Svc: h3=":8443"; ma=2592000
+```
+
+##### 3. Custom UDP Port Mapping
+Configure Toron with TCP HTTPS on port 443 while routing HTTP/3 QUIC traffic over a custom UDP port (e.g. 8443):
+
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 443
+
+  tls:
+    enabled: true
+    cert_file: "./cert.pem"
+    key_file: "./key.pem"
+
+  http3:
+    enabled: true
+    port: 8443                # Listens on UDP :8443
+    alt_svc_header: true      # Injects Alt-Svc: h3=":8443"; ma=2592000
+```
+
+##### 4. Disabling HTTP/3 Engine
+To disable HTTP/3 QUIC listener entirely and omit `Alt-Svc` discovery headers:
+
+```yaml
+server:
+  host: "0.0.0.0"
+  port: 443
+
+  tls:
+    enabled: true
+    cert_file: "./cert.pem"
+    key_file: "./key.pem"
+
+  http3:
+    enabled: false            # Disables UDP listener and Alt-Svc headers
 ```
 
 ---

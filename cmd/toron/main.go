@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log"
@@ -268,7 +269,7 @@ func main() {
 			}
 			return res
 		},
-		AuditLogger:            auditLogger,
+		AuditLogger: auditLogger,
 	}
 	server.RegisterInternalAPIRoutes(r, internalCfg)
 
@@ -495,6 +496,19 @@ func main() {
 
 	go func() {
 		if appCfg.Server.TLS.Enabled {
+			if appCfg.Server.HTTP3.Enabled {
+				h3Port := appCfg.Server.HTTP3.Port
+				if h3Port <= 0 {
+					h3Port = 8443
+				}
+				go func() {
+					log.Printf("[TORON] HTTP/3 QUIC Server listening on UDP :%d...", h3Port)
+					if err := srv.ListenAndServeH3(appCfg.Server.TLS.CertFile, appCfg.Server.TLS.KeyFile); err != nil && err != server.ErrServerClosed && !errors.Is(err, server.ErrServerClosed) {
+						log.Printf("[TORON] HTTP/3 QUIC Server error: %v", err)
+					}
+				}()
+			}
+
 			log.Printf("[TORON] HTTPS Server listening on https://localhost%s (TLS enabled)...", srvCfg.Addr)
 			if err := srv.ListenAndServeTLS(appCfg.Server.TLS.CertFile, appCfg.Server.TLS.KeyFile); err != nil && err != server.ErrServerClosed {
 				log.Fatalf("[TORON] HTTPS Server fatal error: %v", err)

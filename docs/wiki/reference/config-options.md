@@ -4,14 +4,17 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-08-14
+updated: 2026-09-04
 
 depends_on:
   - REQ-007
+  - REQ-027
   - REQ-034
   - REQ-035
   - REQ-036
   - TASK-007
+  - TASK-019
+  - TASK-027
   - TASK-034
   - TASK-035
   - TASK-036

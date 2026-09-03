@@ -4,12 +4,13 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-08-16
+updated: 2026-09-04
 
 depends_on:
   - REQ-001
   - REQ-007
   - REQ-019
+  - REQ-027
   - REQ-033
   - REQ-034
   - REQ-035
@@ -18,6 +19,7 @@ depends_on:
 derived_from:
   - PRD.md
   - ADR-001
+  - ADR-022
 
 documents:
   - TORON-DOCUMENTATION-INDEX
@@ -28,7 +30,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.0 Release)
+# Toron Documentation Wiki (v1.5.1 Release)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -43,6 +45,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### ⚙️ Core Architecture & Protocols
 - [Event Reactor Core](./features/event-reactor.md) – Event-driven concurrency, non-blocking I/O, and worker pool.
 - [HTTP/2 Engine](./features/http2.md) – Cleartext `h2c` prior-knowledge and stream multiplexing.
+- [HTTP/3 QUIC Protocol Engine](./features/http3.md) – HTTP/3 over QUIC (UDP), concurrent listener, and Alt-Svc upgrade advertising.
 - [HTTPS TLS & Auto Dev Certs](./features/tls-https.md) – TLS 1.2/1.3 encryption and ECDSA dev certificate generation.
 - [WebSocket Tunneling](./features/websocket.md) – RFC 6455 and RFC 8441 Extended CONNECT bi-directional stream tunneling.
 - [Static File Serving](./features/static-file-serving.md) – Hosting web apps, MIME resolution, and directory index handling.
@@ -76,4 +79,4 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.0).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.1).

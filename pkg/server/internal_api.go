@@ -446,4 +446,3 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		_, _ = res.Write(data)
 	})
 }
-

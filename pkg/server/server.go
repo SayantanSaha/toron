@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -42,9 +43,11 @@ func (c *prefixConn) Read(b []byte) (n int, err error) {
 
 // Server orchestrates the reactor, router, HTTP/1.1, and HTTP/2 request processing lifecycle.
 type Server struct {
-	config  Config
-	router  *router.Router
-	reactor *reactor.Reactor
+	mu       sync.RWMutex
+	config   Config
+	router   *router.Router
+	reactor  *reactor.Reactor
+	h3Server *http3.Server
 }
 
 // New creates a new Toron HTTP Server instance.
@@ -119,7 +122,17 @@ func (s *Server) SetSNIRegistry(r *SNIRegistry) {
 
 // Shutdown gracefully shuts down the server.
 func (s *Server) Shutdown(ctx context.Context) error {
-	return s.reactor.Shutdown(ctx)
+	s.mu.Lock()
+	h3 := s.h3Server
+	s.mu.Unlock()
+
+	if h3 != nil {
+		_ = h3.Close()
+	}
+	if s.reactor != nil {
+		return s.reactor.Shutdown(ctx)
+	}
+	return nil
 }
 
 // handleConn is the internal handler called by the reactor for each accepted TCP socket connection.
@@ -317,6 +330,16 @@ func (s *Server) http2AdapterHandler() http.Handler {
 		res := httpparser.NewResponse()
 		s.router.ServeHTTP(req, res)
 
+		if s.config.HTTP3Enabled && s.config.HTTP3AltSvcHeader {
+			if res.Header.Get("Alt-Svc") == "" {
+				h3Port := s.config.HTTP3Port
+				if h3Port <= 0 {
+					h3Port = 8443
+				}
+				res.Header.Set("Alt-Svc", fmt.Sprintf(`h3=":%d"; ma=2592000`, h3Port))
+			}
+		}
+
 		for k, vv := range res.Header {
 			for _, v := range vv {
 				w.Header().Add(k, v)
@@ -350,6 +373,25 @@ func (s *Server) http2AdapterHandler() http.Handler {
 	})
 }
 
+// HTTP2AdapterHandler returns an http.Handler that adapts Go's net/http requests to Toron's router.
+func (s *Server) HTTP2AdapterHandler() http.Handler {
+	return s.http2AdapterHandler()
+}
+
+// H3Server returns the active HTTP/3 server instance, if any.
+func (s *Server) H3Server() *http3.Server {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.h3Server
+}
+
+// SetH3Server sets the active HTTP/3 server instance (used for testing or custom engine injection).
+func (s *Server) SetH3Server(h *http3.Server) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.h3Server = h
+}
+
 // ListenAndServeH3 starts an HTTP/3 server over QUIC (UDP).
 func (s *Server) ListenAndServeH3(certFile, keyFile string) error {
 	if certFile != "" {
@@ -368,11 +410,18 @@ func (s *Server) ListenAndServeH3(certFile, keyFile string) error {
 		port = 8443
 	}
 
-	h3Server := &http3.Server{
+	s.mu.Lock()
+	s.h3Server = &http3.Server{
 		Addr:      fmt.Sprintf(":%d", port),
 		Handler:   s.http2AdapterHandler(),
 		TLSConfig: tlsConfig,
 	}
+	h3 := s.h3Server
+	s.mu.Unlock()
 
-	return h3Server.ListenAndServe()
+	err = h3.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		return ErrServerClosed
+	}
+	return err
 }

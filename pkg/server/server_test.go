@@ -3,11 +3,15 @@ package server_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/quic-go/quic-go/http3"
 
 	"toron/pkg/httpparser"
 	"toron/pkg/router"
@@ -183,4 +187,172 @@ func TestInternalAPI_StatusAndMetrics(t *testing.T) {
 	if !bytes.Contains(resMetrics.Body.Bytes(), []byte(`"total_requests":`)) {
 		t.Errorf("expected total_requests key in /internal/api/metrics JSON, got:\n%s", resMetrics.Body.String())
 	}
+}
+
+func TestServer_HTTP2Adapter_AltSvcHeader(t *testing.T) {
+	// Subtest 1: Configuration A (Default Port 8443)
+	t.Run("Default Port 8443", func(t *testing.T) {
+		r := router.New()
+		r.GET("/test", func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString("ok")
+		})
+
+		cfg := server.DefaultConfig()
+		cfg.HTTP3Enabled = true
+		cfg.HTTP3Port = 8443
+		cfg.HTTP3AltSvcHeader = true
+
+		srv := server.New(cfg, r)
+		handler := srv.HTTP2AdapterHandler()
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Proto = "HTTP/2.0"
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+		expected := `h3=":8443"; ma=2592000`
+		if actual := rec.Header().Get("Alt-Svc"); actual != expected {
+			t.Errorf("expected Alt-Svc header %q, got %q", expected, actual)
+		}
+	})
+
+	// Subtest 2: Configuration B (Custom Port 9443)
+	t.Run("Custom Port 9443", func(t *testing.T) {
+		r := router.New()
+		r.GET("/test", func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString("ok")
+		})
+
+		cfg := server.DefaultConfig()
+		cfg.HTTP3Enabled = true
+		cfg.HTTP3Port = 9443
+		cfg.HTTP3AltSvcHeader = true
+
+		srv := server.New(cfg, r)
+		handler := srv.HTTP2AdapterHandler()
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Proto = "HTTP/2.0"
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+		expected := `h3=":9443"; ma=2592000`
+		if actual := rec.Header().Get("Alt-Svc"); actual != expected {
+			t.Errorf("expected Alt-Svc header %q, got %q", expected, actual)
+		}
+	})
+
+	// Subtest 3: Configuration C (Disabled Advertising)
+	t.Run("Disabled Advertising", func(t *testing.T) {
+		r := router.New()
+		r.GET("/test", func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString("ok")
+		})
+
+		cfg := server.DefaultConfig()
+		cfg.HTTP3Enabled = false
+		cfg.HTTP3AltSvcHeader = false
+
+		srv := server.New(cfg, r)
+		handler := srv.HTTP2AdapterHandler()
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Proto = "HTTP/2.0"
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+		if actual := rec.Header().Get("Alt-Svc"); actual != "" {
+			t.Errorf("expected Alt-Svc header to be absent, got %q", actual)
+		}
+	})
+
+	// Subtest 4: Preserve Pre-existing Alt-Svc Header
+	t.Run("Preserve Pre-existing Alt-Svc Header", func(t *testing.T) {
+		r := router.New()
+		r.GET("/test", func(req *httpparser.Request, res *httpparser.Response) {
+			res.Header.Set("Alt-Svc", `h3=":443"; ma=3600`)
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString("ok")
+		})
+
+		cfg := server.DefaultConfig()
+		cfg.HTTP3Enabled = true
+		cfg.HTTP3Port = 8443
+		cfg.HTTP3AltSvcHeader = true
+
+		srv := server.New(cfg, r)
+		handler := srv.HTTP2AdapterHandler()
+
+		req := httptest.NewRequest("GET", "/test", nil)
+		req.Proto = "HTTP/2.0"
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", rec.Code)
+		}
+		expected := `h3=":443"; ma=3600`
+		if actual := rec.Header().Get("Alt-Svc"); actual != expected {
+			t.Errorf("expected pre-existing Alt-Svc header %q, got %q", expected, actual)
+		}
+	})
+}
+
+func TestServer_HTTP3_Shutdown(t *testing.T) {
+	// Subtest 1: Active HTTP/3 server shutdown invokes Close()
+	t.Run("Active H3 Server Close", func(t *testing.T) {
+		cfg := server.DefaultConfig()
+		cfg.HTTP3Enabled = true
+		cfg.HTTP3Port = 8443
+		srv := server.New(cfg, nil)
+
+		h3Srv := &http3.Server{}
+		srv.SetH3Server(h3Srv)
+
+		if srv.H3Server() != h3Srv {
+			t.Fatalf("expected H3Server to return attached instance")
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Fatalf("expected clean shutdown, got: %v", err)
+		}
+
+		// Verify h3Srv was closed
+		if err := h3Srv.ServeQUICConn(nil); !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("expected http.ErrServerClosed after Close(), got: %v", err)
+		}
+	})
+
+	// Subtest 2: Nil safety check
+	t.Run("Nil Safety", func(t *testing.T) {
+		cfg := server.DefaultConfig()
+		cfg.HTTP3Enabled = false
+		srv := server.New(cfg, nil)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Fatalf("expected clean shutdown with nil h3Server, got: %v", err)
+		}
+	})
 }

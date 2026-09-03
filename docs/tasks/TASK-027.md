@@ -2,14 +2,14 @@
 id: TASK-027
 type: task
 title: Implement HTTP/3 Protocol Engine & QUIC Listener Support
-status: active
+status: completed
 version: 1.0
 
 project: PROJECT-001
 owner: development-lead
 
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-09-04
 
 depends_on:
   - REQ-027

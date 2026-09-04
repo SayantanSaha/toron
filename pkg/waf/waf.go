@@ -450,4 +450,3 @@ func (e *WAFEngine) SetAuditLogger(l *AuditLogger) {
 	defer e.mu.Unlock()
 	e.auditLogger = l
 }
-

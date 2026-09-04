@@ -270,5 +270,3 @@ func TestWAFMiddleware_TelemetryAndAuditLog(t *testing.T) {
 		t.Errorf("expected log output to contain XSS-001, got: %s", logOutput)
 	}
 }
-
-

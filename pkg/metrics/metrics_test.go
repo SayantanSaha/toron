@@ -69,4 +69,3 @@ func TestMetricsRegistry_WAFTelemetry(t *testing.T) {
 		t.Errorf("expected anomalies_total 1, got %v", wafMap["anomalies_total"])
 	}
 }
-

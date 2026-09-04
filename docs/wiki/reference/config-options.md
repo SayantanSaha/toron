@@ -214,6 +214,8 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `consecutive_failures`| `integer` | Failure count required to trip circuit breaker to `Open` |
 | `cooldown_period` | `duration` | Recovery wait duration before trial probe in `HalfOpen` |
 | `dir` | `string` | Local filesystem directory for `"static"` routes (e.g. `"./public"`) |
+| `spa` | `boolean` | Enable Single Page Application (SPA) HTML5 History fallback (default: `false`) |
+| `fallback` | `string` | Fallback document filename in `dir` (default: `"index.html"`, auto-enables SPA) |
 | `listen_port` | `integer` | Inbound listening port for Layer 4 `"tcp"` or `"udp"` proxies |
 | `tls` | `object` | Per-host TLS/mTLS settings (`cert_file`, `key_file`, `ca_file`, `client_auth`, `min_version`) |
 | `waf` | `object` | Route-level WAF overrides (`enabled`, `mode`, `allowed_ips`, `denied_ips`, `disabled_rules`) |

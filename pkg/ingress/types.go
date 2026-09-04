@@ -107,7 +107,7 @@ type Secret struct {
 
 // K8sWatchEvent captures HTTP streaming watch event objects.
 type K8sWatchEvent struct {
-	Type   string          `json:"type"` // ADDED, MODIFIED, DELETED
+	Type   string         `json:"type"` // ADDED, MODIFIED, DELETED
 	Object jsonRawMessage `json:"object"`
 }
 

@@ -13,18 +13,22 @@ depends_on:
   - REQ-034
   - REQ-035
   - REQ-036
+  - REQ-056
   - TASK-007
   - TASK-019
   - TASK-027
   - TASK-034
   - TASK-035
   - TASK-036
+  - TASK-056
 
 derived_from:
   - REQ-007
   - REQ-027
+  - REQ-056
   - ADR-002
   - ADR-022
+  - ADR-051
 
 documents:
   - CONFIGURATION-GUIDE
@@ -323,6 +327,13 @@ routes:
     prefix: "/internal/dashboard"
     dir: "./public"
 
+  # Single Page Application (SPA) with HTML5 History Fallback (React / Vue)
+  - type: "static"
+    prefix: "/app"
+    dir: "/var/www/react-app/dist"
+    spa: true
+    fallback: "index.html"
+
   # Reverse Proxy with Load Balancing & Token Bucket Rate Limiting
   - type: "upstream"
     prefix: "/api"
@@ -398,8 +409,116 @@ routes:
         - "SQLI-001"
 ```
 
+### Static Routes & Single Page Application (SPA) Fallback
+
+Toron provides native static website and application hosting directly within the edge router. For modern web applications built using frameworks such as **React**, **Vue**, **Angular**, or **Svelte**, client-side routing uses the HTML5 History API (`pushState`, `replaceState`). When a browser user refreshes a deep virtual link (e.g. `/app/dashboard` or `/portal/settings`), the requested path does not exist as a physical file on the server's disk.
+
+By configuring `spa: true` and optional `fallback: "<filename>"`, Toron provides native Nginx `try_files $uri $uri/ /index.html;` parity without requiring external web servers or secondary proxy containers.
+
+#### Configuration Options
+
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `type` | `string` | *(Required)* | Set to `"static"` to serve static files from disk. |
+| `prefix` | `string` | `"/"` | URL route prefix matching incoming client requests (e.g. `"/app"`, `"/portal"`). |
+| `dir` | `string` | *(Required)* | Local filesystem root directory containing static assets (e.g. `"./dist"`, `"/var/www/app"`). |
+| `spa` | `boolean` | `false` | Enables Single Page Application (SPA) HTML5 History fallback for virtual navigation paths. |
+| `fallback` | `string` | `"index.html"` | Name of the fallback HTML document inside `dir`. Setting a custom filename automatically enables SPA mode. |
+
+#### Key Capabilities & Protections
+
+1. **Deterministic SPA Fallback**:
+   - For incoming `GET` and `HEAD` requests matching an SPA route, if the target path does not physically exist on disk and has **no file extension** (e.g., `/app/dashboard`, `/app/users/42`), Toron transparently serves the configured fallback document with HTTP `200 OK` and `Content-Type: text/html; charset=utf-8`.
+   - Supports deep nested virtual paths (e.g., `/app/team/engineering/settings`).
+   - For HTTP `HEAD` requests, Toron returns `200 OK` with correct content headers and omits the response payload.
+
+2. **Asset Masking Protection**:
+   - A critical challenge in traditional SPA rewrites is *asset masking*, where missing JavaScript or CSS files inadvertently return HTML, causing client-side syntax errors (`Uncaught SyntaxError: Unexpected token '<'`) and CSS MIME-type rejections.
+   - Toron inspects the requested relative path: any request containing a file extension (`filepath.Ext(relPath) != ""`, such as `.js`, `.css`, `.png`, `.svg`, `.json`, `.woff2`) that does not exist on disk **strictly returns HTTP 404 Not Found** and is never served the fallback document.
+
+3. **Path Traversal & Boundary Containment Defense**:
+   - Fallback file resolution is verified against path traversal (`../`) and symlink directory escapes using `filepath.Rel` and `filepath.EvalSymlinks`.
+   - Fallback paths attempting to escape the configured static root directory `dir` are strictly rejected with HTTP `403 Forbidden` or `404 Not Found`.
+
+4. **Zero Performance Overhead on Physical Hits**:
+   - Existing physical assets (e.g. `bundle.js`, `style.css`, images) and direct directory indices (`dashboard/index.html`) continue to serve directly on the first filesystem lookup with optimal performance and automatic MIME detection. Fallback logic runs only on filesystem misses (`os.IsNotExist`).
+
+---
+
+#### Configuration Examples
+
+##### 1. React / Vite SPA Setup (Default Fallback)
+
+Host a React or Vite single-page application under the `/app` URL prefix. All virtual routes resolve to `index.html`:
+
+```yaml
+routes:
+  - type: "static"
+    prefix: "/app"
+    dir: "./frontend/dist"
+    spa: true
+    # fallback defaults to "index.html"
+```
+
+##### 2. Vue / Nuxt SPA Setup with Custom Fallback
+
+Host a Vue application requiring a custom fallback document (such as `200.html` or `app.html` produced by static site generators):
+
+```yaml
+routes:
+  - type: "static"
+    prefix: "/portal"
+    dir: "/var/www/portal/dist"
+    spa: true
+    fallback: "200.html"
+```
+
+> [!TIP]
+> Setting `fallback: "200.html"` automatically activates SPA mode even if `spa: true` is not explicitly declared.
+
+##### 3. Multi-SPA Architecture under Different Route Prefixes
+
+Toron can host multiple independent SPAs concurrently alongside API microservices:
+
+```yaml
+routes:
+  # Customer-facing React Application
+  - type: "static"
+    prefix: "/customer"
+    dir: "/var/www/customer-portal/dist"
+    spa: true
+    fallback: "index.html"
+
+  # Internal Admin Vue Application
+  - type: "static"
+    prefix: "/admin"
+    dir: "/var/www/admin-portal/dist"
+    spa: true
+    fallback: "admin.html"
+
+  # Backend REST API
+  - type: "upstream"
+    prefix: "/api"
+    target: "http://localhost:9001"
+```
+
+##### 4. Standard Non-SPA Static Directory (Documentation / Downloads)
+
+For static assets or documentation where non-existent files must return HTTP `404 Not Found` without fallback:
+
+```yaml
+routes:
+  - type: "static"
+    prefix: "/docs"
+    dir: "./public/docs"
+    spa: false                # Preserves standard 404 behavior for all missing paths
+```
+
+---
+
 ## Related Pages
 
 - [Documentation Index](./index.md)
+- [Static File Serving Feature Guide](./features/static-file-serving.md)
 - [Configuration Options Reference](./reference/config-options.md)
 - [CLI Reference](./reference/cli.md)

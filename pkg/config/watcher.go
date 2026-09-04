@@ -228,4 +228,3 @@ func (w *ConfigWatcher) Stop() error {
 
 	return w.watcher.Close()
 }
-

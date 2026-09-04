@@ -173,7 +173,7 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 		if err != nil {
 			absDir = dirPath
 		}
-		handler = r.createStaticHandler(cleanPrefix, absDir)
+		handler = r.createStaticHandler(cleanPrefix, absDir, opts)
 	} else if normType == RouteTypeUpstream {
 		px, err := proxy.NewProxyWithOptions(opts)
 		if err != nil {
@@ -267,7 +267,7 @@ func (r *Router) StaticWithOptions(host, prefix string, headers map[string]strin
 	return r.RoutePrefix(RouteTypeStatic, host, prefix, headers, dirPath, proxy.ProxyOptions{})
 }
 
-func (r *Router) createStaticHandler(cleanPrefix, absDir string) HandlerFunc {
+func (r *Router) createStaticHandler(cleanPrefix, absDir string, opts proxy.ProxyOptions) HandlerFunc {
 	return func(req *httpparser.Request, res *httpparser.Response) {
 		if req.Method != "GET" && req.Method != "HEAD" {
 			r.MethodNotAllowed(req, res)
@@ -283,12 +283,14 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string) HandlerFunc {
 			}
 			relPath = strings.TrimPrefix(req.Path, cleanPrefix)
 		}
-		if relPath == "" || relPath == "/" {
-			relPath = "/index.html"
+
+		fileRelPath := relPath
+		if fileRelPath == "" || fileRelPath == "/" {
+			fileRelPath = "/index.html"
 		}
 
 		// Security: Prevent path traversal & symlink escape
-		cleanRel := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(relPath, "/")))
+		cleanRel := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(fileRelPath, "/")))
 		targetPath := filepath.Join(absDir, cleanRel)
 
 		relFromDir, err := filepath.Rel(absDir, targetPath)
@@ -314,10 +316,53 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string) HandlerFunc {
 			}
 		}
 
+		serveFallback := func() {
+			spaMode := opts.SPA || strings.TrimSpace(opts.Fallback) != ""
+			if spaMode && filepath.Ext(relPath) == "" {
+				fallbackName := filepath.Base(opts.Fallback)
+				if fallbackName == "." || fallbackName == ".." || fallbackName == "" {
+					fallbackName = "index.html"
+				}
+				fallbackPath := filepath.Join(absDir, fallbackName)
+
+				relFB, err := filepath.Rel(absDir, fallbackPath)
+				if err != nil || strings.HasPrefix(relFB, "..") || (strings.HasPrefix(relFB, ".") && len(relFB) > 1 && relFB[1] == '.') {
+					res.SetStatus(http.StatusForbidden)
+					res.Header.Set("Content-Type", "application/json")
+					_, _ = res.WriteString(`{"error":"403 Forbidden: Path Traversal Disallowed"}`)
+					return
+				}
+
+				if evalFB, err := filepath.EvalSymlinks(fallbackPath); err == nil {
+					relFBReal, err := filepath.Rel(realAbsDir, evalFB)
+					if err != nil || strings.HasPrefix(relFBReal, "..") || (strings.HasPrefix(relFBReal, ".") && len(relFBReal) > 1 && relFBReal[1] == '.') {
+						res.SetStatus(http.StatusForbidden)
+						res.Header.Set("Content-Type", "application/json")
+						_, _ = res.WriteString(`{"error":"403 Forbidden: Symlink Path Traversal Disallowed"}`)
+						return
+					}
+				}
+
+				fbInfo, err := os.Stat(fallbackPath)
+				if err == nil && !fbInfo.IsDir() {
+					fbData, err := os.ReadFile(fallbackPath)
+					if err == nil {
+						res.SetStatus(http.StatusOK)
+						res.Header.Set("Content-Type", "text/html; charset=utf-8")
+						if req.Method != "HEAD" {
+							_, _ = res.Write(fbData)
+						}
+						return
+					}
+				}
+			}
+			r.NotFound(req, res)
+		}
+
 		fileInfo, err := os.Stat(targetPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				r.NotFound(req, res)
+				serveFallback()
 				return
 			}
 			res.SetStatus(http.StatusInternalServerError)
@@ -328,14 +373,14 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string) HandlerFunc {
 			targetPath = filepath.Join(targetPath, "index.html")
 			fileInfo, err = os.Stat(targetPath)
 			if err != nil || fileInfo.IsDir() {
-				r.NotFound(req, res)
+				serveFallback()
 				return
 			}
 		}
 
 		data, err := os.ReadFile(targetPath)
 		if err != nil {
-			r.NotFound(req, res)
+			serveFallback()
 			return
 		}
 

@@ -75,13 +75,13 @@ func (p *UnixRESTProvider) Name() string {
 
 // dockerContainerJSON mirrors the container REST JSON schema returned by Docker/Podman engines.
 type dockerContainerJSON struct {
-	ID         string            `json:"Id"`
-	Names      []string          `json:"Names"`
-	Image      string            `json:"Image"`
-	State      string            `json:"State"`
-	Status     string            `json:"Status"`
-	Labels     map[string]string `json:"Labels"`
-	Ports      []PortMapping     `json:"Ports"`
+	ID              string            `json:"Id"`
+	Names           []string          `json:"Names"`
+	Image           string            `json:"Image"`
+	State           string            `json:"State"`
+	Status          string            `json:"Status"`
+	Labels          map[string]string `json:"Labels"`
+	Ports           []PortMapping     `json:"Ports"`
 	NetworkSettings struct {
 		IPAddress string `json:"IPAddress"`
 		Networks  map[string]struct {

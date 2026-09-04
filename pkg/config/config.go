@@ -228,29 +228,31 @@ type ProxyConfig struct {
 
 // ProxyRouteConfig describes a route rule that can serve either a static site or act as an upstream reverse proxy.
 type ProxyRouteConfig struct {
-	Type                string            `yaml:"type" json:"type"` // "static" or "upstream" / "proxy"
-	Host                string            `yaml:"host" json:"host"`
-	Domain              string            `yaml:"domain" json:"domain"`
-	Prefix              string            `yaml:"prefix" json:"prefix"`
-	Headers             map[string]string `yaml:"headers" json:"headers"`
-	Dir                 string            `yaml:"dir" json:"dir"`
-	StaticDir           string            `yaml:"static_dir" json:"static_dir"`
-	ListenPort          int               `yaml:"listen_port" json:"listen_port"`
-	Port                int               `yaml:"port" json:"port"`
-	Target              string            `yaml:"target" json:"target"`
-	Targets             []string          `yaml:"targets" json:"targets"`
-	Algorithm           string            `yaml:"algorithm" json:"algorithm"`
-	HealthCheckType     string            `yaml:"health_check_type" json:"health_check_type"`
-	HealthCheckPath     string            `yaml:"health_check_path" json:"health_check_path"`
-	HealthCheckService  string            `yaml:"health_check_service" json:"health_check_service"`
-	HealthCheckInterval time.Duration     `yaml:"health_check_interval" json:"health_check_interval"`
-	ConsecutiveFailures int               `yaml:"consecutive_failures" json:"consecutive_failures"`
-	CooldownPeriod      time.Duration     `yaml:"cooldown_period" json:"cooldown_period"`
-	RateLimit           string            `yaml:"rate_limit" json:"rate_limit"`
-	StickyCookieName    string            `yaml:"sticky_cookie_name" json:"sticky_cookie_name"`
-	StripPrefix         *bool             `yaml:"strip_prefix,omitempty" json:"strip_prefix,omitempty"`
-	RewriteRedirects    *bool             `yaml:"rewrite_redirects,omitempty" json:"rewrite_redirects,omitempty"`
-	RewriteCookiePath   *bool             `yaml:"rewrite_cookie_path,omitempty" json:"rewrite_cookie_path,omitempty"`
+	Type                string                `yaml:"type" json:"type"` // "static" or "upstream" / "proxy"
+	Host                string                `yaml:"host" json:"host"`
+	Domain              string                `yaml:"domain" json:"domain"`
+	Prefix              string                `yaml:"prefix" json:"prefix"`
+	Headers             map[string]string     `yaml:"headers" json:"headers"`
+	Dir                 string                `yaml:"dir" json:"dir"`
+	StaticDir           string                `yaml:"static_dir" json:"static_dir"`
+	SPA                 bool                  `yaml:"spa" json:"spa"`
+	Fallback            string                `yaml:"fallback" json:"fallback"`
+	ListenPort          int                   `yaml:"listen_port" json:"listen_port"`
+	Port                int                   `yaml:"port" json:"port"`
+	Target              string                `yaml:"target" json:"target"`
+	Targets             []string              `yaml:"targets" json:"targets"`
+	Algorithm           string                `yaml:"algorithm" json:"algorithm"`
+	HealthCheckType     string                `yaml:"health_check_type" json:"health_check_type"`
+	HealthCheckPath     string                `yaml:"health_check_path" json:"health_check_path"`
+	HealthCheckService  string                `yaml:"health_check_service" json:"health_check_service"`
+	HealthCheckInterval time.Duration         `yaml:"health_check_interval" json:"health_check_interval"`
+	ConsecutiveFailures int                   `yaml:"consecutive_failures" json:"consecutive_failures"`
+	CooldownPeriod      time.Duration         `yaml:"cooldown_period" json:"cooldown_period"`
+	RateLimit           string                `yaml:"rate_limit" json:"rate_limit"`
+	StickyCookieName    string                `yaml:"sticky_cookie_name" json:"sticky_cookie_name"`
+	StripPrefix         *bool                 `yaml:"strip_prefix,omitempty" json:"strip_prefix,omitempty"`
+	RewriteRedirects    *bool                 `yaml:"rewrite_redirects,omitempty" json:"rewrite_redirects,omitempty"`
+	RewriteCookiePath   *bool                 `yaml:"rewrite_cookie_path,omitempty" json:"rewrite_cookie_path,omitempty"`
 	Auth                AuthConfig            `yaml:"auth" json:"auth"`
 	TLS                 RouteTLSConfig        `yaml:"tls" json:"tls"`
 	CORS                CORSConfig            `yaml:"cors" json:"cors"`

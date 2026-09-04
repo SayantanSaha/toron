@@ -1,6 +1,7 @@
 package config_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -215,5 +216,101 @@ func TestConfig_ParseRateLimit(t *testing.T) {
 	_, _, errInvalid := config.ParseRateLimit("abc/invalid")
 	if errInvalid == nil {
 		t.Errorf("expected error for invalid rate limit format, got nil")
+	}
+}
+
+func TestConfig_SPARouteConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	routesPath := filepath.Join(tmpDir, "routes.yaml")
+
+	yamlData := `
+proxy:
+  enabled: true
+  routes:
+    - prefix: "/kite"
+      type: static
+      dir: "/var/www/kite"
+      spa: true
+
+    - prefix: "/custom"
+      type: static
+      dir: "/var/www/custom"
+      spa: true
+      fallback: "app.html"
+
+    - prefix: "/portal"
+      type: static
+      dir: "/var/www/portal"
+      fallback: "portal.html"
+
+    - prefix: "/legacy"
+      type: static
+      dir: "/var/www/legacy"
+      spa: false
+`
+	if err := os.WriteFile(routesPath, []byte(yamlData), 0644); err != nil {
+		t.Fatalf("failed to write routes yaml: %v", err)
+	}
+
+	cfg, err := config.LoadFromFiles("", routesPath)
+	if err != nil {
+		t.Fatalf("failed to load routes file: %v", err)
+	}
+
+	if len(cfg.Proxy.Routes) != 4 {
+		t.Fatalf("expected 4 proxy routes, got %d", len(cfg.Proxy.Routes))
+	}
+
+	r0 := cfg.Proxy.Routes[0]
+	if !r0.SPA {
+		t.Errorf("route 0: expected SPA true, got false")
+	}
+	if r0.Fallback != "" {
+		t.Errorf("route 0: expected fallback empty, got %q", r0.Fallback)
+	}
+
+	r1 := cfg.Proxy.Routes[1]
+	if !r1.SPA {
+		t.Errorf("route 1: expected SPA true, got false")
+	}
+	if r1.Fallback != "app.html" {
+		t.Errorf("route 1: expected fallback 'app.html', got %q", r1.Fallback)
+	}
+
+	r2 := cfg.Proxy.Routes[2]
+	if r2.Fallback != "portal.html" {
+		t.Errorf("route 2: expected fallback 'portal.html', got %q", r2.Fallback)
+	}
+
+	r3 := cfg.Proxy.Routes[3]
+	if r3.SPA {
+		t.Errorf("route 3: expected SPA false, got true")
+	}
+	if r3.Fallback != "" {
+		t.Errorf("route 3: expected fallback empty, got %q", r3.Fallback)
+	}
+
+	// Also test LoadRoutesFromFile directly
+	routes, err := config.LoadRoutesFromFile(routesPath)
+	if err != nil {
+		t.Fatalf("failed to load routes from file: %v", err)
+	}
+	if len(routes) != 4 {
+		t.Fatalf("expected 4 routes, got %d", len(routes))
+	}
+	if !routes[0].SPA || routes[1].Fallback != "app.html" || routes[2].Fallback != "portal.html" || routes[3].SPA {
+		t.Errorf("unexpected route unmarshaling from LoadRoutesFromFile")
+	}
+
+	// Test JSON unmarshaling
+	jsonData := `[
+		{"prefix": "/json-spa", "type": "static", "dir": "/var/www/json", "spa": true, "fallback": "index.html"}
+	]`
+	var jsonRoutes []config.ProxyRouteConfig
+	if err := json.Unmarshal([]byte(jsonData), &jsonRoutes); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+	if len(jsonRoutes) != 1 || !jsonRoutes[0].SPA || jsonRoutes[0].Fallback != "index.html" {
+		t.Errorf("unexpected JSON routes unmarshaling: %+v", jsonRoutes)
 	}
 }

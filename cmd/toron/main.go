@@ -329,7 +329,13 @@ func main() {
 					},
 					Excluded: pr.Auth.Excluded,
 				}
-				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{RateLimit: pr.RateLimit, Auth: authCfg, WAF: pr.WAF}); err != nil {
+				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{
+					RateLimit: pr.RateLimit,
+					Auth:      authCfg,
+					WAF:       pr.WAF,
+					SPA:       pr.SPA,
+					Fallback:  pr.Fallback,
+				}); err != nil {
 					log.Fatalf("[TORON] Invalid static route configuration for prefix %q: %v", pr.Prefix, err)
 				}
 			} else if pr.IsTCP() {

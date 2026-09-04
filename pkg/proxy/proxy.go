@@ -155,9 +155,13 @@ func (b *WeightedRoundRobinBalancer) Next(req *httpparser.Request) (*UpstreamTar
 	return best, nil
 }
 
-func (b *WeightedRoundRobinBalancer) Algorithm() Algorithm { return AlgorithmWeightedRoundRobin }
+func (b *WeightedRoundRobinBalancer) Algorithm() Algorithm       { return AlgorithmWeightedRoundRobin }
 func (b *WeightedRoundRobinBalancer) Targets() []*UpstreamTarget { return b.targets }
-func (b *WeightedRoundRobinBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+func (b *WeightedRoundRobinBalancer) Stop() {
+	for _, t := range b.targets {
+		t.StopActiveHealthCheck()
+	}
+}
 
 // 2. WeightedRandomBalancer implements weighted cumulative random selection.
 type WeightedRandomBalancer struct {
@@ -221,9 +225,13 @@ func (b *WeightedRandomBalancer) Next(req *httpparser.Request) (*UpstreamTarget,
 	return healthy[0], nil
 }
 
-func (b *WeightedRandomBalancer) Algorithm() Algorithm { return AlgorithmWeightedRandom }
+func (b *WeightedRandomBalancer) Algorithm() Algorithm       { return AlgorithmWeightedRandom }
 func (b *WeightedRandomBalancer) Targets() []*UpstreamTarget { return b.targets }
-func (b *WeightedRandomBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+func (b *WeightedRandomBalancer) Stop() {
+	for _, t := range b.targets {
+		t.StopActiveHealthCheck()
+	}
+}
 
 // 3. LeastConnBalancer selects target handling fewest active connections.
 type LeastConnBalancer struct {
@@ -260,9 +268,13 @@ func (b *LeastConnBalancer) Next(req *httpparser.Request) (*UpstreamTarget, erro
 	return best, nil
 }
 
-func (b *LeastConnBalancer) Algorithm() Algorithm { return AlgorithmLeastConn }
+func (b *LeastConnBalancer) Algorithm() Algorithm       { return AlgorithmLeastConn }
 func (b *LeastConnBalancer) Targets() []*UpstreamTarget { return b.targets }
-func (b *LeastConnBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+func (b *LeastConnBalancer) Stop() {
+	for _, t := range b.targets {
+		t.StopActiveHealthCheck()
+	}
+}
 
 // 4. WeightedLeastConnBalancer selects target with minimal ActiveConns / Weight.
 type WeightedLeastConnBalancer struct {
@@ -309,9 +321,13 @@ func (b *WeightedLeastConnBalancer) Next(req *httpparser.Request) (*UpstreamTarg
 	return best, nil
 }
 
-func (b *WeightedLeastConnBalancer) Algorithm() Algorithm { return AlgorithmWeightedLeastConn }
+func (b *WeightedLeastConnBalancer) Algorithm() Algorithm       { return AlgorithmWeightedLeastConn }
 func (b *WeightedLeastConnBalancer) Targets() []*UpstreamTarget { return b.targets }
-func (b *WeightedLeastConnBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+func (b *WeightedLeastConnBalancer) Stop() {
+	for _, t := range b.targets {
+		t.StopActiveHealthCheck()
+	}
+}
 
 // 5. LeastLatencyBalancer selects target with minimal EMA latency.
 type LeastLatencyBalancer struct {
@@ -348,9 +364,13 @@ func (b *LeastLatencyBalancer) Next(req *httpparser.Request) (*UpstreamTarget, e
 	return best, nil
 }
 
-func (b *LeastLatencyBalancer) Algorithm() Algorithm { return AlgorithmLeastLatency }
+func (b *LeastLatencyBalancer) Algorithm() Algorithm       { return AlgorithmLeastLatency }
 func (b *LeastLatencyBalancer) Targets() []*UpstreamTarget { return b.targets }
-func (b *LeastLatencyBalancer) Stop() { for _, t := range b.targets { t.StopActiveHealthCheck() } }
+func (b *LeastLatencyBalancer) Stop() {
+	for _, t := range b.targets {
+		t.StopActiveHealthCheck()
+	}
+}
 
 // NewLoadBalancer constructs a LoadBalancer for given targets and algorithm.
 func NewLoadBalancer(algo Algorithm, targets []*UpstreamTarget) (LoadBalancer, error) {
@@ -421,6 +441,8 @@ type ProxyOptions struct {
 	RewriteCookiePath   *bool
 	Auth                any
 	WAF                 any
+	SPA                 bool
+	Fallback            string
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.

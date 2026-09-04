@@ -18,11 +18,11 @@ var (
 
 // ProtocolIntegrityConfig configures protocol strictness and payload limits.
 type ProtocolIntegrityConfig struct {
-	RejectSmuggling bool  `json:"reject_smuggling" yaml:"reject_smuggling"`
-	RejectControl   bool  `json:"reject_control" yaml:"reject_control"`
-	MaxHeaderValue  int   `json:"max_header_value" yaml:"max_header_value"` // Default 4 KB
-	MaxQuerySize    int   `json:"max_query_size" yaml:"max_query_size"`     // Default 4 KB
-	MaxParamSize    int   `json:"max_param_size" yaml:"max_param_size"`     // Default 2 KB
+	RejectSmuggling bool `json:"reject_smuggling" yaml:"reject_smuggling"`
+	RejectControl   bool `json:"reject_control" yaml:"reject_control"`
+	MaxHeaderValue  int  `json:"max_header_value" yaml:"max_header_value"` // Default 4 KB
+	MaxQuerySize    int  `json:"max_query_size" yaml:"max_query_size"`     // Default 4 KB
+	MaxParamSize    int  `json:"max_param_size" yaml:"max_param_size"`     // Default 2 KB
 }
 
 // DefaultProtocolConfig returns sensible default limits.

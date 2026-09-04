@@ -1,5 +1,32 @@
 # Release Notes
 
+## 2026-09-04 - Toron v1.5.2 Feature Release (Single Page Application HTML5 History Fallback Support)
+
+### Milestone Summary
+- **Single Page Application (SPA) HTML5 History Fallback (`pkg/router`, `pkg/config`)**: Added native client-side routing fallback support for static routes (`spa: true`, `fallback: "<file>"`), achieving parity with Nginx's `try_files $uri $uri/ /index.html;` directive without requiring external reverse proxies or application runtimes (`TASK-056`, `REQ-056`, `ADR-051`).
+- **Asset Masking Protection**: Implemented strict extension-based non-masking logic (`filepath.Ext(relPath) != ""`). Missing physical static assets (e.g., `.js`, `.css`, `.png`, `.svg`, `.json`) return HTTP 404 Not Found rather than the HTML fallback document, preventing cryptic browser runtime syntax errors (such as `Uncaught SyntaxError: Unexpected token '<'`) and CSS MIME-type mismatch rejections.
+- **Path Traversal & Boundary Containment Defense**: Hardened fallback path resolution with directory boundary verification (`filepath.Rel` and `filepath.EvalSymlinks`), guaranteeing that fallback documents remain strictly contained within the configured static root directory and rejecting traversal/escape attempts with HTTP 403 Forbidden or HTTP 404 Not Found.
+- **Declarative YAML & JSON Configuration**: Extended `ProxyRouteConfig` and `ProxyOptions` with `spa` (boolean) and `fallback` (string) options, supporting default (`index.html`) or custom fallback documents (e.g., `app.html`, `200.html`) and implicit SPA activation whenever `fallback` is configured.
+
+### Added
+- **Declarative Route Configuration (`pkg/config`)**: Added `SPA bool` and `Fallback string` attributes to `ProxyRouteConfig` with YAML and JSON unmarshaling support (`pkg/config/config.go`).
+- **Proxy Options Propagation (`pkg/proxy`)**: Extended `ProxyOptions` in `pkg/proxy/proxy.go` with `SPA` and `Fallback` fields, forwarded during static route registration in `cmd/toron/main.go`.
+- **Static Route SPA Fallback Handler (`pkg/router`)**: Updated `createStaticHandler` in `pkg/router/router.go` to evaluate client navigation paths on cache/filesystem misses (`os.IsNotExist`), transparently serving the configured fallback document with HTTP 200 OK and `Content-Type: text/html; charset=utf-8` while omitting the response body for HTTP `HEAD` requests.
+- **Comprehensive Unit & Race Test Suite (`pkg/config/config_test.go`, `pkg/router/router_test.go`)**:
+  - `TestConfig_SPARouteConfig`: Validates parsing of `spa` and `fallback` across YAML route configurations.
+  - `TestRouter_SPA_PhysicalFileServing`: Verifies direct serving of existing static files and directory indices.
+  - `TestRouter_SPA_NavigationFallback`: Verifies 200 OK HTML fallback for client-side navigation paths without extensions (including deep nested paths).
+  - `TestRouter_SPA_AssetProtection404`: Verifies strict 404 Not Found returns for missing assets with extensions.
+  - `TestRouter_SPA_CustomFallback`: Verifies custom fallback file resolution and implicit SPA activation.
+  - `TestRouter_Static_NonSPABackwardCompatibility`: Confirms static routes without SPA settings maintain standard 404 behavior.
+  - `TestRouter_SPA_SecurityPathTraversal`: Validates rejection of directory traversal and boundary escape attempts.
+
+### Changed
+- **Static Route Handler (`pkg/router/router.go`)**: Modified missing file resolution pipeline to distinguish between client-side virtual navigation routes and physical asset requests when SPA mode is active.
+
+### Related Tasks
+- `TASK-056`: Implement SPA HTML5 History Fallback Support for Static Routes
+
 ## 2026-09-04 - Toron v1.5.1 Maintenance & Feature Release (HTTP/3 QUIC Listener Engine Integration)
 
 ### Milestone Summary

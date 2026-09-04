@@ -83,14 +83,14 @@ func TestParseContainerLabels(t *testing.T) {
 		{
 			name: "enabled with prefix and redirect rewrite labels",
 			container: Container{
-				ID:        "c5",
-				Names:     []string{"legacy-service"},
+				ID:    "c5",
+				Names: []string{"legacy-service"},
 				Labels: map[string]string{
-					"toron.enable":               "true",
-					"toron.prefix":               "/legacy-app",
-					"toron.port":                 "8080",
-					"toron.strip_prefix":         "false",
-					"toron.rewrite_redirects":    "true",
+					"toron.enable":              "true",
+					"toron.prefix":              "/legacy-app",
+					"toron.port":                "8080",
+					"toron.strip_prefix":        "false",
+					"toron.rewrite_redirects":   "true",
 					"toron.rewrite_cookie_path": "true",
 				},
 				IPAddress: "172.18.0.10",

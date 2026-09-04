@@ -13,15 +13,15 @@ import (
 
 // Manager orchestrates OCI container discovery providers and updates Toron Router upstreams dynamically.
 type Manager struct {
-	mu             sync.RWMutex
-	cfg            config.DiscoveryConfig
-	router         *router.Router
-	providers      []Provider
-	activeRoutes   map[string]*DiscoveredRoute // containerID -> route
-	events         chan ContainerEvent
-	cancel         context.CancelFunc
-	wg             sync.WaitGroup
-	running        bool
+	mu           sync.RWMutex
+	cfg          config.DiscoveryConfig
+	router       *router.Router
+	providers    []Provider
+	activeRoutes map[string]*DiscoveredRoute // containerID -> route
+	events       chan ContainerEvent
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	running      bool
 }
 
 // NewManager constructs a container discovery Manager instance.

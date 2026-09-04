@@ -283,9 +283,9 @@ func (r *MetricsRegistry) GetSummaryJSON() map[string]interface{} {
 			"targets": cbTrips,
 		},
 		"waf": map[string]interface{}{
-			"blocked_total":      totalWAFBlocked,
+			"blocked_total":       totalWAFBlocked,
 			"blocked_by_category": wafBlockedByCat,
-			"anomalies_total":    totalWAFAnomalies,
+			"anomalies_total":     totalWAFAnomalies,
 		},
 		"requests_by_status": byStatus,
 		"requests_by_method": byMethod,

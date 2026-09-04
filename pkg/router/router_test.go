@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"toron/pkg/httpparser"
@@ -315,5 +316,252 @@ func TestRouter_Reset(t *testing.T) {
 	r.ServeHTTP(req2, res2)
 	if res2.StatusCode != http.StatusNotFound {
 		t.Errorf("expected 404 Not Found after reset, got %d", res2.StatusCode)
+	}
+}
+
+func setupSPAFixture(t *testing.T) string {
+	t.Helper()
+	tmpDir := t.TempDir()
+
+	// index.html
+	_ = os.WriteFile(filepath.Join(tmpDir, "index.html"), []byte("<!DOCTYPE html><html><body>Kite SPA Root</body></html>"), 0644)
+	// app.html
+	_ = os.WriteFile(filepath.Join(tmpDir, "app.html"), []byte("<!DOCTYPE html><html><body>Custom Fallback App</body></html>"), 0644)
+	// assets/style.css
+	_ = os.MkdirAll(filepath.Join(tmpDir, "assets"), 0755)
+	_ = os.WriteFile(filepath.Join(tmpDir, "assets", "style.css"), []byte("body { margin: 0; background: #fafafa; }"), 0644)
+	// dashboard/index.html
+	_ = os.MkdirAll(filepath.Join(tmpDir, "dashboard"), 0755)
+	_ = os.WriteFile(filepath.Join(tmpDir, "dashboard", "index.html"), []byte("<!DOCTYPE html><html><body>Dashboard Subdir</body></html>"), 0644)
+
+	return tmpDir
+}
+
+func TestRouter_SPA_PhysicalFileServing(t *testing.T) {
+	tmpDir := setupSPAFixture(t)
+	r := router.New()
+	err := r.RoutePrefix(router.RouteTypeStatic, "", "/kite", nil, tmpDir, proxy.ProxyOptions{SPA: true, Fallback: "index.html"})
+	if err != nil {
+		t.Fatalf("failed to register route: %v", err)
+	}
+
+	// 1. GET /kite/assets/style.css
+	req1, _ := httpparser.NewRequest("GET", "/kite/assets/style.css", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for style.css, got %d", res1.StatusCode)
+	}
+	if !strings.Contains(res1.Header.Get("Content-Type"), "text/css") {
+		t.Errorf("expected text/css, got %q", res1.Header.Get("Content-Type"))
+	}
+	if res1.Body.String() != "body { margin: 0; background: #fafafa; }" {
+		t.Errorf("unexpected body: %q", res1.Body.String())
+	}
+
+	// 2. GET /kite/
+	req2, _ := httpparser.NewRequest("GET", "/kite/", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for /kite/, got %d", res2.StatusCode)
+	}
+	if !strings.Contains(res2.Body.String(), "Kite SPA Root") {
+		t.Errorf("expected index.html content, got %q", res2.Body.String())
+	}
+
+	// 3. GET /kite/dashboard/
+	req3, _ := httpparser.NewRequest("GET", "/kite/dashboard/", "HTTP/1.1")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+	if res3.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for /kite/dashboard/, got %d", res3.StatusCode)
+	}
+	if !strings.Contains(res3.Body.String(), "Dashboard Subdir") {
+		t.Errorf("expected dashboard index.html, got %q", res3.Body.String())
+	}
+}
+
+func TestRouter_SPA_NavigationFallback(t *testing.T) {
+	tmpDir := setupSPAFixture(t)
+	r := router.New()
+	err := r.RoutePrefix(router.RouteTypeStatic, "", "/kite", nil, tmpDir, proxy.ProxyOptions{SPA: true, Fallback: "index.html"})
+	if err != nil {
+		t.Fatalf("failed to register route: %v", err)
+	}
+
+	testPaths := []string{
+		"/kite/signin",
+		"/kite/devops",
+		"/kite/deep/nested/route",
+	}
+
+	for _, path := range testPaths {
+		req, _ := httpparser.NewRequest("GET", path, "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("expected 200 OK for path %q, got %d", path, res.StatusCode)
+		}
+		if res.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Errorf("expected text/html; charset=utf-8 for %q, got %q", path, res.Header.Get("Content-Type"))
+		}
+		if !strings.Contains(res.Body.String(), "Kite SPA Root") {
+			t.Errorf("expected fallback body for %q, got %q", path, res.Body.String())
+		}
+	}
+
+	// HEAD method test
+	headReq, _ := httpparser.NewRequest("HEAD", "/kite/devops", "HTTP/1.1")
+	headRes := httpparser.NewResponse()
+	r.ServeHTTP(headReq, headRes)
+	if headRes.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK for HEAD /kite/devops, got %d", headRes.StatusCode)
+	}
+	if headRes.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Errorf("expected text/html; charset=utf-8 for HEAD, got %q", headRes.Header.Get("Content-Type"))
+	}
+	if headRes.Body.Len() != 0 {
+		t.Errorf("expected empty body for HEAD, got %q", headRes.Body.String())
+	}
+}
+
+func TestRouter_SPA_AssetProtection404(t *testing.T) {
+	tmpDir := setupSPAFixture(t)
+	r := router.New()
+	err := r.RoutePrefix(router.RouteTypeStatic, "", "/kite", nil, tmpDir, proxy.ProxyOptions{SPA: true})
+	if err != nil {
+		t.Fatalf("failed to register route: %v", err)
+	}
+
+	assetPaths := []string{
+		"/kite/assets/missing.js",
+		"/kite/logo.png",
+		"/kite/styles/main.css",
+		"/kite/data/config.json",
+	}
+
+	for _, path := range assetPaths {
+		req, _ := httpparser.NewRequest("GET", path, "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 404 Not Found for missing asset %q, got %d", path, res.StatusCode)
+		}
+		if strings.Contains(res.Body.String(), "Kite SPA Root") {
+			t.Errorf("expected asset %q to not mask 404 with fallback HTML", path)
+		}
+	}
+}
+
+func TestRouter_SPA_CustomFallback(t *testing.T) {
+	tmpDir := setupSPAFixture(t)
+	r := router.New()
+
+	// Explicit SPA with custom fallback
+	err := r.RoutePrefix(router.RouteTypeStatic, "", "/custom", nil, tmpDir, proxy.ProxyOptions{SPA: true, Fallback: "app.html"})
+	if err != nil {
+		t.Fatalf("failed to register /custom route: %v", err)
+	}
+
+	// Implicit SPA with custom fallback (fallback != "")
+	err = r.RoutePrefix(router.RouteTypeStatic, "", "/portal", nil, tmpDir, proxy.ProxyOptions{Fallback: "app.html"})
+	if err != nil {
+		t.Fatalf("failed to register /portal route: %v", err)
+	}
+
+	customPaths := []string{
+		"/custom/settings",
+		"/custom/user/profile",
+		"/portal/analytics",
+	}
+
+	for _, path := range customPaths {
+		req, _ := httpparser.NewRequest("GET", path, "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("expected 200 OK for %q, got %d", path, res.StatusCode)
+		}
+		if res.Header.Get("Content-Type") != "text/html; charset=utf-8" {
+			t.Errorf("expected text/html; charset=utf-8 for %q, got %q", path, res.Header.Get("Content-Type"))
+		}
+		if !strings.Contains(res.Body.String(), "Custom Fallback App") {
+			t.Errorf("expected custom fallback body for %q, got %q", path, res.Body.String())
+		}
+	}
+}
+
+func TestRouter_Static_NonSPABackwardCompatibility(t *testing.T) {
+	tmpDir := setupSPAFixture(t)
+	r := router.New()
+	err := r.RoutePrefix(router.RouteTypeStatic, "", "/legacy", nil, tmpDir, proxy.ProxyOptions{SPA: false, Fallback: ""})
+	if err != nil {
+		t.Fatalf("failed to register route: %v", err)
+	}
+
+	// Virtual route without extension should return 404
+	req1, _ := httpparser.NewRequest("GET", "/legacy/missing-page", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 Not Found for non-SPA missing page, got %d", res1.StatusCode)
+	}
+
+	// Asset with extension should return 404
+	req2, _ := httpparser.NewRequest("GET", "/legacy/missing-script.js", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.StatusCode != http.StatusNotFound {
+		t.Errorf("expected 404 Not Found for non-SPA missing script, got %d", res2.StatusCode)
+	}
+}
+
+func TestRouter_SPA_SecurityPathTraversal(t *testing.T) {
+	tmpDir := setupSPAFixture(t)
+	r := router.New()
+	err := r.RoutePrefix(router.RouteTypeStatic, "", "/kite", nil, tmpDir, proxy.ProxyOptions{SPA: true})
+	if err != nil {
+		t.Fatalf("failed to register route: %v", err)
+	}
+
+	traversalPaths := []string{
+		"/kite/../",
+		"/kite/../../../etc/passwd",
+		"/kite/..%2f..%2fetc/passwd",
+	}
+
+	for _, path := range traversalPaths {
+		req, _ := httpparser.NewRequest("GET", path, "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusForbidden && res.StatusCode != http.StatusNotFound {
+			t.Errorf("expected 403 or 404 for traversal path %q, got %d", path, res.StatusCode)
+		}
+	}
+
+	// Malicious fallback configuration
+	r2 := router.New()
+	err = r2.RoutePrefix(router.RouteTypeStatic, "", "/malicious", nil, tmpDir, proxy.ProxyOptions{
+		SPA:      true,
+		Fallback: "../../../../etc/passwd",
+	})
+	if err != nil {
+		t.Fatalf("failed to register malicious route: %v", err)
+	}
+
+	reqMal, _ := httpparser.NewRequest("GET", "/malicious/route", "HTTP/1.1")
+	resMal := httpparser.NewResponse()
+	r2.ServeHTTP(reqMal, resMal)
+
+	if resMal.StatusCode != http.StatusNotFound && resMal.StatusCode != http.StatusForbidden {
+		t.Errorf("expected 404 or 403 for malicious fallback escape, got %d", resMal.StatusCode)
+	}
+	if strings.Contains(resMal.Body.String(), "root:") {
+		t.Errorf("critical security breach: etc/passwd content leaked!")
 	}
 }

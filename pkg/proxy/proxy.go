@@ -443,6 +443,7 @@ type ProxyOptions struct {
 	WAF                 any
 	SPA                 bool
 	Fallback            string
+	RedirectHTTP        *bool
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.

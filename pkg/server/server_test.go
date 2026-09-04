@@ -8,12 +8,14 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/quic-go/quic-go/http3"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/proxy"
 	"toron/pkg/router"
 	"toron/pkg/server"
 )
@@ -353,6 +355,185 @@ func TestServer_HTTP3_Shutdown(t *testing.T) {
 
 		if err := srv.Shutdown(ctx); err != nil {
 			t.Fatalf("expected clean shutdown with nil h3Server, got: %v", err)
+		}
+	})
+}
+
+func TestServer_HTTPRedirect_Integration(t *testing.T) {
+	r := router.New()
+	falseVal := false
+
+	// Register exempt route: /challenge/
+	r.GET("/challenge/token.txt", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("challenge-token-data")
+	})
+	// Prefix route with redirect_http = false
+	_ = r.RoutePrefix(router.RouteTypeStatic, "", "/challenge", nil, t.TempDir(), proxy.ProxyOptions{
+		RedirectHTTP: &falseVal,
+	})
+
+	// Register normal route: /dashboard
+	r.GET("/dashboard", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("dashboard-ok")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.HTTPRedirectEnabled = true
+	cfg.HTTPRedirectPort = 8080
+	cfg.HTTPSPort = 443
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+
+	addr := ln.Addr().String()
+
+	// Subtest 1: Normal route returns 301 redirect to HTTPS
+	t.Run("Standard 301 Redirect to HTTPS", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial failed: %v", err)
+		}
+		defer conn.Close()
+
+		req := "GET /dashboard?tab=analytics HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
+		_, _ = conn.Write([]byte(req))
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read failed: %v", err)
+		}
+		respStr := string(resp)
+
+		if !strings.Contains(respStr, "301 Moved Permanently") {
+			t.Errorf("expected 301 Moved Permanently, got:\n%s", respStr)
+		}
+		if !strings.Contains(strings.ToLower(respStr), "location: https://example.com/dashboard?tab=analytics") {
+			t.Errorf("expected Location header with query preserved, got:\n%s", respStr)
+		}
+	})
+
+	// Subtest 2: Host header with port strips port in redirect
+	t.Run("Host Header Port Stripping", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial failed: %v", err)
+		}
+		defer conn.Close()
+
+		req := "GET /dashboard HTTP/1.1\r\nHost: example.com:8080\r\nConnection: close\r\n\r\n"
+		_, _ = conn.Write([]byte(req))
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read failed: %v", err)
+		}
+		respStr := string(resp)
+
+		if !strings.Contains(strings.ToLower(respStr), "location: https://example.com/dashboard\r\n") {
+			t.Errorf("expected port stripped in Location, got:\n%s", respStr)
+		}
+	})
+
+	// Subtest 3: Non-standard HTTPS port includes port in Location
+	t.Run("Non-standard HTTPS Port", func(t *testing.T) {
+		cfgCustom := cfg
+		cfgCustom.HTTPSPort = 8443
+		srvCustom := server.New(cfgCustom, r)
+		lnCustom, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen failed: %v", err)
+		}
+		defer lnCustom.Close()
+		go func() { _ = srvCustom.Serve(lnCustom) }()
+
+		conn, err := net.Dial("tcp", lnCustom.Addr().String())
+		if err != nil {
+			t.Fatalf("dial failed: %v", err)
+		}
+		defer conn.Close()
+
+		req := "GET /login HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
+		_, _ = conn.Write([]byte(req))
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read failed: %v", err)
+		}
+		respStr := string(resp)
+
+		if !strings.Contains(strings.ToLower(respStr), "location: https://example.com:8443/login") {
+			t.Errorf("expected Location with custom port :8443, got:\n%s", respStr)
+		}
+	})
+
+	// Subtest 4: Exempt route (redirect_http = false) served directly over HTTP (200 OK)
+	t.Run("Exempt Route Direct HTTP Serving", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial failed: %v", err)
+		}
+		defer conn.Close()
+
+		req := "GET /challenge/token.txt HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"
+		_, _ = conn.Write([]byte(req))
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read failed: %v", err)
+		}
+		respStr := string(resp)
+
+		if !strings.Contains(respStr, "200 OK") {
+			t.Errorf("expected 200 OK for exempt route, got:\n%s", respStr)
+		}
+		if !strings.Contains(respStr, "challenge-token-data") {
+			t.Errorf("expected token body for exempt route, got:\n%s", respStr)
+		}
+		if strings.Contains(strings.ToLower(respStr), "location:") {
+			t.Errorf("did not expect Location header on exempt route, got:\n%s", respStr)
+		}
+	})
+
+	// Subtest 5: Security - Malformed Host with illegal characters rejected with 400 Bad Request
+	t.Run("Security Malformed Host Rejection", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial failed: %v", err)
+		}
+		defer conn.Close()
+
+		req := "GET /dashboard HTTP/1.1\r\nHost: example.com/evil\r\nConnection: close\r\n\r\n"
+		_, _ = conn.Write([]byte(req))
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read failed: %v", err)
+		}
+		respStr := string(resp)
+
+		if !strings.Contains(respStr, "400 Bad Request") {
+			t.Errorf("expected 400 Bad Request for malicious host, got:\n%s", respStr)
+		}
+	})
+
+	// Subtest 6: Clean graceful shutdown
+	t.Run("Graceful Shutdown", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			t.Fatalf("shutdown error: %v", err)
 		}
 	})
 }

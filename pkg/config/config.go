@@ -191,6 +191,12 @@ type SecurityHeadersConfig struct {
 	PermissionsPolicy  string `yaml:"permissions_policy" json:"permissions_policy"`
 }
 
+// HTTPRedirectConfig captures cleartext HTTP to HTTPS redirection settings.
+type HTTPRedirectConfig struct {
+	Enabled bool `yaml:"enabled" json:"enabled"`
+	Port    int  `yaml:"port" json:"port"`
+}
+
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
 	Host            string                `yaml:"host" json:"host"`
@@ -203,6 +209,7 @@ type ServerConfig struct {
 	MaxBodyBytes    int64                 `yaml:"max_body_bytes" json:"max_body_bytes"`
 	HTTP2           HTTP2Config           `yaml:"http2" json:"http2"`
 	HTTP3           HTTP3Config           `yaml:"http3" json:"http3"`
+	HTTPRedirect    HTTPRedirectConfig    `yaml:"http_redirect" json:"http_redirect"`
 	TLS             TLSConfig             `yaml:"tls" json:"tls"`
 	ACME            ACMEConfig            `yaml:"acme" json:"acme"`
 	Compression     CompressionConfig     `yaml:"compression" json:"compression"`
@@ -237,6 +244,8 @@ type ProxyRouteConfig struct {
 	StaticDir           string                `yaml:"static_dir" json:"static_dir"`
 	SPA                 bool                  `yaml:"spa" json:"spa"`
 	Fallback            string                `yaml:"fallback" json:"fallback"`
+	RedirectHTTP        *bool                 `yaml:"redirect_http,omitempty" json:"redirect_http,omitempty"`
+	HTTPSRedirect       *bool                 `yaml:"https_redirect,omitempty" json:"https_redirect,omitempty"`
 	ListenPort          int                   `yaml:"listen_port" json:"listen_port"`
 	Port                int                   `yaml:"port" json:"port"`
 	Target              string                `yaml:"target" json:"target"`
@@ -390,6 +399,25 @@ func (p *ProxyRouteConfig) ShouldRewriteCookiePath() bool {
 	return true
 }
 
+// GetRedirectHTTP returns the explicit redirect_http or https_redirect pointer if configured.
+func (p *ProxyRouteConfig) GetRedirectHTTP() *bool {
+	if p.RedirectHTTP != nil {
+		return p.RedirectHTTP
+	}
+	if p.HTTPSRedirect != nil {
+		return p.HTTPSRedirect
+	}
+	return nil
+}
+
+// ShouldRedirectHTTP returns true if the route should be upgraded from HTTP to HTTPS (default: true).
+func (p *ProxyRouteConfig) ShouldRedirectHTTP() bool {
+	if redir := p.GetRedirectHTTP(); redir != nil {
+		return *redir
+	}
+	return true
+}
+
 // LoggingConfig captures logging settings.
 type LoggingConfig struct {
 	Level  string `yaml:"level" json:"level"`
@@ -497,6 +525,9 @@ func (c *AppConfig) ToServerConfig() server.Config {
 		HTTP3Enabled:              c.Server.HTTP3.Enabled,
 		HTTP3Port:                 c.Server.HTTP3.Port,
 		HTTP3AltSvcHeader:         c.Server.HTTP3.AltSvcHeader,
+		HTTPRedirectEnabled:       c.Server.HTTPRedirect.Enabled,
+		HTTPRedirectPort:          c.Server.HTTPRedirect.Port,
+		HTTPSPort:                 c.Server.Port,
 	}
 }
 

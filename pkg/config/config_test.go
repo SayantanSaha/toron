@@ -314,3 +314,84 @@ proxy:
 		t.Errorf("unexpected JSON routes unmarshaling: %+v", jsonRoutes)
 	}
 }
+
+func TestConfig_HTTPRedirectAndRouteOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	routesPath := filepath.Join(tmpDir, "routes.yaml")
+
+	cfgData := `
+server:
+  port: 8443
+  tls:
+    enabled: true
+  http_redirect:
+    enabled: true
+    port: 8080
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgData), 0644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	challengeDir := filepath.Join(tmpDir, "challenges")
+	appDir := filepath.Join(tmpDir, "app")
+	_ = os.MkdirAll(challengeDir, 0755)
+	_ = os.MkdirAll(appDir, 0755)
+
+	routesData := `
+routes:
+  - type: "static"
+    prefix: "/.well-known/acme-challenge"
+    dir: "` + challengeDir + `"
+    redirect_http: false
+  - type: "static"
+    prefix: "/app"
+    dir: "` + appDir + `"
+`
+	if err := os.WriteFile(routesPath, []byte(routesData), 0644); err != nil {
+		t.Fatalf("failed to write routes.yaml: %v", err)
+	}
+
+	cfg, err := config.LoadFromFiles(cfgPath, routesPath)
+	if err != nil {
+		t.Fatalf("failed to load config files: %v", err)
+	}
+
+	if !cfg.Server.HTTPRedirect.Enabled {
+		t.Errorf("expected Server.HTTPRedirect.Enabled to be true")
+	}
+	if cfg.Server.HTTPRedirect.Port != 8080 {
+		t.Errorf("expected Server.HTTPRedirect.Port to be 8080, got %d", cfg.Server.HTTPRedirect.Port)
+	}
+
+	srvCfg := cfg.ToServerConfig()
+	if !srvCfg.HTTPRedirectEnabled {
+		t.Errorf("expected srvCfg.HTTPRedirectEnabled to be true")
+	}
+	if srvCfg.HTTPRedirectPort != 8080 {
+		t.Errorf("expected srvCfg.HTTPRedirectPort to be 8080, got %d", srvCfg.HTTPRedirectPort)
+	}
+	if srvCfg.HTTPSPort != 8443 {
+		t.Errorf("expected srvCfg.HTTPSPort to be 8443, got %d", srvCfg.HTTPSPort)
+	}
+
+	if len(cfg.Proxy.Routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(cfg.Proxy.Routes))
+	}
+
+	r0 := cfg.Proxy.Routes[0]
+	if r0.RedirectHTTP == nil || *r0.RedirectHTTP != false {
+		t.Errorf("route 0: expected RedirectHTTP false, got %v", r0.RedirectHTTP)
+	}
+	if r0.ShouldRedirectHTTP() {
+		t.Errorf("route 0: expected ShouldRedirectHTTP false, got true")
+	}
+
+	r1 := cfg.Proxy.Routes[1]
+	if r1.RedirectHTTP != nil {
+		t.Errorf("route 1: expected RedirectHTTP nil, got %v", r1.RedirectHTTP)
+	}
+	if !r1.ShouldRedirectHTTP() {
+		t.Errorf("route 1: expected ShouldRedirectHTTP true, got false")
+	}
+}

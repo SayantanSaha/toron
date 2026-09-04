@@ -239,7 +239,15 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			res.Header.Set("Connection", "keep-alive")
 		}
 
-		s.router.ServeHTTP(req, res)
+		if s.config.HTTPRedirectEnabled {
+			if s.router.ShouldRedirectHTTP(req) {
+				s.serveHTTPRedirect(req, res)
+			} else {
+				s.router.ServeHTTP(req, res)
+			}
+		} else {
+			s.router.ServeHTTP(req, res)
+		}
 
 		if s.config.HTTP3Enabled && s.config.HTTP3AltSvcHeader {
 			if res.Header.Get("Alt-Svc") == "" {
@@ -424,4 +432,56 @@ func (s *Server) ListenAndServeH3(certFile, keyFile string) error {
 		return ErrServerClosed
 	}
 	return err
+}
+
+// serveHTTPRedirect handles cleartext HTTP-to-HTTPS redirection, preserving the request URI and query parameters.
+func (s *Server) serveHTTPRedirect(req *httpparser.Request, res *httpparser.Response) {
+	rawHost := req.Header.Get("Host")
+	if rawHost == "" {
+		res.SetStatus(http.StatusBadRequest)
+		res.Header.Set("Content-Type", "application/json")
+		_, _ = res.WriteString(`{"error":"400 Bad Request: Missing Host Header"}`)
+		return
+	}
+
+	// Reject CRLF, control characters, backslashes, whitespace to prevent Open Redirect (CWE-601) and HTTP Response Splitting (CWE-113)
+	if strings.ContainsAny(rawHost, "\r\n\t /\\") {
+		res.SetStatus(http.StatusBadRequest)
+		res.Header.Set("Content-Type", "application/json")
+		_, _ = res.WriteString(`{"error":"400 Bad Request: Malformed Host Header"}`)
+		return
+	}
+
+	// Strip port from Host header if present (e.g., example.com:80 -> example.com)
+	host := rawHost
+	if h, _, err := net.SplitHostPort(rawHost); err == nil {
+		host = h
+	}
+
+	targetPort := s.config.HTTPSPort
+	if targetPort <= 0 {
+		targetPort = 443
+	}
+
+	uri := req.RequestURI
+	if uri == "" {
+		uri = req.Path
+		if uri == "" {
+			uri = "/"
+		}
+	}
+	if !strings.HasPrefix(uri, "/") {
+		uri = "/" + uri
+	}
+
+	var redirectURL string
+	if targetPort == 443 {
+		redirectURL = "https://" + host + uri
+	} else {
+		redirectURL = fmt.Sprintf("https://%s:%d%s", host, targetPort, uri)
+	}
+
+	res.SetStatus(http.StatusMovedPermanently)
+	res.Header.Set("Location", redirectURL)
+	res.Header.Set("Content-Length", "0")
 }

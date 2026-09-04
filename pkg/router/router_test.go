@@ -565,3 +565,67 @@ func TestRouter_SPA_SecurityPathTraversal(t *testing.T) {
 		t.Errorf("critical security breach: etc/passwd content leaked!")
 	}
 }
+
+func TestRouter_ShouldRedirectHTTP_RouteOverride(t *testing.T) {
+	r := router.New()
+	tmpDir := t.TempDir()
+
+	falseVal := false
+	trueVal := true
+
+	// Route 1: static challenge with redirect_http = false
+	err := r.RoutePrefix(router.RouteTypeStatic, "", "/.well-known/acme-challenge", nil, tmpDir, proxy.ProxyOptions{
+		RedirectHTTP: &falseVal,
+	})
+	if err != nil {
+		t.Fatalf("failed to register exempt route: %v", err)
+	}
+
+	// Route 2: static app with default redirect (nil)
+	err = r.RoutePrefix(router.RouteTypeStatic, "", "/app", nil, tmpDir, proxy.ProxyOptions{})
+	if err != nil {
+		t.Fatalf("failed to register default route: %v", err)
+	}
+
+	// Route 3: upstream route with explicit redirect_http = true
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	err = r.RoutePrefix(router.RouteTypeUpstream, "", "/api", nil, "", proxy.ProxyOptions{
+		Targets:      []string{backend.URL},
+		RedirectHTTP: &trueVal,
+	})
+	if err != nil {
+		t.Fatalf("failed to register upstream route: %v", err)
+	}
+
+	// Test 1: Request matching exempt route -> should NOT redirect
+	reqExempt, _ := httpparser.NewRequest("GET", "/.well-known/acme-challenge/test-token", "HTTP/1.1")
+	reqExempt.Header.Set("Host", "example.com")
+	if r.ShouldRedirectHTTP(reqExempt) {
+		t.Errorf("expected ShouldRedirectHTTP false for /.well-known/acme-challenge, got true")
+	}
+
+	// Test 2: Request matching default route (/app) -> should redirect
+	reqApp, _ := httpparser.NewRequest("GET", "/app/dashboard", "HTTP/1.1")
+	reqApp.Header.Set("Host", "example.com")
+	if !r.ShouldRedirectHTTP(reqApp) {
+		t.Errorf("expected ShouldRedirectHTTP true for /app/dashboard, got false")
+	}
+
+	// Test 3: Request matching explicit true route (/api) -> should redirect
+	reqAPI, _ := httpparser.NewRequest("GET", "/api/v1/users", "HTTP/1.1")
+	reqAPI.Header.Set("Host", "example.com")
+	if !r.ShouldRedirectHTTP(reqAPI) {
+		t.Errorf("expected ShouldRedirectHTTP true for /api/v1/users, got false")
+	}
+
+	// Test 4: Unmatched path -> should redirect
+	reqUnmatched, _ := httpparser.NewRequest("GET", "/unknown", "HTTP/1.1")
+	reqUnmatched.Header.Set("Host", "example.com")
+	if !r.ShouldRedirectHTTP(reqUnmatched) {
+		t.Errorf("expected ShouldRedirectHTTP true for unmatched route, got false")
+	}
+}

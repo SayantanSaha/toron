@@ -98,6 +98,11 @@ server:
     key_file: ""
     auto_dev_cert: true
 
+  # Cleartext HTTP-to-HTTPS 301 Redirection
+  http_redirect:
+    enabled: true             # Starts auxiliary HTTP cleartext redirect listener
+    port: 80                  # Cleartext listener port (default: 80)
+
   # ACME Zero-Touch Production SSL Certificate Management
   acme:
     enabled: false
@@ -334,6 +339,12 @@ routes:
     spa: true
     fallback: "index.html"
 
+  # Route-Level HTTP Redirection Exemption (e.g. Automated ACME HTTP-01 Challenges or Public Webhooks)
+  - type: "static"
+    prefix: "/.well-known/acme-challenge"
+    dir: "/var/www/challenges"
+    redirect_http: false      # Direct cleartext HTTP serving without 301 redirect
+
   # Reverse Proxy with Load Balancing & Token Bucket Rate Limiting
   - type: "upstream"
     prefix: "/api"
@@ -413,7 +424,7 @@ routes:
 
 Toron provides native static website and application hosting directly within the edge router. For modern web applications built using frameworks such as **React**, **Vue**, **Angular**, or **Svelte**, client-side routing uses the HTML5 History API (`pushState`, `replaceState`). When a browser user refreshes a deep virtual link (e.g. `/app/dashboard` or `/portal/settings`), the requested path does not exist as a physical file on the server's disk.
 
-By configuring `spa: true` and optional `fallback: "<filename>"`, Toron provides native Nginx `try_files $uri $uri/ /index.html;` parity without requiring external web servers or secondary proxy containers.
+By configuring `spa: true` and optional `fallback: "<filename>"`, Toron provides native fallback routing without requiring external web servers or secondary proxy containers.
 
 #### Configuration Options
 
@@ -513,6 +524,59 @@ routes:
     dir: "./public/docs"
     spa: false                # Preserves standard 404 behavior for all missing paths
 ```
+
+### Cleartext HTTP-to-HTTPS Redirection & Route-Level Overrides
+
+When operating a secure edge gateway with TLS enabled (typically on port 443), production environments require unencrypted HTTP requests (typically on port 80) to be upgraded to HTTPS using `HTTP/1.1 301 Moved Permanently`. At the same time, specific automated workflows—such as Let's Encrypt automated HTTP-01 challenge validations (`/.well-known/acme-challenge/`), internal health probes, or unencrypted webhooks—require direct cleartext HTTP access without redirection.
+
+Toron handles this cleanly by decoupling protocol redirect policies from routing endpoints.
+
+#### 1. Enabling Auxiliary HTTP Listener (`config.yaml`)
+
+In `config.yaml`, configure `server.http_redirect`:
+
+```yaml
+server:
+  port: 443
+  tls:
+    enabled: true
+    cert_file: "/etc/toron/certs/cert.pem"
+    key_file: "/etc/toron/certs/key.pem"
+
+  # Auxiliary cleartext HTTP listener
+  http_redirect:
+    enabled: true             # Activates HTTP listener alongside primary TLS server
+    port: 80                  # Listener port (default: 80)
+```
+
+#### 2. Declaring Route-Level Exemption Overrides (`routes.yaml`)
+
+By default, any route served by Toron is upgraded to HTTPS when accessed via the HTTP listener. To exempt a specific route from redirection and serve it directly over plain HTTP, add `redirect_http: false` to that route in `routes.yaml`:
+
+```yaml
+routes:
+  # ACME Challenge Validation (Served directly over HTTP without 301 redirection)
+  - type: "static"
+    prefix: "/.well-known/acme-challenge"
+    dir: "/var/www/certbot/.well-known/acme-challenge"
+    redirect_http: false
+
+  # Application UI (Redirects to https://example.com/app)
+  - type: "static"
+    prefix: "/app"
+    dir: "/var/www/app/dist"
+    spa: true
+
+  # Backend API (Redirects to https://example.com/api/...)
+  - type: "upstream"
+    prefix: "/api"
+    target: "http://127.0.0.1:8080"
+```
+
+#### Request Handling Rules on the HTTP Port:
+1. If the request matches a route with `redirect_http: false`, Toron executes the route handler directly (serving the static file or proxying to the upstream backend) and returns `HTTP 200 OK`.
+2. For all other requests (routes without `redirect_http: false` or unmatched paths), Toron immediately responds with `HTTP/1.1 301 Moved Permanently` pointing to `https://<host><request_uri>`, strictly preserving query parameters and path elements.
+3. Open redirect protection: The incoming `Host` header is sanitized, port numbers are stripped, and malformed characters (CRLF, backslashes, spaces) are rejected with `HTTP 400 Bad Request`.
 
 ---
 

@@ -22,6 +22,9 @@ type Config struct {
 	HTTP3Enabled              bool
 	HTTP3Port                 int
 	HTTP3AltSvcHeader         bool
+	HTTPRedirectEnabled       bool
+	HTTPRedirectPort          int
+	HTTPSPort                 int
 }
 
 // DefaultConfig provides recommended production defaults.
@@ -42,5 +45,8 @@ func DefaultConfig() Config {
 		HTTP3Enabled:              true,
 		HTTP3Port:                 8443,
 		HTTP3AltSvcHeader:         true,
+		HTTPRedirectEnabled:       false,
+		HTTPRedirectPort:          80,
+		HTTPSPort:                 443,
 	}
 }

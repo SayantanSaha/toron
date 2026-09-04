@@ -38,10 +38,11 @@ type routeEntry struct {
 }
 
 type prefixRoute struct {
-	host    string
-	prefix  string
-	headers map[string]string
-	handler HandlerFunc
+	host         string
+	prefix       string
+	headers      map[string]string
+	redirectHTTP *bool
+	handler      HandlerFunc
 }
 
 // Router handles URL routing, method dispatching, domain matching, header-based routing, static file serving, reverse proxying, and middleware execution.
@@ -215,10 +216,11 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
-		host:    strings.ToLower(strings.TrimSpace(host)),
-		prefix:  cleanPrefix,
-		headers: headers,
-		handler: handler,
+		host:         strings.ToLower(strings.TrimSpace(host)),
+		prefix:       cleanPrefix,
+		headers:      headers,
+		redirectHTTP: opts.RedirectHTTP,
+		handler:      handler,
 	})
 	return nil
 }
@@ -483,6 +485,33 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	start := time.Now()
 	finalChain(req, res)
 	metrics.DefaultRegistry.RecordRequest(req.Method, fmt.Sprintf("%d", res.StatusCode), req.Path, time.Since(start).Seconds())
+}
+
+// ShouldRedirectHTTP checks whether an incoming HTTP request should be upgraded to HTTPS.
+// It returns false if the request matches a configured route with redirect_http explicitly set to false.
+// Otherwise, it returns true (defaulting to HTTPS redirection).
+func (r *Router) ShouldRedirectHTTP(req *httpparser.Request) bool {
+	if req == nil {
+		return true
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	reqHost := extractHost(req)
+
+	for i := range r.prefixRoutes {
+		pr := &r.prefixRoutes[i]
+		if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
+			if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
+				if pr.redirectHTTP != nil && !*pr.redirectHTTP {
+					return false
+				}
+				return true
+			}
+		}
+	}
+	return true
 }
 
 func extractHost(req *httpparser.Request) string {

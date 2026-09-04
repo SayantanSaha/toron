@@ -179,6 +179,10 @@ func ValidateConfig(cfg *AppConfig) error {
 		return fmt.Errorf("server.worker_pool_size must be greater than 0, got %d", cfg.Server.WorkerPoolSize)
 	}
 
+	if cfg.Server.HTTPRedirect.Enabled && cfg.Server.HTTPRedirect.Port <= 0 {
+		cfg.Server.HTTPRedirect.Port = 80
+	}
+
 	if cfg.Static.Enabled {
 		if cfg.Static.Dir == "" {
 			return fmt.Errorf("static.dir cannot be empty when static file serving is enabled")

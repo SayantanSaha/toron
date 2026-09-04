@@ -330,11 +330,12 @@ func main() {
 					Excluded: pr.Auth.Excluded,
 				}
 				if err := r.RoutePrefix(router.RouteTypeStatic, host, pr.Prefix, pr.Headers, pr.GetDir(), proxy.ProxyOptions{
-					RateLimit: pr.RateLimit,
-					Auth:      authCfg,
-					WAF:       pr.WAF,
-					SPA:       pr.SPA,
-					Fallback:  pr.Fallback,
+					RateLimit:    pr.RateLimit,
+					Auth:         authCfg,
+					WAF:          pr.WAF,
+					SPA:          pr.SPA,
+					Fallback:     pr.Fallback,
+					RedirectHTTP: pr.GetRedirectHTTP(),
 				}); err != nil {
 					log.Fatalf("[TORON] Invalid static route configuration for prefix %q: %v", pr.Prefix, err)
 				}
@@ -416,6 +417,7 @@ func main() {
 					RewriteCookiePath:   pr.RewriteCookiePath,
 					Auth:                authCfg,
 					WAF:                 pr.WAF,
+					RedirectHTTP:        pr.GetRedirectHTTP(),
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)
@@ -500,6 +502,32 @@ func main() {
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	var redirectSrv *server.Server
+	if appCfg.Server.TLS.Enabled && appCfg.Server.HTTPRedirect.Enabled {
+		redirPort := appCfg.Server.HTTPRedirect.Port
+		if redirPort <= 0 {
+			redirPort = 80
+		}
+		redirCfg := srvCfg
+		redirCfg.Addr = fmt.Sprintf(":%d", redirPort)
+		redirCfg.TLSEnabled = false
+		redirCfg.HTTP3Enabled = false
+		redirCfg.HTTPRedirectEnabled = true
+		redirCfg.HTTPRedirectPort = redirPort
+		redirCfg.HTTPSPort = appCfg.Server.Port
+		if redirCfg.HTTPSPort <= 0 {
+			redirCfg.HTTPSPort = 443
+		}
+
+		redirectSrv = server.New(redirCfg, r)
+		go func() {
+			log.Printf("[TORON] HTTP Redirect Server listening on http://localhost:%d (upgrading cleartext to HTTPS :%d)...", redirPort, redirCfg.HTTPSPort)
+			if err := redirectSrv.ListenAndServe(); err != nil && err != server.ErrServerClosed {
+				log.Printf("[TORON] HTTP Redirect Server error: %v", err)
+			}
+		}()
+	}
+
 	go func() {
 		if appCfg.Server.TLS.Enabled {
 			if appCfg.Server.HTTP3.Enabled {
@@ -530,12 +558,16 @@ func main() {
 	<-shutdownCtx.Done()
 	log.Println("[TORON] Shutdown signal received. Shutting down gracefully...")
 
+	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if redirectSrv != nil {
+		_ = redirectSrv.Shutdown(stopCtx)
+	}
+
 	if configWatcher != nil {
 		_ = configWatcher.Stop()
 	}
-
-	stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	if err := srv.Shutdown(stopCtx); err != nil {
 		log.Printf("[TORON] Error during graceful shutdown: %v", err)

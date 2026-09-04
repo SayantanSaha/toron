@@ -444,6 +444,8 @@ type ProxyOptions struct {
 	SPA                 bool
 	Fallback            string
 	RedirectHTTP        *bool
+	AccessLog           string
+	SecurityLog         string
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.

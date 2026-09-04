@@ -1,0 +1,39 @@
+# Toron Web Server System Logrotate Configuration
+# Rotates Server, Access, and Security logs on a daily basis.
+# Compatible with Linux /etc/logrotate.d/ and macOS newsyslog.
+#
+# Installation:
+#   sudo cp etc/logrotate.d/toron /etc/logrotate.d/toron
+#   sudo chmod 0644 /etc/logrotate.d/toron
+
+/var/log/toron/*.log ./logs/*.log logs/*.log {
+    daily
+    missingok
+    rotate 7
+    compress
+    delaycompress
+    notifempty
+    create 0640 root root
+    sharedscripts
+    postrotate
+        # Signal Toron to reopen active log file descriptors
+        if [ -f /var/run/toron.pid ]; then
+            kill -HUP $(cat /var/run/toron.pid) 2>/dev/null || true
+        else
+            pkill -HUP -f "toron" 2>/dev/null || true
+        fi
+    endscript
+}
+
+# Optional copytruncate configuration (if signals cannot be delivered):
+# Uncomment below and comment above block if running in environments without signal forwarding:
+#
+# /var/log/toron/*.log ./logs/*.log logs/*.log {
+#     daily
+#     missingok
+#     rotate 7
+#     compress
+#     delaycompress
+#     notifempty
+#     copytruncate
+# }

@@ -246,6 +246,8 @@ type ProxyRouteConfig struct {
 	Fallback            string                `yaml:"fallback" json:"fallback"`
 	RedirectHTTP        *bool                 `yaml:"redirect_http,omitempty" json:"redirect_http,omitempty"`
 	HTTPSRedirect       *bool                 `yaml:"https_redirect,omitempty" json:"https_redirect,omitempty"`
+	AccessLog           string                `yaml:"access_log,omitempty" json:"access_log,omitempty"`
+	SecurityLog         string                `yaml:"security_log,omitempty" json:"security_log,omitempty"`
 	ListenPort          int                   `yaml:"listen_port" json:"listen_port"`
 	Port                int                   `yaml:"port" json:"port"`
 	Target              string                `yaml:"target" json:"target"`
@@ -418,10 +420,29 @@ func (p *ProxyRouteConfig) ShouldRedirectHTTP() bool {
 	return true
 }
 
+// GetAccessLog returns the route-specific access log destination or default if not configured.
+func (p *ProxyRouteConfig) GetAccessLog(defaultPath string) string {
+	if strings.TrimSpace(p.AccessLog) != "" {
+		return strings.TrimSpace(p.AccessLog)
+	}
+	return defaultPath
+}
+
+// GetSecurityLog returns the route-specific security log destination or default if not configured.
+func (p *ProxyRouteConfig) GetSecurityLog(defaultPath string) string {
+	if strings.TrimSpace(p.SecurityLog) != "" {
+		return strings.TrimSpace(p.SecurityLog)
+	}
+	return defaultPath
+}
+
 // LoggingConfig captures logging settings.
 type LoggingConfig struct {
-	Level  string `yaml:"level" json:"level"`
-	Format string `yaml:"format" json:"format"`
+	Level       string `yaml:"level" json:"level"`
+	Format      string `yaml:"format" json:"format"`
+	ServerLog   string `yaml:"server_log" json:"server_log"`
+	AccessLog   string `yaml:"access_log" json:"access_log"`
+	SecurityLog string `yaml:"security_log" json:"security_log"`
 }
 
 // DefaultAppConfig returns sensible default server configuration settings.
@@ -494,8 +515,11 @@ func DefaultAppConfig() *AppConfig {
 			Routes:  []ProxyRouteConfig{},
 		},
 		Logging: LoggingConfig{
-			Level:  "info",
-			Format: "text",
+			Level:       "info",
+			Format:      "text",
+			ServerLog:   "logs/server.log",
+			AccessLog:   "logs/access.log",
+			SecurityLog: "logs/security.log",
 		},
 	}
 }

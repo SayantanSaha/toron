@@ -16,6 +16,7 @@ import (
 	"toron/pkg/discovery"
 	"toron/pkg/httpparser"
 	"toron/pkg/ingress"
+	"toron/pkg/logging"
 	"toron/pkg/proxy"
 	"toron/pkg/router"
 	"toron/pkg/server"
@@ -86,15 +87,40 @@ func main() {
 		log.Printf("[TORON] Loaded routing configuration from %s", routesPath)
 	}
 
+	// Initialize Multi-Stream Logging Manager
+	logMgr, err := logging.NewLogManager(logging.Config{
+		Level:       appCfg.Logging.Level,
+		Format:      appCfg.Logging.Format,
+		ServerLog:   appCfg.Logging.ServerLog,
+		AccessLog:   appCfg.Logging.AccessLog,
+		SecurityLog: appCfg.Logging.SecurityLog,
+	})
+	if err != nil {
+		log.Printf("[TORON] Warning: Failed to initialize LogManager: %v", err)
+	} else {
+		defer logMgr.Close()
+		if logMgr.ServerSink() != nil {
+			log.SetOutput(logMgr.ServerSink())
+			log.Printf("[TORON] Server logs redirected to %s", appCfg.Logging.ServerLog)
+		}
+	}
+
 	srvCfg := appCfg.ToServerConfig()
 	r := router.New()
 
 	// Attach Middlewares
-	r.Use(router.LoggerMiddleware())
+	if logMgr != nil {
+		r.Use(router.AccessLoggerMiddleware(logMgr, r))
+	} else {
+		r.Use(router.LoggerMiddleware())
+	}
 	r.Use(router.RecoveryMiddleware())
 	var globalWafEngine *waf.WAFEngine
 	if appCfg.Server.WAF.Enabled {
 		globalWafCfg := appCfg.Server.WAF
+		if appCfg.Logging.SecurityLog != "" && appCfg.Logging.SecurityLog != "stdout" && globalWafCfg.AuditLog.Output == "stdout" {
+			globalWafCfg.AuditLog.Output = appCfg.Logging.SecurityLog
+		}
 		if appCfg.Proxy.Enabled {
 			for _, pr := range appCfg.Proxy.Routes {
 				if pr.WAF.Enabled || len(pr.WAF.AllowedIPs) > 0 || len(pr.WAF.DeniedIPs) > 0 || len(pr.WAF.DisabledRules) > 0 || len(pr.WAF.CustomRules) > 0 || pr.WAF.Mode != "" {
@@ -106,6 +132,9 @@ func main() {
 		}
 		if engine, wafErr := waf.NewEngine(globalWafCfg); wafErr == nil {
 			globalWafEngine = engine
+			if logMgr != nil && logMgr.SecuritySink() != nil {
+				globalWafEngine.SetAuditLogger(waf.NewAuditLoggerWithWriter(logMgr.SecuritySink()))
+			}
 			wafMw := waf.NewWAFMiddleware(globalWafEngine)
 			r.Use(func(next router.HandlerFunc) router.HandlerFunc {
 				return func(req *httpparser.Request, res *httpparser.Response) {
@@ -336,6 +365,8 @@ func main() {
 					SPA:          pr.SPA,
 					Fallback:     pr.Fallback,
 					RedirectHTTP: pr.GetRedirectHTTP(),
+					AccessLog:    pr.AccessLog,
+					SecurityLog:  pr.SecurityLog,
 				}); err != nil {
 					log.Fatalf("[TORON] Invalid static route configuration for prefix %q: %v", pr.Prefix, err)
 				}
@@ -418,6 +449,8 @@ func main() {
 					Auth:                authCfg,
 					WAF:                 pr.WAF,
 					RedirectHTTP:        pr.GetRedirectHTTP(),
+					AccessLog:           pr.AccessLog,
+					SecurityLog:         pr.SecurityLog,
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)
@@ -501,6 +534,22 @@ func main() {
 	// Graceful shutdown context listener
 	shutdownCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Listen for SIGHUP signal to trigger atomic log file reopening (system logrotate daily rotation)
+	hupChan := make(chan os.Signal, 1)
+	signal.Notify(hupChan, syscall.SIGHUP)
+	go func() {
+		for range hupChan {
+			log.Println("[TORON] SIGHUP signal received: reopening all active log files for system logrotate...")
+			if logMgr != nil {
+				if err := logMgr.Reopen(); err != nil {
+					log.Printf("[TORON] Error reopening log files on SIGHUP: %v", err)
+				} else {
+					log.Println("[TORON] Successfully reopened all log files.")
+				}
+			}
+		}
+	}()
 
 	var redirectSrv *server.Server
 	if appCfg.Server.TLS.Enabled && appCfg.Server.HTTPRedirect.Enabled {

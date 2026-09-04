@@ -157,7 +157,10 @@ transcoder:
       field_mappings:
         id: "userId"
 
-# Logging and Telemetry Output Settings
+# Multi-Stream Logging and Telemetry Output Settings (Rotated daily by system logrotate)
 logging:
-  level: "info"
-  format: "text"
+  level: "info"               # Log severity level: "debug", "info", "warn", "error"
+  format: "text"              # Log output format: "text" (standard combined) or "json"
+  server_log: "logs/server.log"     # Destination for internal server, lifecycle, and runtime error logs
+  access_log: "logs/access.log"     # Default destination for HTTP request/response transactional logs
+  security_log: "logs/security.log" # Default destination for WAF audit events, auth failures, and ACL blocks

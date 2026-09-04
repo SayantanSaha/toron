@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/logging"
 	"toron/pkg/proxy"
 	"toron/pkg/router"
 )
@@ -627,5 +628,96 @@ func TestRouter_ShouldRedirectHTTP_RouteOverride(t *testing.T) {
 	reqUnmatched.Header.Set("Host", "example.com")
 	if !r.ShouldRedirectHTTP(reqUnmatched) {
 		t.Errorf("expected ShouldRedirectHTTP true for unmatched route, got false")
+	}
+}
+
+func TestRouter_AccessLoggerMiddleware_RouteOverrides(t *testing.T) {
+	tempDir := t.TempDir()
+	defaultAccessLog := filepath.Join(tempDir, "default_access.log")
+	customAccessLog := filepath.Join(tempDir, "custom_api_access.log")
+
+	mgr, err := logging.NewLogManager(logging.Config{
+		Format:    "text",
+		AccessLog: defaultAccessLog,
+	})
+	if err != nil {
+		t.Fatalf("failed to create LogManager: %v", err)
+	}
+	defer mgr.Close()
+
+	r := router.New()
+	r.Use(router.AccessLoggerMiddleware(mgr, r))
+
+	// Route 1: Default access logging (no override)
+	r.GET("/hello", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(200)
+		_, _ = res.WriteString("hello")
+	})
+
+	// Route 2: Custom access log override
+	staticDir := filepath.Join(tempDir, "static")
+	_ = os.MkdirAll(staticDir, 0755)
+	_ = os.WriteFile(filepath.Join(staticDir, "index.html"), []byte("index content"), 0644)
+	err = r.RoutePrefix(router.RouteTypeStatic, "", "/custom", nil, staticDir, proxy.ProxyOptions{
+		AccessLog: customAccessLog,
+	})
+	if err != nil {
+		t.Fatalf("failed to register custom static route: %v", err)
+	}
+
+	// Route 3: Silenced access log ("off")
+	err = r.RoutePrefix(router.RouteTypeStatic, "", "/silent", nil, staticDir, proxy.ProxyOptions{
+		AccessLog: "off",
+	})
+	if err != nil {
+		t.Fatalf("failed to register silent route: %v", err)
+	}
+
+	// Request 1: hits /hello (default access log)
+	req1, _ := httpparser.NewRequest("GET", "/hello", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res1.StatusCode)
+	}
+
+	// Request 2: hits /custom/index.html (custom access log)
+	req2, _ := httpparser.NewRequest("GET", "/custom/index.html", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res2.StatusCode)
+	}
+
+	// Request 3: hits /silent/index.html (silenced)
+	req3, _ := httpparser.NewRequest("GET", "/silent/index.html", "HTTP/1.1")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+	if res3.StatusCode != 200 {
+		t.Fatalf("expected 200, got %d", res3.StatusCode)
+	}
+
+	// Verify default access log contains /hello, and does not contain /custom or /silent
+	defContent, err := os.ReadFile(defaultAccessLog)
+	if err != nil {
+		t.Fatalf("failed to read default access log: %v", err)
+	}
+	if !strings.Contains(string(defContent), "/hello") {
+		t.Errorf("default access log missing /hello: %s", string(defContent))
+	}
+	if strings.Contains(string(defContent), "/custom") {
+		t.Errorf("default access log should NOT contain /custom")
+	}
+	if strings.Contains(string(defContent), "/silent") {
+		t.Errorf("default access log should NOT contain /silent")
+	}
+
+	// Verify custom access log contains /custom/index.html
+	customContent, err := os.ReadFile(customAccessLog)
+	if err != nil {
+		t.Fatalf("failed to read custom access log: %v", err)
+	}
+	if !strings.Contains(string(customContent), "/custom/index.html") {
+		t.Errorf("custom access log missing /custom/index.html: %s", string(customContent))
 	}
 }

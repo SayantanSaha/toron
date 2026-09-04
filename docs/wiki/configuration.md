@@ -580,6 +580,66 @@ routes:
 
 ---
 
+### Multi-Stream Logging & Daily System Logrotate (`logging`)
+
+Toron provides enterprise-grade, configuration-driven multi-stream logging segregating internal server diagnostics, transactional HTTP access logs, and security audit telemetry.
+
+#### 1. Global Logging Configuration (`config.yaml`)
+
+```yaml
+logging:
+  level: "info"               # Severity threshold: "debug", "info", "warn", "error"
+  format: "text"              # Output format: "text" (Combined format with latency) or "json"
+  server_log: "logs/server.log"     # Internal server diagnostics, lifecycle events, and panics
+  access_log: "logs/access.log"     # HTTP request/response transactional logs
+  security_log: "logs/security.log" # WAF audit events, auth failures, and ACL blocks
+```
+
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `logging.level` | `string` | `"info"` | Minimum log level threshold (`"debug"`, `"info"`, `"warn"`, `"error"`). |
+| `logging.format` | `string` | `"text"` | Log formatting scheme (`"text"` or `"json"`). |
+| `logging.server_log` | `string` | `"logs/server.log"` | Destination for server events, startup messages, and error traces (`"stdout"`, `"stderr"`, or file path). |
+| `logging.access_log` | `string` | `"logs/access.log"` | Default destination for HTTP transactional access records (`"stdout"`, `"off"`, or file path). |
+| `logging.security_log` | `string` | `"logs/security.log"` | Default destination for security audit logs and WAF blocks (`"stdout"`, `"off"`, or file path). |
+
+#### 2. Declaring Per-Route Overrides (`routes.yaml`)
+
+Individual routes can direct access and security logs to dedicated log files for compliance (e.g. PCI-DSS audit isolation), or silence access logs for high-frequency internal routes:
+
+```yaml
+routes:
+  # Isolated logging for high-security API routes
+  - type: "upstream"
+    prefix: "/api/v2"
+    target: "http://localhost:9001"
+    access_log: "logs/api_v2_access.log"
+    security_log: "logs/api_v2_security.log"
+
+  # Silenced access logging for internal health probes
+  - type: "static"
+    prefix: "/health"
+    dir: "/var/www/health"
+    access_log: "off"
+```
+
+#### 3. Daily Log Rotation with System Logrotate
+
+All log files are opened in append mode (`O_APPEND`), making them immediately safe for rotation tools using `copytruncate`. In addition, Toron handles the `SIGHUP` operating system signal to atomically close and reopen all active file handles after a rename/rotate:
+
+1. Install the logrotate configuration:
+   ```bash
+   sudo cp etc/logrotate.d/toron /etc/logrotate.d/toron
+   sudo chmod 0644 /etc/logrotate.d/toron
+   ```
+2. On rotation, logrotate automatically sends `SIGHUP` to Toron:
+   ```bash
+   pkill -HUP -f "toron"
+   ```
+3. Toron flushes buffers, closes existing descriptors, and opens new log files with zero dropped requests or socket restarts.
+
+---
+
 ## Related Pages
 
 - [Documentation Index](./index.md)

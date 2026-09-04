@@ -395,3 +395,99 @@ routes:
 		t.Errorf("route 1: expected ShouldRedirectHTTP true, got false")
 	}
 }
+
+func TestConfig_LoggingConfigAndRouteOverrides(t *testing.T) {
+	tmpDir := t.TempDir()
+	cfgPath := filepath.Join(tmpDir, "config.yaml")
+	routesPath := filepath.Join(tmpDir, "routes.yaml")
+
+	cfgData := `
+server:
+  port: 8080
+
+logging:
+  level: "warn"
+  format: "json"
+  server_log: "logs/custom_server.log"
+  access_log: "logs/custom_access.log"
+  security_log: "logs/custom_security.log"
+`
+	if err := os.WriteFile(cfgPath, []byte(cfgData), 0644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+
+	routesData := `
+routes:
+  - type: "upstream"
+    prefix: "/api"
+    target: "http://localhost:9001"
+    access_log: "logs/api_access.log"
+    security_log: "logs/api_security.log"
+
+  - type: "static"
+    prefix: "/silent"
+    dir: "./public"
+    access_log: "off"
+
+  - type: "static"
+    prefix: "/default"
+    dir: "./public"
+`
+	if err := os.WriteFile(routesPath, []byte(routesData), 0644); err != nil {
+		t.Fatalf("failed to write routes.yaml: %v", err)
+	}
+
+	appCfg, err := config.LoadFromFiles(cfgPath, routesPath)
+	if err != nil {
+		t.Fatalf("failed to load configs: %v", err)
+	}
+
+	// 1. Verify Global Logging Config
+	if appCfg.Logging.Level != "warn" {
+		t.Errorf("expected level 'warn', got %q", appCfg.Logging.Level)
+	}
+	if appCfg.Logging.Format != "json" {
+		t.Errorf("expected format 'json', got %q", appCfg.Logging.Format)
+	}
+	if appCfg.Logging.ServerLog != "logs/custom_server.log" {
+		t.Errorf("expected server_log 'logs/custom_server.log', got %q", appCfg.Logging.ServerLog)
+	}
+	if appCfg.Logging.AccessLog != "logs/custom_access.log" {
+		t.Errorf("expected access_log 'logs/custom_access.log', got %q", appCfg.Logging.AccessLog)
+	}
+	if appCfg.Logging.SecurityLog != "logs/custom_security.log" {
+		t.Errorf("expected security_log 'logs/custom_security.log', got %q", appCfg.Logging.SecurityLog)
+	}
+
+	// 2. Verify Route Overrides
+	if len(appCfg.Proxy.Routes) != 3 {
+		t.Fatalf("expected 3 routes, got %d", len(appCfg.Proxy.Routes))
+	}
+
+	r0 := appCfg.Proxy.Routes[0]
+	if r0.AccessLog != "logs/api_access.log" {
+		t.Errorf("route 0 access_log: expected 'logs/api_access.log', got %q", r0.AccessLog)
+	}
+	if r0.SecurityLog != "logs/api_security.log" {
+		t.Errorf("route 0 security_log: expected 'logs/api_security.log', got %q", r0.SecurityLog)
+	}
+	if r0.GetAccessLog("default.log") != "logs/api_access.log" {
+		t.Errorf("route 0 GetAccessLog: expected 'logs/api_access.log', got %q", r0.GetAccessLog("default.log"))
+	}
+	if r0.GetSecurityLog("default.log") != "logs/api_security.log" {
+		t.Errorf("route 0 GetSecurityLog: expected 'logs/api_security.log', got %q", r0.GetSecurityLog("default.log"))
+	}
+
+	r1 := appCfg.Proxy.Routes[1]
+	if r1.AccessLog != "off" {
+		t.Errorf("route 1 access_log: expected 'off', got %q", r1.AccessLog)
+	}
+
+	r2 := appCfg.Proxy.Routes[2]
+	if r2.AccessLog != "" {
+		t.Errorf("route 2 access_log: expected empty, got %q", r2.AccessLog)
+	}
+	if r2.GetAccessLog("default.log") != "default.log" {
+		t.Errorf("route 2 GetAccessLog: expected fallback 'default.log', got %q", r2.GetAccessLog("default.log"))
+	}
+}

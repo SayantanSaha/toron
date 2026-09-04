@@ -3,7 +3,7 @@ node_modules/
 cover
 cover.out
 certs/
-toron
+/toron
 dummy
 .vscode/
 .idea/

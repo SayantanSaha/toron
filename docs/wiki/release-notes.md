@@ -1,5 +1,35 @@
 # Release Notes
 
+## 2026-09-04 - Toron v1.5.3 Feature Release (Config-Based Multi-Stream Logging & Daily System Logrotate Support)
+
+### Milestone Summary
+- **Config-Based Multi-Stream Logging Engine (`pkg/logging`)**: Implemented a thread-safe, decoupled logging engine with dedicated streams for internal server logs (`server_log`), HTTP request/response transactional access logs (`access_log`), and security audit telemetry (`security_log`), with configurable output formats (`text` Combined format and structured `json`) (`TASK-058`, `REQ-058`, `ADR-053`).
+- **Declarative Global Defaults & Per-Route Overrides (`pkg/config`, `pkg/router`)**: Default file paths are configured globally in `config.yaml`, with support for overriding `access_log` and `security_log` on a per-route basis in `routes.yaml` (including silencing via `"off"` or `"none"`).
+- **Daily System Logrotate Integration (`etc/logrotate.d/toron`)**: All log files are opened in append mode (`O_APPEND`), guaranteeing zero corruption under `copytruncate`. In addition, Toron establishes an OS signal handler listening for `SIGHUP` to atomically close and reopen all active file descriptors for standard rename/rotate workflows without dropping connections or restarting the daemon.
+- **Enterprise WAF & Security Audit Synchronization**: WAF audit logging, authentication failures, and rate limit blocks seamlessly route into the configured security log stream or route-specific security log files.
+
+### Added
+- **Multi-Stream Log Manager (`pkg/logging/manager.go`)**: Dedicated package managing thread-safe `LogSink` handles, automatic directory creation (`os.MkdirAll`), text/JSON formatting, and atomic `Reopen()` upon rotation signals.
+- **Configuration Schema Extensions (`pkg/config/config.go`)**: Added `ServerLog`, `AccessLog`, and `SecurityLog` to `LoggingConfig`, and added `AccessLog` and `SecurityLog` to `ProxyRouteConfig` with helper query methods.
+- **Access Logging Middleware (`pkg/router/router.go`)**: Added `AccessLoggerMiddleware` and `MatchPrefixRoute` to automatically direct access logs according to matched route configuration.
+- **System Logrotate Template (`etc/logrotate.d/toron`)**: Standard UNIX logrotate configuration rotating daily, preserving 7 generations, compressing rotated logs, and executing `pkill -HUP -f "toron"`.
+- **Unit & Race Test Suite (`pkg/logging/manager_test.go`, `pkg/config/config_test.go`, `pkg/router/router_test.go`)**:
+  - `TestLogSink_FileCreationAndDirectory`: Verifies sink opening, nested folder auto-creation, and append mode.
+  - `TestLogSink_ReopenLogrotate`: Verifies log rotation simulation (rename -> reopen -> verify lines in old vs new files).
+  - `TestLogManager_MultiStreamAndRouteOverrides`: Verifies server log, access log, security log, route overrides, and silencing.
+  - `TestLogManager_JSONFormat`: Verifies structured JSON telemetry serialization.
+  - `TestLogManager_ConcurrentWrites`: Verifies 50 concurrent worker routines writing 5,000 log records under the race detector.
+  - `TestExtractClientIP`: Verifies socket `RawConn.RemoteAddr` extraction, `X-Forwarded-For`, and `X-Real-IP`.
+  - `TestRouter_AccessLoggerMiddleware_RouteOverrides`: Verifies HTTP access logging middleware with default, custom route, and silenced routes.
+  - `TestConfig_LoggingConfigAndRouteOverrides`: Verifies configuration parsing for global logging and route overrides.
+
+### Changed
+- **Server Logging (`cmd/toron/main.go`)**: Standard Go logger (`log.SetOutput`) redirected to `server_log` sink when configured.
+- **Signal Handling (`cmd/toron/main.go`)**: Added `syscall.SIGHUP` listener for live log reopening without socket drops.
+
+### Related Tasks
+- `TASK-058`: Implement Config-Based Multi-Stream Logging, Route Overrides, and Logrotate Support
+
 ## 2026-09-04 - Toron v1.5.2 Feature Release (Single Page Application HTML5 History Fallback Support)
 
 ### Milestone Summary

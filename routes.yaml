@@ -23,6 +23,8 @@ routes:
       X-Version: "v2"
     algorithm: "round_robin"
     rate_limit: "100/min"
+    access_log: "logs/api_access.log"
+    security_log: "logs/api_security.log"
     targets:
       - "http://localhost:9001"
       - "http://localhost:9002"

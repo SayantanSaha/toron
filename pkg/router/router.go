@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/logging"
 	"toron/pkg/metrics"
 	"toron/pkg/proxy"
 	"toron/pkg/waf"
@@ -42,6 +43,8 @@ type prefixRoute struct {
 	prefix       string
 	headers      map[string]string
 	redirectHTTP *bool
+	accessLog    string
+	securityLog  string
 	handler      HandlerFunc
 }
 
@@ -203,6 +206,15 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 
 	if opts.WAF != nil {
 		if wafCfg, ok := opts.WAF.(waf.WAFConfig); ok && (wafCfg.Enabled || len(wafCfg.AllowedIPs) > 0 || len(wafCfg.DeniedIPs) > 0 || len(wafCfg.DisabledRules) > 0 || wafCfg.Mode != "") {
+			if strings.TrimSpace(opts.SecurityLog) != "" {
+				secLog := strings.ToLower(strings.TrimSpace(opts.SecurityLog))
+				if secLog == "off" || secLog == "none" {
+					wafCfg.AuditLog.Enabled = false
+				} else {
+					wafCfg.AuditLog.Enabled = true
+					wafCfg.AuditLog.Output = opts.SecurityLog
+				}
+			}
 			if routeWafEngine, err := waf.NewEngine(wafCfg); err == nil {
 				nextHandler := handler
 				wafMw := waf.NewWAFMiddleware(routeWafEngine)
@@ -220,6 +232,8 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 		prefix:       cleanPrefix,
 		headers:      headers,
 		redirectHTTP: opts.RedirectHTTP,
+		accessLog:    strings.TrimSpace(opts.AccessLog),
+		securityLog:  strings.TrimSpace(opts.SecurityLog),
 		handler:      handler,
 	})
 	return nil
@@ -538,6 +552,72 @@ func headersAndHostMatch(reqHost string, req *httpparser.Request, routeHost stri
 		}
 	}
 	return true
+}
+
+// MatchPrefixRoute finds the matching prefix route for an incoming request and returns its prefix, access log override, and security log override.
+func (r *Router) MatchPrefixRoute(req *httpparser.Request) (prefix string, accessLog string, securityLog string, matched bool) {
+	if r == nil || req == nil {
+		return "", "", "", false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	reqHost := extractHost(req)
+	for i := range r.prefixRoutes {
+		pr := &r.prefixRoutes[i]
+		if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
+			if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
+				return pr.prefix, pr.accessLog, pr.securityLog, true
+			}
+		}
+	}
+	return "", "", "", false
+}
+
+// AccessLoggerMiddleware logs incoming requests to the configured LogManager, respecting route-level access log overrides and silencing.
+func AccessLoggerMiddleware(logMgr *logging.LogManager, r *Router) MiddlewareFunc {
+	return func(next HandlerFunc) HandlerFunc {
+		return func(req *httpparser.Request, res *httpparser.Response) {
+			start := time.Now()
+			next(req, res)
+			duration := time.Since(start)
+
+			matchedPrefix := ""
+			routeAccessLog := ""
+			if r != nil {
+				prefix, accLog, _, matched := r.MatchPrefixRoute(req)
+				if matched {
+					matchedPrefix = prefix
+					routeAccessLog = accLog
+				}
+			}
+
+			if logMgr != nil {
+				bytesSent := int64(0)
+				if res.Body != nil {
+					bytesSent = int64(res.Body.Len())
+				}
+				proto := req.Proto
+				if proto == "" {
+					proto = "HTTP/1.1"
+				}
+				logMgr.LogAccess(logging.AccessLogEntry{
+					Timestamp:   start,
+					ClientIP:    logging.ExtractClientIP(req),
+					Method:      req.Method,
+					Path:        req.Path,
+					Protocol:    proto,
+					StatusCode:  res.StatusCode,
+					Duration:    duration,
+					BytesSent:   bytesSent,
+					UserAgent:   req.Header.Get("User-Agent"),
+					Referer:     req.Header.Get("Referer"),
+					Host:        req.Header.Get("Host"),
+					RoutePrefix: matchedPrefix,
+				}, routeAccessLog)
+			}
+		}
+	}
 }
 
 // LoggerMiddleware logs incoming requests and processing duration.

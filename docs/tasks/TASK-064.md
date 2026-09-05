@@ -2,7 +2,7 @@
 id: TASK-064
 type: task
 title: Implement Memory Capacity Limits and TTL Eviction in Token Bucket Rate Limiter
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-064
 implements:
   - REQ-064
-verified_by: []
+verified_by:
+  - TC-064
 decided_by:
   - ADR-059
 related_to:

@@ -1,5 +1,19 @@
 # Release Notes
 
+## 2026-09-05 - Toron v1.5.4 Feature Release (Upstream Reverse Proxy Path Rewriting and Target Subpath Preservation)
+
+### Milestone Summary
+- **Deterministic Proxy Path Rewriting (`pkg/proxy`)**: Enhanced reverse proxy path joining logic (`JoinProxyPath`) to accurately preserve upstream target URLs containing subpaths (e.g. `http://127.0.0.1:8082/postback`), eliminating unwanted trailing slash injection when `strip_prefix: true` is enabled (`TASK-059`, `REQ-059`, `ADR-054`).
+- **Nginx Parity for Reverse Proxying**: Brings Toron into full parity with standard reverse proxies (Nginx, Envoy, Caddy), allowing upstream microservices (such as Go standard library `http.ServeMux` or strict REST routers) to receive the exact requested path without trailing slash discrepancies.
+- **Explicit Trailing Slash & Nested Path Preservation**: Client-provided trailing slashes (`/kite/postback/`) and nested subpaths (`/kite/postback/status`) continue to be accurately preserved and joined.
+
+### Added
+- **Exported `JoinProxyPath` Function (`pkg/proxy/proxy.go`)**: Dedicated function for resolving upstream request paths based on target path, request path, prefix, and strip prefix configuration.
+- **Unit & Integration Test Suite (`pkg/proxy/proxy_test.go`)**: Table-driven tests (`TestJoinProxyPath_TableDriven`) and full HTTP reverse proxy integration tests (`TestReverseProxy_SubpathTarget_Integration`).
+
+### Related Tasks
+- `TASK-059`: Implement Upstream Reverse Proxy Path Rewriting and Subpath Target Preservation
+
 ## 2026-09-04 - Toron v1.5.3 Feature Release (Config-Based Multi-Stream Logging & Daily System Logrotate Support)
 
 ### Milestone Summary

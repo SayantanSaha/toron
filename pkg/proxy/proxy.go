@@ -559,19 +559,8 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	}()
 
 	targetURL := targetNode.URL
-	relPath := req.Path
-	if p.StripPrefix && prefix != "" {
-		relPath = strings.TrimPrefix(req.Path, prefix)
-	}
-	if relPath == "" {
-		relPath = "/"
-	}
-	if !strings.HasPrefix(relPath, "/") {
-		relPath = "/" + relPath
-	}
-
 	outURL := *targetURL
-	outURL.Path = singleJoiningSlash(targetURL.Path, relPath)
+	outURL.Path = JoinProxyPath(targetURL.Path, req.Path, prefix, p.StripPrefix)
 	outURL.RawQuery = req.QueryParams.Encode()
 
 	if req.IsWebSocketUpgrade() {
@@ -706,6 +695,53 @@ func singleJoiningSlash(a, b string) string {
 		return a + "/" + b
 	}
 	return a + b
+}
+
+// JoinProxyPath resolves the upstream destination path by joining targetPath with reqPath,
+// taking prefix stripping and target subpath preservation into account.
+func JoinProxyPath(targetPath, reqPath, prefix string, stripPrefix bool) string {
+	if !stripPrefix || prefix == "" {
+		if targetPath == "" || targetPath == "/" {
+			if reqPath == "" {
+				return "/"
+			}
+			if !strings.HasPrefix(reqPath, "/") {
+				return "/" + reqPath
+			}
+			return reqPath
+		}
+		return singleJoiningSlash(targetPath, reqPath)
+	}
+
+	trimmed := strings.TrimPrefix(reqPath, prefix)
+
+	// Target defines an explicit subpath (e.g., "/postback", "/v1/api")
+	if targetPath != "" && targetPath != "/" {
+		if trimmed == "" {
+			// Exact prefix match without trailing slash (e.g. req="/kite/postback", prefix="/kite/postback")
+			return targetPath
+		}
+		if trimmed == "/" {
+			// Explicit trailing slash requested by client (e.g. req="/kite/postback/", prefix="/kite/postback")
+			if strings.HasSuffix(targetPath, "/") {
+				return targetPath
+			}
+			return targetPath + "/"
+		}
+		if !strings.HasPrefix(trimmed, "/") {
+			trimmed = "/" + trimmed
+		}
+		return singleJoiningSlash(targetPath, trimmed)
+	}
+
+	// Target has no subpath (e.g. targetPath is "" or "/")
+	if trimmed == "" || trimmed == "/" {
+		return "/"
+	}
+	if !strings.HasPrefix(trimmed, "/") {
+		trimmed = "/" + trimmed
+	}
+	return trimmed
 }
 
 func (p *ReverseProxy) serveWebSocketProxy(req *httpparser.Request, res *httpparser.Response, targetNode *UpstreamTarget, outURL url.URL, prefix string) {

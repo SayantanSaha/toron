@@ -508,3 +508,149 @@ func TestReverseProxy_RewriteRedirectsDisabled(t *testing.T) {
 		t.Errorf("expected raw Location /raw-backend-path with rewrite_redirects=false, got %q", loc)
 	}
 }
+
+func TestJoinProxyPath_TableDriven(t *testing.T) {
+	tests := []struct {
+		name        string
+		targetPath  string
+		reqPath     string
+		prefix      string
+		stripPrefix bool
+		expected    string
+	}{
+		// TC-059-01: Exact prefix match to subpath target without trailing slash
+		{
+			name:        "exact prefix match to subpath target",
+			targetPath:  "/postback",
+			reqPath:     "/kite/postback",
+			prefix:      "/kite/postback",
+			stripPrefix: true,
+			expected:    "/postback",
+		},
+		// TC-059-02: Exact prefix match with client trailing slash
+		{
+			name:        "prefix with client trailing slash",
+			targetPath:  "/postback",
+			reqPath:     "/kite/postback/",
+			prefix:      "/kite/postback",
+			stripPrefix: true,
+			expected:    "/postback/",
+		},
+		// TC-059-03: Nested subpath under subpath target
+		{
+			name:        "nested subpath under subpath target",
+			targetPath:  "/postback",
+			reqPath:     "/kite/postback/status",
+			prefix:      "/kite/postback",
+			stripPrefix: true,
+			expected:    "/postback/status",
+		},
+		// TC-059-04: Non-subpath target regression
+		{
+			name:        "non-subpath target exact prefix",
+			targetPath:  "",
+			reqPath:     "/kite/api",
+			prefix:      "/kite/api",
+			stripPrefix: true,
+			expected:    "/",
+		},
+		{
+			name:        "non-subpath target prefix with trailing slash",
+			targetPath:  "",
+			reqPath:     "/kite/api/",
+			prefix:      "/kite/api",
+			stripPrefix: true,
+			expected:    "/",
+		},
+		{
+			name:        "non-subpath target nested subpath",
+			targetPath:  "",
+			reqPath:     "/kite/api/v1/trades",
+			prefix:      "/kite/api",
+			stripPrefix: true,
+			expected:    "/v1/trades",
+		},
+		// TC-059-05: Target explicit trailing slash preservation
+		{
+			name:        "target explicit trailing slash preserved",
+			targetPath:  "/postback/",
+			reqPath:     "/kite/postback",
+			prefix:      "/kite/postback",
+			stripPrefix: true,
+			expected:    "/postback/",
+		},
+		// TC-059-06: StripPrefix false
+		{
+			name:        "strip prefix false keeps full path",
+			targetPath:  "",
+			reqPath:     "/kite/postback",
+			prefix:      "/kite/postback",
+			stripPrefix: false,
+			expected:    "/kite/postback",
+		},
+		{
+			name:        "strip prefix false with subpath target joins cleanly",
+			targetPath:  "/api",
+			reqPath:     "/v1/users",
+			prefix:      "/v1",
+			stripPrefix: false,
+			expected:    "/api/v1/users",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := proxy.JoinProxyPath(tc.targetPath, tc.reqPath, tc.prefix, tc.stripPrefix)
+			if got != tc.expected {
+				t.Errorf("JoinProxyPath(%q, %q, %q, %v) = %q; want %q",
+					tc.targetPath, tc.reqPath, tc.prefix, tc.stripPrefix, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestReverseProxy_SubpathTarget_Integration(t *testing.T) {
+	var capturedPath string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstreamServer.Close()
+
+	// Upstream target with subpath /postback
+	targetURL := upstreamServer.URL + "/postback"
+	stripPrefixTrue := true
+	opts := proxy.ProxyOptions{
+		Targets:     []string{targetURL},
+		StripPrefix: &stripPrefixTrue,
+	}
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	// 1. Exact match /kite/postback -> upstream must receive /postback (NO trailing slash)
+	req1, _ := httpparser.NewRequest("POST", "/kite/postback", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	px.ServeHTTPWithPrefix(req1, res1, "/kite/postback")
+	if capturedPath != "/postback" {
+		t.Errorf("expected upstream path /postback, got %q", capturedPath)
+	}
+
+	// 2. Trailing slash /kite/postback/ -> upstream must receive /postback/
+	req2, _ := httpparser.NewRequest("POST", "/kite/postback/", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	px.ServeHTTPWithPrefix(req2, res2, "/kite/postback")
+	if capturedPath != "/postback/" {
+		t.Errorf("expected upstream path /postback/, got %q", capturedPath)
+	}
+
+	// 3. Nested path /kite/postback/webhook -> upstream must receive /postback/webhook
+	req3, _ := httpparser.NewRequest("POST", "/kite/postback/webhook", "HTTP/1.1")
+	res3 := httpparser.NewResponse()
+	px.ServeHTTPWithPrefix(req3, res3, "/kite/postback")
+	if capturedPath != "/postback/webhook" {
+		t.Errorf("expected upstream path /postback/webhook, got %q", capturedPath)
+	}
+}
+

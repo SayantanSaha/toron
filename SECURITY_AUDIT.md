@@ -1,17 +1,17 @@
 # 🛡️ Toron Web Server & Edge Gateway: Security Audit Report (`toron_v3`)
 
 **Role**: Security Analyst / Security Researcher (AGENT-007)  
-**Date**: September 5, 2026 (Post-Remediation Full Audit)  
-**Audited Commit**: `a4bada8` (`master` post-`TASK-061` through `TASK-072`)  
-**Reference Document**: [`docs/securityReview/SR-070.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-070.md) (Historical: [`docs/securityReview/SR-054.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-054.md))
+**Date**: September 5, 2026 (Post-Remediation Comprehensive Audit)  
+**Audited Commit**: `fd10764` (`master` post-`TASK-073` through `TASK-082`)  
+**Reference Document**: [`docs/securityReview/SR-081.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-081.md) (Historical: [`docs/securityReview/SR-070.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-070.md), [`docs/securityReview/SR-054.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-054.md))
 
 ---
 
 ## 1. Executive Summary
 
-This security audit report has been updated to reflect the current codebase following recent commits (`TASK-058` multi-stream logging, `TASK-059` target subpath preservation via `JoinProxyPath`, and `TASK-060` query parameter forwarding).
+This security audit report reflects the current state of the Toron Web Server and Edge Gateway codebase following the complete remediation, testing, code review, and merging of all 22 prior security tasks (`TASK-061` through `TASK-082`).
 
-Each identified security vulnerability has been broken down into an atomic functional/non-functional requirement document ([`REQ-061`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-061.md) through [`REQ-072`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-072.md)) owned by the Requirement Engineer (`AGENT-002`), and mapped directly to bounded engineering task specifications ([`TASK-061`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-061.md) through [`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md)) owned by the Development Lead (`AGENT-003`) to ensure verifiable, test-driven remediation.
+A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-081.md)) was conducted across all subsystems—including Kubernetes Ingress Controllers, Layer 4 Proxies, REST-to-gRPC Transcoding, Service Mesh Sidecars, WebSocket Upgrades, and Logging. The 22 previously identified vulnerabilities remain 100% verified and resolved. **8 new findings** (`SEC-23` through `SEC-30`) have been identified in the extended subsystem surfaces and are tracked below for remediation.
 
 ---
 
@@ -41,6 +41,14 @@ Each identified security vulnerability has been broken down into an atomic funct
 | **P2** | **SEC-20** | WAF Path Traversal Bypass via Uppercase Percent-Encoding (`TRAVERSAL-001`) | **Medium** | CWE-693, CWE-22 | **Resolved** | [`TASK-080`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-080.md) | `TC-080`, `SR-078`, `CR-076` | `4203aba` |
 | **P2** | **SEC-21** | Request Body Dropping in Sidecar Proxy Engine | **Medium** | CWE-436 | **Resolved** | [`TASK-081`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-081.md) | `TC-081`, `SR-079`, `CR-077` | `0bd0cc8` |
 | **P3** | **SEC-22** | Missing Expiration (`exp`) Claim Enforcement in JWT Verification | **Low** | CWE-613 | **Resolved** | [`TASK-082`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-082.md) | `TC-082`, `SR-080`, `CR-078` | `b48848e` |
+| **P1** | **SEC-23** | K8s Ingress Controller Watch Stream Unconsumed Channel Deadlock | **High** | CWE-400, CWE-833 | **Open** | Pending | `SR-081` | Pending |
+| **P2** | **SEC-24** | Ingress Route Hijacking & Route Shadowing in K8s Ingress Controller | **Medium** | CWE-284, CWE-285 | **Open** | Pending | `SR-081` | Pending |
+| **P2** | **SEC-25** | Silent Request Body Truncation in Service Mesh Sidecar Proxy | **Medium** | CWE-436, CWE-400 | **Open** | Pending | `SR-081` | Pending |
+| **P1** | **SEC-26** | Unbounded Goroutine & Socket Allocation in Layer 4 UDP/TCP Proxies | **High** | CWE-400 | **Open** | Pending | `SR-081` | Pending |
+| **P2** | **SEC-27** | Missing Maximum Idle Deadlines on Upgraded Protocol Connections | **Medium** | CWE-400 | **Open** | Pending | `SR-081` | Pending |
+| **P2** | **SEC-28** | Unbounded Request Body Ingestion in REST-to-gRPC Transcoder | **Medium** | CWE-400, CWE-770 | **Open** | Pending | `SR-081` | Pending |
+| **P3** | **SEC-29** | Hop-by-Hop Header Leakage to Upstream in REST-to-gRPC Transcoder | **Low** | CWE-444, CWE-436 | **Open** | Pending | `SR-081` | Pending |
+| **P2** | **SEC-30** | Subpath Routing Interception & 502 Denial in REST-to-gRPC Transcoder | **Medium** | CWE-284, CWE-400 | **Open** | Pending | `SR-081` | Pending |
 
 ---
 
@@ -335,42 +343,127 @@ Each identified security vulnerability has been broken down into an atomic funct
 - **Impact**: Administrative account takeover, session hijacking.
 - **Remediation**: Replace `innerHTML` string interpolation with `textContent` or strict HTML escaping.
 
+### Priority 6: Newly Identified Findings Post-Remediation (SR-081)
+
+#### SEC-23: K8s Ingress Controller Watch Stream Unconsumed Channel Deadlock & Goroutine Leak
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H - Score 7.5)
+- **Location**: [`pkg/ingress/controller.go:L44, L159-L164`](file:///Users/sneha/Developer/toron/pkg/ingress/controller.go#L44), [`pkg/ingress/client.go:L209`](file:///Users/sneha/Developer/toron/pkg/ingress/client.go#L209)
+- **CWE**: CWE-400, CWE-833
+- **Root Cause**:  
+  `Controller` creates `c.events = make(chan K8sWatchEvent, 100)` and invokes `WatchIngresses`. However, no worker consumes `c.events`. When 100 events are sent, `events <- evt` blocks indefinitely. During server shutdown, `c.wg.Wait()` hangs forever waiting for `watchWorker` to exit.
+- **Impact**: Server shutdown deadlock, goroutine leaks, and dropped Ingress lifecycle update events.
+- **Remediation**: Implement an event consumer loop in `Controller` that drains `c.events` and dispatches route updates, and select on `ctx.Done()` when writing to `events`.
+
+#### SEC-24: Ingress Route Hijacking & Sensitive Route Shadowing in Kubernetes Ingress Controller
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:L/I:L/A:L - Score 6.3)
+- **Location**: [`pkg/ingress/translator.go:L40-L48`](file:///Users/sneha/Developer/toron/pkg/ingress/translator.go#L40-L48), [`pkg/ingress/controller.go:L146-L154`](file:///Users/sneha/Developer/toron/pkg/ingress/controller.go#L146-L154)
+- **CWE**: CWE-284, CWE-285
+- **Root Cause**:  
+  `TranslateIngress` does not enforce prefix scoping or root shadowing restrictions. An Ingress with unhosted root (`host: ""` and `path: "/"`) or sensitive management routes (`/internal`, `/api/status`) is accepted and registered on the gateway router.
+- **Impact**: Gateway root traffic hijacking and administrative endpoint shadowing.
+- **Remediation**: Reject unhosted root paths and `/internal`, `/api/status` prefixes in `TranslateIngress`.
+
+#### SEC-25: Silent Request Body Truncation in Service Mesh Sidecar Proxy
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N - Score 5.3)
+- **Location**: [`pkg/sidecar/proxy.go:L201-L210`](file:///Users/sneha/Developer/toron/pkg/sidecar/proxy.go#L201-L210)
+- **CWE**: CWE-436, CWE-400
+- **Root Cause**:  
+  `proxyToURL` reads request bodies using `io.LimitReader(r.Body, maxSidecarBody+1)`. When the body exceeds `maxSidecarBody` (10 MB), the excess bytes are truncated without returning `HTTP 413 Payload Too Large`, silently forwarding truncated data upstream.
+- **Impact**: Upstream data corruption and protocol desynchronization.
+- **Remediation**: Return `HTTP 413 Payload Too Large` immediately when `len(bodyBytes) > maxSidecarBody`.
+
+#### SEC-26: Unbounded Goroutine & Socket Allocation in Layer 4 UDP/TCP Proxies
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H - Score 7.5)
+- **Location**: [`pkg/proxy/udp.go:L76-L108`](file:///Users/sneha/Developer/toron/pkg/proxy/udp.go#L76-L108), [`pkg/proxy/tcp.go:L74-L109`](file:///Users/sneha/Developer/toron/pkg/proxy/tcp.go#L74-L109)
+- **CWE**: CWE-400
+- **Root Cause**:  
+  In `UDPProxy.Serve`, every datagram spawns a new goroutine and dials a new outbound UDP socket without limits or socket reuse. In `TCPProxy.Serve`, accepted connections lack idle timeouts and connection tracking.
+- **Impact**: File descriptor and memory exhaustion (OOM) via UDP floods or idle TCP Slowloris connections.
+- **Remediation**: Enforce connection concurrency limits, socket reuse, and idle deadlines.
+
+#### SEC-27: Missing Maximum Idle Deadlines on Upgraded Protocol Connections (WebSockets)
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:M - Score 5.3)
+- **Location**: [`pkg/server/server.go:L273-L294`](file:///Users/sneha/Developer/toron/pkg/server/server.go#L273-L294)
+- **CWE**: CWE-400
+- **Root Cause**:  
+  Upon protocol switching (`101 Switching Protocols`), all deadlines on client and upstream sockets are permanently cleared (`conn.SetDeadline(time.Time{})`), allowing silent/abandoned connections to leak goroutines indefinitely.
+- **Impact**: Slowloris resource exhaustion on WebSocket/tunnel endpoints.
+- **Remediation**: Implement a configurable tunnel idle deadline or enable TCP keep-alive probes.
+
+#### SEC-28: Unbounded Request Body Ingestion in REST-to-gRPC Transcoder
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L - Score 5.3)
+- **Location**: [`pkg/transcoder/transcoder.go:L93-L103`](file:///Users/sneha/Developer/toron/pkg/transcoder/transcoder.go#L93-L103)
+- **CWE**: CWE-400, CWE-770
+- **Root Cause**:  
+  `HandleTranscode` performs `io.ReadAll(req.Body)` without wrapping in an `io.LimitReader`, enabling memory exhaustion when handling oversized request payloads.
+- **Impact**: Out-of-memory denial of service via large streaming JSON payloads.
+- **Remediation**: Wrap `req.Body` with `io.LimitReader` bounded to a configured maximum payload ceiling (e.g. 4 MB).
+
+#### SEC-29: Hop-by-Hop Header Leakage to Upstream in REST-to-gRPC Transcoder
+- **Severity**: **Low** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N - Score 3.7)
+- **Location**: [`pkg/transcoder/transcoder.go:L153-L161`](file:///Users/sneha/Developer/toron/pkg/transcoder/transcoder.go#L153-L161)
+- **CWE**: CWE-444, CWE-436
+- **Root Cause**:  
+  `HandleTranscode` copies client request headers to the outgoing gRPC HTTP/2 request without stripping standard hop-by-hop headers (`Connection`, `Keep-Alive`, `Upgrade`, `TE`).
+- **Impact**: Upstream gRPC server rejection or HTTP/2 protocol violation.
+- **Remediation**: Strip hop-by-hop headers before forwarding headers to the gRPC client request.
+
+#### SEC-30: Subpath Routing Interception & 502 Denial in REST-to-gRPC Transcoder
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:M - Score 5.3)
+- **Location**: [`pkg/transcoder/transcoder.go:L83-L85`](file:///Users/sneha/Developer/toron/pkg/transcoder/transcoder.go#L83-L85)
+- **CWE**: CWE-284, CWE-400
+- **Root Cause**:  
+  `registerRoutes` registers a dummy upstream prefix route with empty options (0 targets) alongside exact path routes. Parameterized requests (e.g. `/v1/users/123`) fall through to the empty prefix proxy and return `502 Bad Gateway`.
+- **Impact**: Parameterized REST-to-gRPC endpoints are unreachable through the gateway.
+- **Remediation**: Register prefix routes directly binding to `HandleTranscode` instead of dummy upstream proxies.
+
 ---
 
 ## 4. Remediation Sequence
 
-- **Phase 1 (Immediate Protocol & Auth Hotfixes - P0 & P1)**:
-  1. Reject unhandled `Transfer-Encoding: chunked` in [`pkg/httpparser/parser.go`](file:///Users/sneha/Developer/toron/pkg/httpparser/parser.go) ([`REQ-061`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-061.md), [`TASK-061`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-061.md)).
-  2. Enforce administrative authentication and subnet controls on `/internal/api/*` in [`pkg/server/internal_api.go`](file:///Users/sneha/Developer/toron/pkg/server/internal_api.go) ([`REQ-062`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-062.md), [`TASK-062`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-062.md)).
-  3. Strip `Set-Cookie` and check `Authorization` in [`pkg/router/cache.go`](file:///Users/sneha/Developer/toron/pkg/router/cache.go) ([`REQ-063`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-063.md), [`TASK-063`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-063.md)).
-  4. Enforce TLS certificate validation in WebSocket proxy in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`REQ-065`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-065.md), [`TASK-065`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-065.md)).
-  5. Add TTL expiration and capacity bounds to `RateLimiter` in [`pkg/router/rate_limiter.go`](file:///Users/sneha/Developer/toron/pkg/router/rate_limiter.go) ([`REQ-064`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-064.md), [`TASK-064`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-064.md)).
-- **Phase 2 (Logging, Routing & Path Sanitization - P2)**:
-  1. Sanitize control characters (`\r`, `\n`) in access logging in [`pkg/logging/manager.go`](file:///Users/sneha/Developer/toron/pkg/logging/manager.go) ([`REQ-066`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-066.md), [`TASK-066`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-066.md)).
-  2. Clean `req.Path` with `path.Clean` prior to calling [`JoinProxyPath`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go#L718) in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`REQ-067`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-067.md), [`TASK-067`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-067.md)).
-  3. Bound payload length in [`pkg/transcoder/framer.go`](file:///Users/sneha/Developer/toron/pkg/transcoder/framer.go) ([`REQ-068`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-068.md), [`TASK-068`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-068.md)).
-  4. Disallow `*` origin reflection when credentials are enabled in [`pkg/router/cors.go`](file:///Users/sneha/Developer/toron/pkg/router/cors.go) ([`REQ-069`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-069.md), [`TASK-069`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-069.md)).
-  5. Validate `Host` headers in HTTPS redirects against registered routes in [`pkg/server/server.go`](file:///Users/sneha/Developer/toron/pkg/server/server.go) ([`REQ-070`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-070.md), [`TASK-070`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-070.md)).
-  6. Derive `X-Forwarded-*` headers strictly from socket connection state in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`REQ-071`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-071.md), [`TASK-071`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-071.md)).
-- **Phase 3 (Query Hardening & Parameter Isolation - P3)**:
-  1. Prevent query parameter pollution in target query merging in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`REQ-072`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-072.md), [`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md)).
+- **Phase 1 (Immediate Protocol & Auth Hotfixes - P0 & P1 - COMPLETED)**:
+  1. Reject unhandled `Transfer-Encoding: chunked` in [`pkg/httpparser/parser.go`](file:///Users/sneha/Developer/toron/pkg/httpparser/parser.go) ([`TASK-061`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-061.md), `b148b7d`).
+  2. Enforce administrative authentication and subnet controls on `/internal/api/*` in [`pkg/server/internal_api.go`](file:///Users/sneha/Developer/toron/pkg/server/internal_api.go) ([`TASK-062`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-062.md), `5e2ca8e`).
+  3. Strip `Set-Cookie` and check `Authorization` in [`pkg/router/cache.go`](file:///Users/sneha/Developer/toron/pkg/router/cache.go) ([`TASK-063`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-063.md), `45ade09`).
+  4. Enforce TLS certificate validation in WebSocket proxy in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`TASK-065`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-065.md), `37c8878`).
+  5. Add TTL expiration and capacity bounds to `RateLimiter` in [`pkg/router/rate_limiter.go`](file:///Users/sneha/Developer/toron/pkg/router/rate_limiter.go) ([`TASK-064`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-064.md), `69a0ed3`).
+- **Phase 2 (Logging, Routing & Path Sanitization - P2 - COMPLETED)**:
+  1. Sanitize control characters (`\r`, `\n`) in access logging in [`pkg/logging/manager.go`](file:///Users/sneha/Developer/toron/pkg/logging/manager.go) ([`TASK-066`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-066.md), `20aa0bd`).
+  2. Clean `req.Path` with `path.Clean` prior to calling [`JoinProxyPath`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go#L718) in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`TASK-067`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-067.md), `f4d6652`).
+  3. Bounded payload length in [`pkg/transcoder/framer.go`](file:///Users/sneha/Developer/toron/pkg/transcoder/framer.go) ([`TASK-068`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-068.md), `ac5baf5`).
+  4. Disallow `*` origin reflection when credentials are enabled in [`pkg/router/cors.go`](file:///Users/sneha/Developer/toron/pkg/router/cors.go) ([`TASK-069`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-069.md), `b3bb02d`).
+  5. Validate `Host` headers in HTTPS redirects against registered routes in [`pkg/server/server.go`](file:///Users/sneha/Developer/toron/pkg/server/server.go) ([`TASK-070`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-070.md), `f7eafe2`).
+  6. Derive `X-Forwarded-*` headers strictly from socket connection state in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`TASK-071`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-071.md), `ff95b29`).
+- **Phase 3 (Query Hardening & Parameter Isolation - P3 - COMPLETED)**:
+  1. Prevent query parameter pollution in target query merging in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md), `ee4d29d`).
+- **Phase 4 (Post-Remediation Hardening Tasks - SEC-13..22 - COMPLETED)**:
+  1. `TASK-073` (SEC-14): Whitespace rejection before header colon delimiter (`06301d6`).
+  2. `TASK-074` (SEC-15): Multiple and conflicting `Content-Length` rejection (`15ddbca`).
+  3. `TASK-075` (SEC-13): Contextual HTML escaping in dashboard to eliminate DOM XSS (`4196b31`).
+  4. `TASK-076` (SEC-16): Bounded request body reader with HTTP 413 in HTTP/2 adapter (`f3d4843`).
+  5. `TASK-077` (SEC-17): Concurrent connection dispatch in TCP reactor (`f7727de`).
+  6. `TASK-078` (SEC-18): Exact-match hardening for path exclusions in auth & WAF (`ff2557f`).
+  7. `TASK-079` (SEC-19): Container route prefix scoping and shadowing guards (`4bb3e98`).
+  8. `TASK-080` (SEC-20): Case-insensitive `(?i)` WAF `TRAVERSAL-001` pattern hardening (`4203aba`).
+  9. `TASK-081` (SEC-21): Request body preservation in sidecar proxy engine (`0bd0cc8`).
+  10. `TASK-082` (SEC-22): Mandatory `exp` claim enforcement in JWT verification (`b48848e`).
+- **Phase 5 (Extended Subsystem Hardening - SEC-23..30 - PLANNED)**:
+  1. Resolve K8s Ingress Controller watch stream deadlock (`SEC-23`).
+  2. Enforce prefix scoping and route shadowing guards in K8s Ingress Controller (`SEC-24`).
+  3. Enforce 413 Payload Too Large on sidecar body overflow (`SEC-25`).
+  4. Implement worker pools and connection limits in Layer 4 proxies (`SEC-26`).
+  5. Support idle deadlines on upgraded WebSocket connections (`SEC-27`).
+  6. Bound request bodies in gRPC transcoder (`SEC-28`).
+  7. Filter hop-by-hop headers in gRPC transcoder (`SEC-29`).
+  8. Fix subpath dispatch in gRPC transcoder routing (`SEC-30`).
 
 ---
 
 ## 5. Remediation Status & Verification Summary
 
-All 12 backend security vulnerabilities (`SEC-01` through `SEC-12`) have been fully remediated, independently tested, security reviewed, code reviewed, and merged into `master`:
+All 22 initial security vulnerabilities (`SEC-01` through `SEC-22`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, code reviewed, and committed to `master`:
+- **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
+- **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 
-1. **`SEC-01` (`TASK-061`, Commit `b148b7d`)**: Enforced HTTP request smuggling mitigation via strict `Transfer-Encoding: chunked` rejection (`501 Not Implemented`) and header desync guards ([`TC-061`](file:///Users/sneha/Developer/toron/docs/testCases/TC-061.md), [`SR-058`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-058.md), [`CR-057`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-057.md)).
-2. **`SEC-02` (`TASK-062`, Commit `5e2ca8e`)**: Hardened `/internal/api/*` endpoints with mandatory Bearer token authentication, subnet CIDR allowlisting, and loopback/link-local SSRF defenses ([`TC-062`](file:///Users/sneha/Developer/toron/docs/testCases/TC-062.md), [`SR-059`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-059.md), [`CR-058`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-058.md)).
-3. **`SEC-03` (`TASK-063`, Commit `45ade09`)**: Enforced RFC 7234 compliance in shared caching: prohibited caching responses with `Set-Cookie` or requests with `Authorization` unless `s-maxage`, `public`, or `must-revalidate` are explicitly declared ([`TC-063`](file:///Users/sneha/Developer/toron/docs/testCases/TC-063.md), [`SR-060`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-060.md), [`CR-059`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-059.md)).
-4. **`SEC-04` (`TASK-064`, Commit `69a0ed3`)**: Replaced unbounded rate-limiter sync map with bounded LRU eviction, automatic TTL cleanup, and spoof-resistant physical socket IP resolution ([`TC-064`](file:///Users/sneha/Developer/toron/docs/testCases/TC-064.md), [`SR-061`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-061.md), [`CR-060`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-060.md)).
-5. **`SEC-05` (`TASK-065`, Commit `37c8878`)**: Secured upstream WebSocket TLS connections with strict certificate verification (`ServerName`, CA pools, `InsecureSkipVerify: false` by default) ([`TC-065`](file:///Users/sneha/Developer/toron/docs/testCases/TC-065.md), [`SR-062`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-062.md), [`CR-061`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-061.md)).
-6. **`SEC-06` (`TASK-066`, Commit `20aa0bd`)**: Sanitized all access log fields (`Path`, `Method`, `User-Agent`, `Referer`, `RemoteAddr`) against CRLF (`\r`, `\n`) and ASCII control characters ([`TC-066`](file:///Users/sneha/Developer/toron/docs/testCases/TC-066.md), [`SR-063`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-063.md), [`CR-062`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-062.md)).
-7. **`SEC-07` (`TASK-067`, Commit `f4d6652`)**: Secured `JoinProxyPath` against directory traversal (`/../`, encoded `%2e%2e`, backslashes) by canonicalizing request paths and bounding upstream root boundaries ([`TC-067`](file:///Users/sneha/Developer/toron/docs/testCases/TC-067.md), [`SR-064`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-064.md), [`CR-063`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-063.md)).
-8. **`SEC-08` (`TASK-068`, Commit `ac5baf5`)**: Bounded wire frame allocation in gRPC transcoder with a strict 16MB maximum payload ceiling and safe buffer chunking ([`TC-068`](file:///Users/sneha/Developer/toron/docs/testCases/TC-068.md), [`SR-065`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-065.md), [`CR-064`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-064.md)).
-9. **`SEC-09` (`TASK-069`, Commit `b3bb02d`)**: Prohibited reflective CORS `Access-Control-Allow-Origin: *` whenever `AllowCredentials: true` is configured, strictly requiring explicit origin matching ([`TC-069`](file:///Users/sneha/Developer/toron/docs/testCases/TC-069.md), [`SR-066`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-066.md), [`CR-065`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-065.md)).
-10. **`SEC-10` (`TASK-070`, Commit `f7eafe2`)**: Eliminated Open Redirect in cleartext HTTP-to-HTTPS upgrade by validating `Host` against recognized registries (`AllowedHosts`, `DefaultHost`, `SNIRegistry`, route tables) ([`TC-070`](file:///Users/sneha/Developer/toron/docs/testCases/TC-070.md), [`SR-067`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-067.md), [`CR-066`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-066.md)).
-11. **`SEC-11` (`TASK-071`, Commit `ff95b29`)**: Enforced connection state integrity for forwarded ingress headers (`X-Forwarded-Proto`, `X-Forwarded-For`), added `TrustedProxies` CIDR validation, and stripped RFC 7230 §6.1 hop-by-hop headers ([`TC-071`](file:///Users/sneha/Developer/toron/docs/testCases/TC-071.md), [`SR-068`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-068.md), [`CR-067`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-067.md)).
-12. **`SEC-12` (`TASK-072`, Commit `ee4d29d`)**: Prevented HTTP Parameter Pollution (HPP) by enforcing immutable gateway target query parameter precedence and filtering colliding client query keys and semicolon delimiters ([`TC-072`](file:///Users/sneha/Developer/toron/docs/testCases/TC-072.md), [`SR-069`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-069.md), [`CR-068`](file:///Users/sneha/Developer/toron/docs/codeReview/CR-068.md)).
+The latest comprehensive audit ([`SR-081`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-081.md)) verified zero regressions in core HTTP/1.1, HTTP/2, WAF, and Auth engines. 8 findings in extended subsystems (`SEC-23` through `SEC-30`) have been documented and scheduled for Phase 5 remediation.
 

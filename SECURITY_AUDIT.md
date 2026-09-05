@@ -1,0 +1,263 @@
+# 🛡️ Toron Web Server & Edge Gateway: Security Audit Report (`toron_v3`)
+
+**Role**: Security Analyst / Security Researcher (AGENT-007)  
+**Date**: September 5, 2026 (Updated)  
+**Audited Commit**: `bf9d7b7` (`v1.5.0` + TASK-058, TASK-059, TASK-060)  
+**Reference Document**: [`docs/securityReview/SR-054.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-054.md)
+
+---
+
+## 1. Executive Summary
+
+This security audit report has been updated to reflect the current codebase following recent commits (`TASK-058` multi-stream logging, `TASK-059` target subpath preservation via `JoinProxyPath`, and `TASK-060` query parameter forwarding).
+
+Each identified security vulnerability has been broken down into an atomic functional/non-functional requirement document ([`REQ-061`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-061.md) through [`REQ-072`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-072.md)) owned by the Requirement Engineer (`AGENT-002`), and mapped directly to bounded engineering task specifications ([`TASK-061`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-061.md) through [`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md)) owned by the Development Lead (`AGENT-003`) to ensure verifiable, test-driven remediation.
+
+---
+
+## 2. Comprehensive Vulnerability Priority & Requirement Mapping Matrix
+
+| Priority | ID | Title | Severity | CWE | Primary File | Mapped Requirement | Mapped Task |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- | :--- |
+| **P0** | **SEC-01** | HTTP Request Smuggling & Connection Desync via Chunked TE | **Critical** | CWE-444 | [`pkg/httpparser/parser.go`](file:///Users/sneha/Developer/toron/pkg/httpparser/parser.go) | [`REQ-061`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-061.md) | [`TASK-061`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-061.md) |
+| **P1** | **SEC-02** | Missing Authentication & Internal SSRF on Management APIs | **High** | CWE-306, CWE-918 | [`pkg/server/internal_api.go`](file:///Users/sneha/Developer/toron/pkg/server/internal_api.go) | [`REQ-062`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-062.md) | [`TASK-062`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-062.md) |
+| **P1** | **SEC-03** | Shared Cache Session Leakage (`Set-Cookie` & Auth Caching) | **High** | CWE-524, CWE-539 | [`pkg/router/cache.go`](file:///Users/sneha/Developer/toron/pkg/router/cache.go) | [`REQ-063`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-063.md) | [`TASK-063`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-063.md) |
+| **P1** | **SEC-04** | Denial of Service (OOM) via Unbounded Rate-Limiter Map | **High** | CWE-400, CWE-770 | [`pkg/router/rate_limiter.go`](file:///Users/sneha/Developer/toron/pkg/router/rate_limiter.go) | [`REQ-064`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-064.md) | [`TASK-064`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-064.md) |
+| **P1** | **SEC-05** | Upstream TLS Verification Disabled in WebSocket Proxy | **High** | CWE-295 | [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) | [`REQ-065`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-065.md) | [`TASK-065`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-065.md) |
+| **P2** | **SEC-06** | **NEW**: CRLF Log Injection & Log Forgery in Access Logger | **Medium** | CWE-117 | [`pkg/logging/manager.go`](file:///Users/sneha/Developer/toron/pkg/logging/manager.go) | [`REQ-066`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-066.md) | [`TASK-066`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-066.md) |
+| **P2** | **SEC-07** | **NEW**: Upstream Path Traversal via Uncleaned Route Path | **Medium** | CWE-22 | [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) | [`REQ-067`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-067.md) | [`TASK-067`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-067.md) |
+| **P2** | **SEC-08** | Unbounded Allocation Panic in gRPC Frame Decoder | **Medium** | CWE-789 | [`pkg/transcoder/framer.go`](file:///Users/sneha/Developer/toron/pkg/transcoder/framer.go) | [`REQ-068`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-068.md) | [`TASK-068`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-068.md) |
+| **P2** | **SEC-09** | Permissive CORS Wildcard Reflection with Credentials | **Medium** | CWE-942 | [`pkg/router/cors.go`](file:///Users/sneha/Developer/toron/pkg/router/cors.go) | [`REQ-069`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-069.md) | [`TASK-069`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-069.md) |
+| **P2** | **SEC-10** | Open Redirect via Unvalidated Host Header in HTTPS Upgrade | **Medium** | CWE-601 | [`pkg/server/server.go`](file:///Users/sneha/Developer/toron/pkg/server/server.go) | [`REQ-070`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-070.md) | [`TASK-070`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-070.md) |
+| **P2** | **SEC-11** | Client IP & Protocol Header Spoofing in Reverse Proxy | **Medium** | CWE-345 | [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) | [`REQ-071`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-071.md) | [`TASK-071`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-071.md) |
+| **P3** | **SEC-12** | **NEW**: HTTP Parameter Pollution (HPP) in Query Forwarding | **Low** | CWE-235 | [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) | [`REQ-072`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-072.md) | [`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md) |
+| *Deferred* | **SEC-13** | Stored DOM-based XSS via Security Audit Log View | **Critical** | CWE-79 | [`public/app.js`](file:///Users/sneha/Developer/toron/public/app.js) | *UI Remediation Deferred* | *Deferred* |
+
+---
+
+## 3. Detailed Vulnerability Findings & Requirement Mapping
+
+### Priority 1: Critical (P0)
+
+#### SEC-01: HTTP Request Smuggling & Connection Desync via Unsupported Chunked Transfer-Encoding
+- **Severity**: **Critical** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N - Score 9.1)
+- **Location**: [`pkg/httpparser/parser.go:L97-L120`](file:///Users/sneha/Developer/toron/pkg/httpparser/parser.go#L97-L120)
+- **Mapped Requirement**: [`REQ-061: HTTP Request Smuggling Prevention and Transfer-Encoding Protocol Enforcement`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-061.md)
+- **Mapped Task**: [`TASK-061: Implement HTTP Request Smuggling Prevention and Transfer-Encoding Protocol Guard`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-061.md)
+- **Root Cause**:  
+  `httpparser.ParseRequest` verifies that a request does not declare both `Content-Length` and `Transfer-Encoding`. However, when a client sends **only** `Transfer-Encoding: chunked`:
+  - `ContentLength` defaults to `0` and `req.Body` remains `nil`.
+  - The chunked payload body is **not consumed from the socket**.
+  - In [`pkg/server/server.go:L182-L298`](file:///Users/sneha/Developer/toron/pkg/server/server.go#L182-L298), persistent keep-alive connections are enabled by default.
+  - On the subsequent loop iteration, `ParseRequest` parses the unconsumed chunked payload from the stream as the request line of the *next* HTTP request.
+- **Attack Vector**:  
+  An attacker transmits an HTTP/1.1 request with `Transfer-Encoding: chunked` followed by an embedded secondary HTTP request inside the chunk payload. The parser processes the outer request, leaves the payload on the socket, and treats the embedded payload as an authentic subsequent request on the pooled connection.
+- **Impact**:  
+  Request smuggling (CL.TE/TE desync), cross-tenant session hijacking, cache poisoning, and unauthorized endpoint invocation.
+- **Remediation**:  
+  Implement [`REQ-061`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-061.md) via [`TASK-061`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-061.md): If Toron does not implement a full chunked transfer decoder in `httpparser`, it MUST reject any request containing `Transfer-Encoding` with `HTTP 501 Not Implemented` or terminate the connection immediately.
+
+---
+
+### Priority 2: High Severity (P1)
+
+#### SEC-02: Missing Authentication & Internal SSRF on Management APIs
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N - Score 8.2)
+- **Location**: [`pkg/server/internal_api.go:L87-L448`](file:///Users/sneha/Developer/toron/pkg/server/internal_api.go#L87-L448)
+- **Mapped Requirement**: [`REQ-062: Access Control, Authentication, and SSRF Hardening for Internal Management APIs`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-062.md)
+- **Mapped Task**: [`TASK-062: Implement Authentication, Authorization, and SSRF Hardening for Internal APIs`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-062.md)
+- **Root Cause**:  
+  The internal management endpoints (`/internal/api/status`, `/internal/api/routes`, `/internal/api/upstreams/health`, `/internal/api/security/incidents`, `/internal/api/proxy-test`) are registered directly on the primary router without authentication or source IP filtering.
+  Furthermore, `POST /internal/api/proxy-test` accepts user-supplied JSON parameters (`path`, `method`, `headers`) and issues an HTTP request to `http://127.0.0.1:<port>` with arbitrary attacker-supplied headers.
+- **Attack Vector**:  
+  External actors can query `/internal/api/*` to obtain internal backend IPs, hostnames, container mappings, and security incident histories. Additionally, an attacker can use `POST /internal/api/proxy-test` to issue requests originating from localhost (`127.0.0.1`), injecting custom authentication headers (`X-Authenticated-User: admin`) to access restricted administrative routes.
+- **Impact**:  
+  Reconnaissance of internal infrastructure, bypass of perimeter access controls, and internal Server-Side Request Forgery.
+- **Remediation**:  
+  Implement [`REQ-062`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-062.md) via [`TASK-062`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-062.md): Enforce authentication middleware on all `/internal/api/*` endpoints and restrict access to administrative subnets.
+
+#### SEC-03: Shared Cache Session Leakage (`Set-Cookie` & Auth Caching)
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:L/A:N - Score 8.2)
+- **Location**: [`pkg/router/cache.go:L185`](file:///Users/sneha/Developer/toron/pkg/router/cache.go#L185), [`pkg/router/cache.go:L247-L266`](file:///Users/sneha/Developer/toron/pkg/router/cache.go#L247-L266)
+- **Mapped Requirement**: [`REQ-063: Shared HTTP Response Cache Security, Session Cookie Isolation, and Authorization Boundaries`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-063.md)
+- **Mapped Task**: [`TASK-063: Implement Shared Cache Set-Cookie Stripping and Authorization Isolation`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-063.md)
+- **Root Cause**:  
+  1. In `pkg/router/cache.go`, the caching middleware stores all upstream response headers, **including `Set-Cookie`**, in the `clonedHeader` map. When subsequent users request the cached URL, the saved `Set-Cookie` header is served to them (violating RFC 7234 §8).
+  2. The cache key is constructed purely from method, host, and URI (`req.Method + ":" + extractHost(req) + ":" + uri`). It does not incorporate the `Authorization` header, causing authenticated responses to be cached and served to unauthenticated clients.
+- **Attack Vector**:  
+  User A accesses a cached endpoint and receives a session cookie. User B accesses the same endpoint shortly after and is issued User A's session cookie.
+- **Impact**:  
+  Account takeover, session fixation, and cross-user data leakage.
+- **Remediation**:  
+  Implement [`REQ-063`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-063.md) via [`TASK-063`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-063.md): Explicitly strip `Set-Cookie` headers from responses before storing them in cache, and enforce authorization boundaries per RFC 7234 §3.2.
+
+#### SEC-04: Denial of Service (OOM) via Unbounded Rate-Limiter Bucket Map
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H - Score 7.5)
+- **Location**: [`pkg/router/rate_limiter.go:L96`](file:///Users/sneha/Developer/toron/pkg/router/rate_limiter.go#L96), [`pkg/router/rate_limiter.go:L131-L152`](file:///Users/sneha/Developer/toron/pkg/router/rate_limiter.go#L131-L152)
+- **Mapped Requirement**: [`REQ-064: Rate Limiter Memory Bounding, State Eviction, and Client Identity Verification`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-064.md)
+- **Mapped Task**: [`TASK-064: Implement Rate Limiter Memory Bounding, State Eviction, and Client IP Verification`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-064.md)
+- **Root Cause**:  
+  `RateLimiter` stores client buckets in `buckets map[string]*TokenBucket` without any size limitation, entry eviction, or TTL expiration.
+  Additionally, `ExtractClientKey` prioritizes unverified headers (`X-API-Key`, `X-Forwarded-For`).
+- **Attack Vector**:  
+  An attacker sends high volumes of requests with randomized `X-Forwarded-For` or `X-API-Key` headers. Each unique header bypasses rate limits (receiving an unexhausted bucket) and permanently consumes memory in `rl.buckets`.
+- **Impact**:  
+  Complete rate limit evasion and continuous heap allocation culminating in an Out-Of-Memory (OOM) kernel termination.
+- **Remediation**:  
+  Implement [`REQ-064`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-064.md) via [`TASK-064`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-064.md): Introduce an LRU cache or periodic cleanup worker to purge expired buckets, and derive client IP strictly from socket `RemoteAddr` unless coming from a verified trusted proxy.
+
+#### SEC-05: Upstream TLS Certificate Verification Disabled in WebSocket Proxy
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:H/PR:N/UI:N/S:U/C:H/I:H/A:N - Score 7.4)
+- **Location**: [`pkg/proxy/proxy.go:L778`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go#L778)
+- **Mapped Requirement**: [`REQ-065: Upstream TLS Certificate Verification and Trust Management in WebSocket Proxy`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-065.md)
+- **Mapped Task**: [`TASK-065: Enforce Upstream TLS Certificate Verification in WebSocket Reverse Proxy`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-065.md)
+- **Root Cause**:  
+  When establishing upstream WebSocket connections over TLS (`wss://` or `https://`), Toron hardcodes `InsecureSkipVerify: true`:
+  ```go
+  upstreamConn, dialErr = tls.Dial("tcp", host, &tls.Config{InsecureSkipVerify: true})
+  ```
+- **Attack Vector**:  
+  An adversary capable of intercepting traffic between Toron and the upstream backend service can present an arbitrary self-signed or forged TLS certificate. Toron accepts the certificate unconditionally.
+- **Impact**:  
+  Man-in-the-Middle (MitM) eavesdropping and frame injection on encrypted WebSocket communication.
+- **Remediation**:  
+  Implement [`REQ-065`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-065.md) via [`TASK-065`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-065.md): Remove hardcoded `InsecureSkipVerify: true` and validate against root CAs or a configured custom CA bundle in `ProxyOptions.TLS`.
+
+---
+
+### Priority 3: Medium Severity (P2)
+
+#### SEC-06: NEW: CRLF Log Injection & Log Forgery in Multi-Stream Access Logger
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N - Score 5.3)
+- **Location**: [`pkg/logging/manager.go:L388-L392`](file:///Users/sneha/Developer/toron/pkg/logging/manager.go#L388-L392)
+- **Mapped Requirement**: [`REQ-066: Access Log CRLF Sanitization and Log Forgery Prevention`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-066.md)
+- **Mapped Task**: [`TASK-066: Implement Access Log CRLF Sanitization and Control Character Filtering`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-066.md)
+- **Root Cause**:  
+  In text-format logging (the default format), client-controlled values (`entry.UserAgent`, `entry.Referer`, `entry.Method`, and `entry.Path`) are formatted directly into the log line using `fmt.Sprintf` without sanitizing carriage return (`\r`) or line feed (`\n`) characters.
+- **Attack Vector**:  
+  An attacker transmits an HTTP request with an embedded newline sequence in `User-Agent` or `Referer`, injecting falsified records into the access log file.
+- **Impact**:  
+  Log poisoning and audit trail tampering. Attackers can forge access logs to hide malicious activity or inject misleading entries into SIEM/log parsers.
+- **Remediation**:  
+  Implement [`REQ-066`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-066.md) via [`TASK-066`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-066.md): Sanitize control characters (`\r`, `\n`) from all fields before writing to text log sinks.
+
+#### SEC-07: NEW: Upstream Path Traversal via Uncleaned Route Path in `JoinProxyPath`
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:L/A:N - Score 6.5)
+- **Location**: [`pkg/proxy/proxy.go:L718-L763`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go#L718-L763)
+- **Mapped Requirement**: [`REQ-067: Upstream Path Canonicalization and Directory Traversal Prevention in Proxy Routing`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-067.md)
+- **Mapped Task**: [`TASK-067: Implement Upstream Path Canonicalization and Route Traversal Guards`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-067.md)
+- **Root Cause**:  
+  `httpparser.NewRequest` sets `req.Path = parsedURL.Path` using `url.ParseRequestURI`, which preserves uncleaned dot segments (`..`).  
+  When proxying, `JoinProxyPath` performs `strings.TrimPrefix(reqPath, prefix)` without normalizing path segments.
+- **Attack Vector**:  
+  If a route is configured with `prefix: "/api"` and `target: "http://upstream/v1"`, an incoming request with `Path = "/api/../admin"` matches the prefix route. `JoinProxyPath` produces `/v1/../admin`, escaping the `/v1` namespace on the backend.
+- **Impact**:  
+  Path traversal and prefix route boundary confusion against upstream microservices.
+- **Remediation**:  
+  Implement [`REQ-067`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-067.md) via [`TASK-067`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-067.md): Clean and normalize `req.Path` using `path.Clean` prior to prefix matching and upstream path joining.
+
+#### SEC-08: Unbounded Memory Allocation Panic in gRPC Transcoder Frame Decoder
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H - Score 6.5)
+- **Location**: [`pkg/transcoder/framer.go:L27-L35`](file:///Users/sneha/Developer/toron/pkg/transcoder/framer.go#L27-L35)
+- **Mapped Requirement**: [`REQ-068: Wire Frame Size Bounding and Memory Allocation Protection in gRPC Transcoder`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-068.md)
+- **Mapped Task**: [`TASK-068: Implement Wire Frame Size Bounding and Buffer Allocation Protection in gRPC Transcoder`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-068.md)
+- **Root Cause**:  
+  `DecodeGRPCFrame` reads a 4-byte `uint32` length directly from the wire frame header and immediately calls `make([]byte, length)`.
+- **Attack Vector**:  
+  A malfunctioning or hostile upstream gRPC endpoint returns a frame header declaring an oversized length (e.g. 2 GB - 4 GB). The runtime panics with an out-of-memory or allocation size error.
+- **Impact**:  
+  Panic and crash of worker goroutines or the entire server process.
+- **Remediation**:  
+  Implement [`REQ-068`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-068.md) via [`TASK-068`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-068.md): Impose a strict upper bound (e.g. 4 MB or `MaxBodyBytes`) on the declared payload length before allocating memory.
+
+#### SEC-09: Permissive CORS Wildcard Reflection with Credentials Enabled
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:U/C:H/I:N/A:N - Score 6.5)
+- **Location**: [`pkg/router/cors.go:L47-L51`](file:///Users/sneha/Developer/toron/pkg/router/cors.go#L47-L51), [`pkg/router/cors.go:L122-L129`](file:///Users/sneha/Developer/toron/pkg/router/cors.go#L122-L129)
+- **Mapped Requirement**: [`REQ-069: Strict CORS Origin Validation and Credentialed Wildcard Mitigation`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-069.md)
+- **Mapped Task**: [`TASK-069: Implement Strict CORS Origin Validation and Prohibit Credentialed Wildcards`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-069.md)
+- **Root Cause**:  
+  When `allow_origins` includes `*` and `allow_credentials` is `true`, `isOriginAllowed` matches all incoming origins. Instead of emitting `*` (which browsers disallow when credentials are true), the middleware reflects the request's `Origin` header dynamically while setting `Access-Control-Allow-Credentials: true`.
+- **Impact**:  
+  Any arbitrary origin is permitted to make authenticated credentialed cross-origin requests and read sensitive responses.
+- **Remediation**:  
+  Implement [`REQ-069`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-069.md) via [`TASK-069`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-069.md): Disallow wildcards (`*`) when `allow_credentials` is `true` during configuration validation.
+
+#### SEC-10: Open Redirect via Unvalidated Host Header in HTTP-to-HTTPS Redirection
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:L/I:L/A:N - Score 6.1)
+- **Location**: [`pkg/server/server.go:L439-L485`](file:///Users/sneha/Developer/toron/pkg/server/server.go#L439-L485)
+- **Mapped Requirement**: [`REQ-070: Host Header Validation and Open Redirect Mitigation in HTTP-to-HTTPS Redirection`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-070.md)
+- **Mapped Task**: [`TASK-070: Implement Host Header Validation in Cleartext HTTP-to-HTTPS Redirection`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-070.md)
+- **Root Cause**:  
+  In `serveHTTPRedirect`, Toron sanitizes the incoming `Host` header against whitespace, backslashes, and control characters (`\r\n\t /\\`). However, it does not validate whether the host matches configured domains or SNI routes. It reflects the client-supplied `Host` directly into the `301 Moved Permanently` `Location` header.
+- **Attack Vector**:  
+  An attacker distributes links to `http://gateway-ip/login` with `Host: evil.com`. Victims visiting the cleartext HTTP endpoint are redirected to `https://evil.com/login`.
+- **Impact**:  
+  Facilitates phishing campaigns and credential harvesting using the gateway as an open redirector.
+- **Remediation**:  
+  Implement [`REQ-070`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-070.md) via [`TASK-070`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-070.md): Validate incoming `Host` against the server's registered SNI host registry or configured domain whitelist before issuing redirects.
+
+#### SEC-11: Client IP & Forwarded Protocol Header Spoofing in Reverse Proxy
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N - Score 5.3)
+- **Location**: [`pkg/proxy/proxy.go:L610-L625`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go#L610-L625)
+- **Mapped Requirement**: [`REQ-071: Client Connection State Integrity for Forwarded Ingress Headers`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-071.md)
+- **Mapped Task**: [`TASK-071: Implement Connection State Integrity and Hop-by-Hop Stripping for Forwarded Ingress Headers`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-071.md)
+- **Root Cause**:  
+  Toron trusts client-supplied `X-Forwarded-Proto` and `X-Real-IP` headers when generating upstream proxy headers.
+- **Impact**:  
+  Untrusted clients can spoof `X-Forwarded-Proto: https` over cleartext HTTP to bypass upstream HTTPS requirements, or spoof `X-Real-IP` to forge audit trails on downstream microservices.
+- **Remediation**:  
+  Implement [`REQ-071`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-071.md) via [`TASK-071`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-071.md): Set `X-Forwarded-Proto` strictly based on whether TLS was negotiated on the client socket, and derive `X-Forwarded-For` from `req.RawConn.RemoteAddr()`.
+
+---
+
+### Priority 4: Low Severity & Hardening (P3)
+
+#### SEC-12: NEW: HTTP Parameter Pollution (HPP) Overwriting Target Parameters
+- **Severity**: **Low** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:N - Score 4.3)
+- **Location**: [`pkg/proxy/proxy.go:L573-L581`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go#L573-L581)
+- **Mapped Requirement**: [`REQ-072: HTTP Parameter Pollution (HPP) Mitigation in Target Query Merging`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-072.md)
+- **Mapped Task**: [`TASK-072: Implement HTTP Parameter Pollution (HPP) Mitigation in Target Query Merging`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md)
+- **Root Cause**:  
+  When forwarding queries, Toron appends client query strings after the target URL's existing query string (`outURL.RawQuery = targetURL.RawQuery + "&" + clientQuery`).
+- **Impact**:  
+  If a target URL defines constraints (e.g. `http://service?role=guest`), a client supplying `?role=admin` produces `?role=guest&role=admin`. For backend runtimes that parse query parameters by selecting the last occurrence, the client parameter overrides the target constraint.
+- **Remediation**:  
+  Implement [`REQ-072`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-072.md) via [`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md): Strip or deduplicate client query keys that conflict with keys already defined in `targetURL.Query()`.
+
+#### Defensive Hardening Observations
+1. **WAF Regular Expression Case Sensitivity (`pkg/waf/rules.go:64`)**:  
+   `TRAVERSAL-001` lacks the `(?i)` flag for percent-encoding, allowing uppercase percent-encoded sequences (`%2E%2E/`) to bypass detection.
+2. **Container Route Namespace Scoping (`pkg/discovery/manager.go:231`)**:  
+   Enforce an authorized namespace or label requirement to prevent rogue containers from registering the root path (`/`).
+3. **Default Content Security Policy (`config.yaml:93`)**:  
+   Define a restrictive default `csp` header in `security_headers`.
+
+---
+
+### Deferred Finding
+
+#### SEC-13: Stored DOM-based Cross-Site Scripting (DOM XSS) via Security Incident Audit Log
+- **Severity**: **Critical** (CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N - Score 9.3)
+- **Location**: [`public/app.js:L421-L431`](file:///Users/sneha/Developer/toron/public/app.js#L421-L431)
+- **Status**: **Deferred** (Excluded from active remediation priority per operational direction)
+- **Summary**: `fetchIncidentLogs()` renders unescaped incident fields (`inc.path`, `inc.client_ip`, `inc.rule_id`) directly into DOM nodes via `innerHTML`.
+
+---
+
+## 4. Remediation Sequence
+
+- **Phase 1 (Immediate Protocol & Auth Hotfixes - P0 & P1)**:
+  1. Reject unhandled `Transfer-Encoding: chunked` in [`pkg/httpparser/parser.go`](file:///Users/sneha/Developer/toron/pkg/httpparser/parser.go) ([`REQ-061`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-061.md), [`TASK-061`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-061.md)).
+  2. Enforce administrative authentication and subnet controls on `/internal/api/*` in [`pkg/server/internal_api.go`](file:///Users/sneha/Developer/toron/pkg/server/internal_api.go) ([`REQ-062`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-062.md), [`TASK-062`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-062.md)).
+  3. Strip `Set-Cookie` and check `Authorization` in [`pkg/router/cache.go`](file:///Users/sneha/Developer/toron/pkg/router/cache.go) ([`REQ-063`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-063.md), [`TASK-063`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-063.md)).
+  4. Enforce TLS certificate validation in WebSocket proxy in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`REQ-065`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-065.md), [`TASK-065`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-065.md)).
+  5. Add TTL expiration and capacity bounds to `RateLimiter` in [`pkg/router/rate_limiter.go`](file:///Users/sneha/Developer/toron/pkg/router/rate_limiter.go) ([`REQ-064`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-064.md), [`TASK-064`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-064.md)).
+- **Phase 2 (Logging, Routing & Path Sanitization - P2)**:
+  1. Sanitize control characters (`\r`, `\n`) in access logging in [`pkg/logging/manager.go`](file:///Users/sneha/Developer/toron/pkg/logging/manager.go) ([`REQ-066`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-066.md), [`TASK-066`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-066.md)).
+  2. Clean `req.Path` with `path.Clean` prior to calling [`JoinProxyPath`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go#L718) in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`REQ-067`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-067.md), [`TASK-067`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-067.md)).
+  3. Bound payload length in [`pkg/transcoder/framer.go`](file:///Users/sneha/Developer/toron/pkg/transcoder/framer.go) ([`REQ-068`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-068.md), [`TASK-068`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-068.md)).
+  4. Disallow `*` origin reflection when credentials are enabled in [`pkg/router/cors.go`](file:///Users/sneha/Developer/toron/pkg/router/cors.go) ([`REQ-069`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-069.md), [`TASK-069`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-069.md)).
+  5. Validate `Host` headers in HTTPS redirects against registered routes in [`pkg/server/server.go`](file:///Users/sneha/Developer/toron/pkg/server/server.go) ([`REQ-070`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-070.md), [`TASK-070`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-070.md)).
+  6. Derive `X-Forwarded-*` headers strictly from socket connection state in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`REQ-071`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-071.md), [`TASK-071`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-071.md)).
+- **Phase 3 (Query Hardening & Parameter Isolation - P3)**:
+  1. Prevent query parameter pollution in target query merging in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron/pkg/proxy/proxy.go) ([`REQ-072`](file:///Users/sneha/Developer/toron/docs/requirements/REQ-072.md), [`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md)).

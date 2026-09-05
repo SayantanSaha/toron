@@ -28,9 +28,11 @@ const (
 
 // JWTConfig defines settings for JWT verification.
 type JWTConfig struct {
-	Secret   string `yaml:"secret" json:"secret"`
-	Issuer   string `yaml:"issuer" json:"issuer"`
-	Audience string `yaml:"audience" json:"audience"`
+	Secret            string `yaml:"secret" json:"secret"`
+	Issuer            string `yaml:"issuer" json:"issuer"`
+	Audience          string `yaml:"audience" json:"audience"`
+	RequireExpiration bool   `yaml:"require_expiration" json:"require_expiration"`
+	AllowNoExpiration bool   `yaml:"allow_no_expiration" json:"allow_no_expiration"`
 }
 
 // APIKeyConfig defines settings for API key validation.
@@ -111,7 +113,12 @@ func SignJWT(header JWTHeader, claims map[string]any, secret []byte) (string, er
 }
 
 // VerifyJWT validates HMAC-signed JWT tokens and claims.
-func VerifyJWT(tokenString string, secret []byte, expectedIssuer, expectedAudience string) (map[string]any, error) {
+func VerifyJWT(tokenString string, secret []byte, expectedIssuer, expectedAudience string, requireExpOpt ...bool) (map[string]any, error) {
+	requireExp := true
+	if len(requireExpOpt) > 0 {
+		requireExp = requireExpOpt[0]
+	}
+
 	parts := strings.Split(tokenString, ".")
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("invalid token format (expected 3 parts)")
@@ -169,7 +176,12 @@ func VerifyJWT(tokenString string, secret []byte, expectedIssuer, expectedAudien
 	now := time.Now().Unix()
 
 	// Validate exp claim
-	if expVal, ok := claims["exp"]; ok {
+	expVal, hasExp := claims["exp"]
+	if !hasExp {
+		if requireExp {
+			return nil, fmt.Errorf("token missing required exp claim")
+		}
+	} else {
 		var exp int64
 		switch v := expVal.(type) {
 		case float64:
@@ -179,7 +191,11 @@ func VerifyJWT(tokenString string, secret []byte, expectedIssuer, expectedAudien
 		case json.Number:
 			exp, _ = v.Int64()
 		}
-		if exp > 0 && now >= exp {
+		if exp <= 0 {
+			if requireExp {
+				return nil, fmt.Errorf("token missing required exp claim")
+			}
+		} else if now >= exp {
 			return nil, fmt.Errorf("token has expired")
 		}
 	}
@@ -342,7 +358,11 @@ func NewAuthMiddleware(cfg AuthConfig) MiddlewareFunc {
 					return
 				}
 				tokenStr := strings.TrimSpace(authHdr[7:])
-				claims, err := VerifyJWT(tokenStr, []byte(cfg.JWT.Secret), cfg.JWT.Issuer, cfg.JWT.Audience)
+				requireExp := true
+				if cfg.JWT.AllowNoExpiration {
+					requireExp = false
+				}
+				claims, err := VerifyJWT(tokenStr, []byte(cfg.JWT.Secret), cfg.JWT.Issuer, cfg.JWT.Audience, requireExp)
 				if err != nil {
 					res.SetStatus(http.StatusUnauthorized)
 					res.Header.Set("Content-Type", "application/json")

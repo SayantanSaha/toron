@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/base64"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -366,4 +367,76 @@ func TestAuth_HardenedPathExclusions(t *testing.T) {
 		t.Fatalf("TC-078-02: expected status 401 when excluded=[''], got %d", resData.StatusCode)
 	}
 }
+
+func TestVerifyJWT_ExpirationEnforcement(t *testing.T) {
+	secret := []byte("testing-secret-key-1234567890123")
+
+	t.Run("TC-082-01: Token Lacking exp Claim Rejection", func(t *testing.T) {
+		claims := map[string]any{
+			"sub":  "alice",
+			"role": "member",
+		}
+		token, err := SignJWT(JWTHeader{Alg: "HS256"}, claims, secret)
+		if err != nil {
+			t.Fatalf("SignJWT failed: %v", err)
+		}
+
+		// VerifyJWT with default requireExp=true
+		_, err = VerifyJWT(token, secret, "", "")
+		if err == nil {
+			t.Fatal("TC-082-01: expected error for token without exp claim, got nil")
+		}
+		if !strings.Contains(err.Error(), "token missing required exp claim") {
+			t.Errorf("expected 'token missing required exp claim', got %v", err)
+		}
+
+		// Opt-out verification allows token without exp
+		claimsReturned, err := VerifyJWT(token, secret, "", "", false)
+		if err != nil {
+			t.Fatalf("expected token without exp to pass when requireExp=false, got error: %v", err)
+		}
+		if claimsReturned["sub"] != "alice" {
+			t.Errorf("expected sub 'alice', got %v", claimsReturned["sub"])
+		}
+	})
+
+	t.Run("TC-082-02: Valid Future exp Claim Acceptance", func(t *testing.T) {
+		claims := map[string]any{
+			"sub": "alice",
+			"exp": time.Now().Unix() + 3600,
+		}
+		token, err := SignJWT(JWTHeader{Alg: "HS256"}, claims, secret)
+		if err != nil {
+			t.Fatalf("SignJWT failed: %v", err)
+		}
+
+		claimsReturned, err := VerifyJWT(token, secret, "", "")
+		if err != nil {
+			t.Fatalf("TC-082-02: expected valid future exp to pass, got error: %v", err)
+		}
+		if claimsReturned["sub"] != "alice" {
+			t.Errorf("expected sub 'alice', got %v", claimsReturned["sub"])
+		}
+	})
+
+	t.Run("TC-082-03: Expired Token Rejection", func(t *testing.T) {
+		claims := map[string]any{
+			"sub": "alice",
+			"exp": time.Now().Unix() - 3600,
+		}
+		token, err := SignJWT(JWTHeader{Alg: "HS256"}, claims, secret)
+		if err != nil {
+			t.Fatalf("SignJWT failed: %v", err)
+		}
+
+		_, err = VerifyJWT(token, secret, "", "")
+		if err == nil {
+			t.Fatal("TC-082-03: expected error for expired token, got nil")
+		}
+		if !strings.Contains(err.Error(), "token has expired") {
+			t.Errorf("expected 'token has expired', got %v", err)
+		}
+	})
+}
+
 

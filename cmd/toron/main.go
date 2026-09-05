@@ -475,6 +475,12 @@ func main() {
 						InsecureSkipVerify: pr.InsecureSkipVerify,
 					},
 					InsecureSkipVerify: pr.InsecureSkipVerify,
+					TrustedProxies: func() []string {
+						if len(pr.TrustedProxies) > 0 {
+							return pr.TrustedProxies
+						}
+						return appCfg.Server.TrustedProxies
+					}(),
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)

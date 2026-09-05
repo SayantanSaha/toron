@@ -871,5 +871,144 @@ func TestWebSocketProxy_TLSVerification(t *testing.T) {
 	})
 }
 
+type mockProxyAddr struct {
+	addr string
+}
+
+func (a *mockProxyAddr) Network() string { return "tcp" }
+func (a *mockProxyAddr) String() string  { return a.addr }
+
+type mockProxyConn struct {
+	net.Conn
+	remoteAddr string
+}
+
+func (m *mockProxyConn) RemoteAddr() net.Addr {
+	return &mockProxyAddr{addr: m.remoteAddr}
+}
+
+func TestReverseProxy_HopByHopStripping(t *testing.T) {
+	var capturedHeaders http.Header
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstreamServer.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets: []string{upstreamServer.URL},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/api/test", "HTTP/1.1")
+	req.Header.Set("Connection", "close, X-Custom-Hop1, X-Custom-Hop2")
+	req.Header.Set("Keep-Alive", "timeout=10, max=100")
+	req.Header.Set("Upgrade", "rogue-protocol")
+	req.Header.Set("TE", "trailers")
+	req.Header.Set("Proxy-Authenticate", "Basic")
+	req.Header.Set("Proxy-Authorization", "Basic 12345")
+	req.Header.Set("X-Custom-Hop1", "secret-hop-value")
+	req.Header.Set("X-Custom-Hop2", "secret-hop-value-2")
+	req.Header.Set("X-Legitimate-Header", "allowed-value")
+
+	res := httpparser.NewResponse()
+	px.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", res.StatusCode)
+	}
+
+	// Standard hop-by-hop headers must be removed
+	for _, hopHeader := range []string{"Connection", "Keep-Alive", "Upgrade", "TE", "Proxy-Authenticate", "Proxy-Authorization"} {
+		if val := capturedHeaders.Get(hopHeader); val != "" {
+			t.Errorf("expected hop-by-hop header %q to be stripped, got %q", hopHeader, val)
+		}
+	}
+
+	// Custom headers declared in Connection token list must be removed
+	for _, customHop := range []string{"X-Custom-Hop1", "X-Custom-Hop2"} {
+		if val := capturedHeaders.Get(customHop); val != "" {
+			t.Errorf("expected custom hop-by-hop header %q to be stripped, got %q", customHop, val)
+		}
+	}
+
+	// Legitimate headers must be preserved
+	if val := capturedHeaders.Get("X-Legitimate-Header"); val != "allowed-value" {
+		t.Errorf("expected X-Legitimate-Header 'allowed-value', got %q", val)
+	}
+}
+
+func TestReverseProxy_ConnectionIntegrityAndTrustedProxies(t *testing.T) {
+	var capturedHeaders http.Header
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstreamServer.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:        []string{upstreamServer.URL},
+		TrustedProxies: []string{"10.0.0.1/32"},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	// Subtest 1: Untrusted physical client trying to spoof X-Forwarded-Proto and X-Forwarded-For
+	t.Run("Untrusted Socket IP Anti-Spoofing", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/api/secure", "HTTP/1.1")
+		req.RawConn = &mockProxyConn{remoteAddr: "198.51.100.50:49152"}
+		req.Header.Set("X-Forwarded-Proto", "https") // Spoofed!
+		req.Header.Set("X-Forwarded-For", "1.1.1.1")  // Spoofed!
+
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", res.StatusCode)
+		}
+
+		// Proto must be derived from physical socket (cleartext TCP -> http)
+		if proto := capturedHeaders.Get("X-Forwarded-Proto"); proto != "http" {
+			t.Errorf("expected X-Forwarded-Proto 'http' for cleartext socket, got %q", proto)
+		}
+
+		// Client IP must be overwritten by physical socket IP (198.51.100.50)
+		if xff := capturedHeaders.Get("X-Forwarded-For"); xff != "198.51.100.50" {
+			t.Errorf("expected X-Forwarded-For '198.51.100.50', got %q", xff)
+		}
+	})
+
+	// Subtest 2: Authorized trusted proxy chaining
+	t.Run("Trusted Proxy Forwarding", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/api/secure", "HTTP/1.1")
+		req.RawConn = &mockProxyConn{remoteAddr: "10.0.0.1:49152"} // In TrustedProxies!
+		req.Header.Set("X-Forwarded-Proto", "https")
+		req.Header.Set("X-Forwarded-For", "203.0.113.195")
+
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", res.StatusCode)
+		}
+
+		// Proto should be honored from trusted proxy
+		if proto := capturedHeaders.Get("X-Forwarded-Proto"); proto != "https" {
+			t.Errorf("expected X-Forwarded-Proto 'https' from trusted proxy, got %q", proto)
+		}
+
+		// Client IP should append proxy IP to existing chain
+		expectedXFF := "203.0.113.195, 10.0.0.1"
+		if xff := capturedHeaders.Get("X-Forwarded-For"); xff != expectedXFF {
+			t.Errorf("expected X-Forwarded-For %q, got %q", expectedXFF, xff)
+		}
+	})
+}
+
 
 

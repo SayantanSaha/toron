@@ -2,7 +2,7 @@
 id: TASK-071
 type: task
 title: Implement Connection State Integrity and Hop-by-Hop Stripping for Forwarded Ingress Headers
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-071
 implements:
   - REQ-071
-verified_by: []
+verified_by:
+  - TC-071
 decided_by:
   - ADR-066
 related_to:

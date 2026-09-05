@@ -232,6 +232,7 @@ type ServerConfig struct {
 	WAF             waf.WAFConfig         `yaml:"waf" json:"waf"`
 	AdminAuth       AdminAuthConfig       `yaml:"admin_auth" json:"admin_auth"`
 	AdminSubnets    []string              `yaml:"admin_subnets" json:"admin_subnets"`
+	TrustedProxies  []string              `yaml:"trusted_proxies" json:"trusted_proxies"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -284,6 +285,7 @@ type ProxyRouteConfig struct {
 	CORS                CORSConfig            `yaml:"cors" json:"cors"`
 	SecurityHeaders     SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
 	WAF                 waf.WAFConfig         `yaml:"waf" json:"waf"`
+	TrustedProxies      []string              `yaml:"trusted_proxies" json:"trusted_proxies"`
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").

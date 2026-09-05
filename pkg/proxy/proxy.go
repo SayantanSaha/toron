@@ -429,6 +429,7 @@ type ReverseProxy struct {
 	RewriteCookiePath  bool
 	InsecureSkipVerify bool
 	TLSCACertPool      *x509.CertPool
+	trustedProxies     []*net.IPNet
 }
 
 // NewReverseProxy creates a ReverseProxy instance for a single target URL string.
@@ -462,6 +463,7 @@ type ProxyOptions struct {
 	TLS                 ProxyTLSConfig
 	InsecureSkipVerify  bool
 	TLSCACertPool       *x509.CertPool
+	TrustedProxies      []string
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.
@@ -556,6 +558,27 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		rewriteCookiePath = *opts.RewriteCookiePath
 	}
 
+	var trustedProxies []*net.IPNet
+	for _, tp := range opts.TrustedProxies {
+		tp = strings.TrimSpace(tp)
+		if tp == "" {
+			continue
+		}
+		if !strings.Contains(tp, "/") {
+			if ip := net.ParseIP(tp); ip != nil {
+				if ip.To4() != nil {
+					tp += "/32"
+				} else {
+					tp += "/128"
+				}
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(tp)
+		if err == nil && ipNet != nil {
+			trustedProxies = append(trustedProxies, ipNet)
+		}
+	}
+
 	return &ReverseProxy{
 		TargetURL:          upstreamTargets[0].URL,
 		Balancer:           lb,
@@ -565,6 +588,7 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		RewriteCookiePath:  rewriteCookiePath,
 		InsecureSkipVerify: insecureSkipVerify,
 		TLSCACertPool:      caPool,
+		trustedProxies:     trustedProxies,
 	}, nil
 }
 
@@ -573,6 +597,54 @@ func (p *ReverseProxy) Close() {
 	if p.Balancer != nil {
 		p.Balancer.Stop()
 	}
+}
+
+var hopByHopHeaders = map[string]bool{
+	"connection":          true,
+	"keep-alive":          true,
+	"proxy-authenticate":  true,
+	"proxy-authorization": true,
+	"te":                  true,
+	"trailers":            true,
+	"transfer-encoding":   true,
+	"upgrade":             true,
+}
+
+type tlsConn interface {
+	ConnectionState() tls.ConnectionState
+}
+
+func isTLSConnection(conn net.Conn) bool {
+	if conn == nil {
+		return false
+	}
+	if _, ok := conn.(*tls.Conn); ok {
+		return true
+	}
+	if _, ok := conn.(tlsConn); ok {
+		return true
+	}
+	return false
+}
+
+func isPeerTrusted(remoteAddr net.Addr, trusted []*net.IPNet) (string, bool) {
+	if remoteAddr == nil {
+		return "", false
+	}
+	host, _, err := net.SplitHostPort(remoteAddr.String())
+	if err != nil {
+		host = remoteAddr.String()
+	}
+	ip := net.ParseIP(strings.TrimSpace(host))
+	if ip == nil {
+		return host, false
+	}
+	for _, cidr := range trusted {
+		if cidr.Contains(ip) {
+			return host, true
+		}
+	}
+	return host, false
 }
 
 // ServeHTTP translates a Toron Request, proxies it to the upstream server, and writes the upstream response to Res.
@@ -652,25 +724,72 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		return
 	}
 
-	// Copy original request headers
+	// Build custom hop-by-hop tokens from Connection header (RFC 7230 §6.1)
+	customHopByHop := make(map[string]bool)
+	if connHdr := req.Header.Get("Connection"); connHdr != "" {
+		for _, tok := range strings.Split(connHdr, ",") {
+			tok = strings.ToLower(strings.TrimSpace(tok))
+			if tok != "" {
+				customHopByHop[tok] = true
+			}
+		}
+	}
+
+	// Copy original request headers, stripping RFC 7230 §6.1 hop-by-hop headers
 	for key, values := range req.Header {
+		lowerKey := strings.ToLower(key)
+		if hopByHopHeaders[lowerKey] || customHopByHop[lowerKey] {
+			continue
+		}
 		for _, val := range values {
 			outReq.Header.Add(key, val)
 		}
 	}
 
-	// Inject X-Forwarded-* headers
+	// Derive client peer IP and trust status
+	peerIP := ""
+	isTrusted := false
+	if req.RawConn != nil && req.RawConn.RemoteAddr() != nil {
+		peerIP, isTrusted = isPeerTrusted(req.RawConn.RemoteAddr(), p.trustedProxies)
+	}
+
+	// Inject X-Forwarded-* headers with verified connection state integrity (ADR-066 / CWE-345)
 	outReq.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
+
+	// Derive protocol from physical connection
+	isTLS := isTLSConnection(req.RawConn)
 	proto := "http"
-	if req.Header.Get("X-Forwarded-Proto") != "" {
-		proto = req.Header.Get("X-Forwarded-Proto")
-	} else if strings.EqualFold(req.Proto, "https") || req.Proto == "HTTP/2.0" || req.Proto == "HTTP/3.0" {
+	if isTLS {
 		proto = "https"
 	}
+
+	clientProto := req.Header.Get("X-Forwarded-Proto")
+	if isTrusted && clientProto != "" {
+		proto = clientProto
+	} else if req.RawConn == nil {
+		// Mock testing fallback when RawConn is absent
+		if clientProto != "" {
+			proto = clientProto
+		} else if strings.EqualFold(req.Proto, "https") || req.Proto == "HTTP/2.0" || req.Proto == "HTTP/3.0" {
+			proto = "https"
+		}
+	}
 	outReq.Header.Set("X-Forwarded-Proto", proto)
-	if clientIP := req.Header.Get("X-Real-IP"); clientIP != "" {
+
+	if peerIP != "" {
+		existingXFF := req.Header.Get("X-Forwarded-For")
+		if isTrusted && existingXFF != "" {
+			outReq.Header.Set("X-Forwarded-For", existingXFF+", "+peerIP)
+		} else {
+			outReq.Header.Set("X-Forwarded-For", peerIP)
+			outReq.Header.Set("X-Real-IP", peerIP)
+		}
+	} else if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+		outReq.Header.Set("X-Forwarded-For", xff)
+	} else if clientIP := req.Header.Get("X-Real-IP"); clientIP != "" {
 		outReq.Header.Set("X-Forwarded-For", clientIP)
 	}
+
 	if prefix != "" {
 		outReq.Header.Set("X-Forwarded-Prefix", prefix)
 	}

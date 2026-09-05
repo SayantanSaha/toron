@@ -2,7 +2,7 @@
 id: TASK-080
 type: task
 title: Harden WAF TRAVERSAL-001 Rule with Case-Insensitive Matching
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,8 +13,10 @@ derived_from:
   - REQ-080
 implements:
   - REQ-080
-verified_by: []
-decided_by: []
+verified_by:
+  - TC-080
+decided_by:
+  - ADR-075
 related_to:
   - TASK-067
 ---

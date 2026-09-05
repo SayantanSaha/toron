@@ -61,7 +61,7 @@ func defaultRules() []WAFRule {
 			ID:          "TRAVERSAL-001",
 			Category:    CategoryTraversal,
 			Description: "Detects relative directory traversal sequence (../ or ..\\)",
-			Pattern:     regexp.MustCompile(`(\.\./|\.\.\\|%2e%2e/|%2e%2e%2f)`),
+			Pattern:     regexp.MustCompile(`(?i)(\.\./|\.\.\\|%2e%2e/|%2e%2e%2f|%2e%2e\\|%2e%2e%5c)`),
 			Score:       5,
 			Locations:   InspectURL | InspectQuery | InspectHeaders | InspectBody,
 		},

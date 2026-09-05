@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"testing"
 )
 
@@ -107,3 +108,72 @@ func TestWAF_CommandInjectionDetection(t *testing.T) {
 		t.Errorf("expected RCE payload to be blocked, score=%d, matched=%v", score, matched)
 	}
 }
+
+func TestWAF_PathTraversal_CaseInsensitive(t *testing.T) {
+	cfg := DefaultConfig()
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	t.Run("TC-080-01: Uppercase Hex Dot-Dot-Slash in Header", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "http://localhost/api", nil)
+		req.Header.Set("X-Path", "%2E%2E/secret.txt")
+
+		blocked, score, matched, _ := engine.Inspect(req)
+		if !blocked || score < 5 {
+			t.Fatalf("expected header traversal to trigger, blocked=%v, score=%d", blocked, score)
+		}
+		found := false
+		for _, m := range matched {
+			if m.ID == "TRAVERSAL-001" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected TRAVERSAL-001 rule to match, got %v", matched)
+		}
+	})
+
+	t.Run("TC-080-02: Mixed-Case Hex Dot-Dot-Slash in Body", func(t *testing.T) {
+		body := `{"file":"%2e%2E%2Fetc/passwd"}`
+		req, _ := http.NewRequest("POST", "http://localhost/api", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+
+		blocked, score, matched, _ := engine.Inspect(req)
+		if !blocked || score < 5 {
+			t.Fatalf("expected body traversal to trigger, blocked=%v, score=%d", blocked, score)
+		}
+		found := false
+		for _, m := range matched {
+			if m.ID == "TRAVERSAL-001" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected TRAVERSAL-001 rule to match in body, got %v", matched)
+		}
+	})
+
+	t.Run("TC-080-03: Encoded Backslash Sequence in Query", func(t *testing.T) {
+		req, _ := http.NewRequest("GET", "http://localhost/api?file=%2e%2e%5cwindows%5cwin.ini", nil)
+
+		blocked, score, matched, _ := engine.Inspect(req)
+		if !blocked || score < 5 {
+			t.Fatalf("expected query traversal to trigger, blocked=%v, score=%d", blocked, score)
+		}
+		found := false
+		for _, m := range matched {
+			if m.ID == "TRAVERSAL-001" {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("expected TRAVERSAL-001 rule to match in query, got %v", matched)
+		}
+	})
+}
+

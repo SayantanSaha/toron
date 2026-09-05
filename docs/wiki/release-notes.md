@@ -1,5 +1,21 @@
 # Release Notes
 
+## 2026-09-05 - Toron v1.5.5 Feature Release (Universal Query Parameter Forwarding & Preservation)
+
+### Milestone Summary
+- **Universal Query Parameter Forwarding (`pkg/proxy`, `pkg/server`, `pkg/httpparser`)**: Resolved an issue where query parameters were dropped when proxying HTTP/2 and HTTP/3 requests due to unpopulated `QueryParams` and `URL.RawQuery` in the ingress adapter handler (`TASK-060`, `REQ-060`, `ADR-055`).
+- **Verbatim Client Query Preservation**: Reverse proxy now forwards raw query parameters (`req.URL.RawQuery`) verbatim, preserving exact parameter order, percent-encoding, and non-value flags without sorting mutations.
+- **Target Query Merging**: Pre-configured query parameters in upstream `target` definitions are cleanly merged with incoming client query parameters.
+- **Standardized Ingress Request Factory**: Added `httpparser.NewRequestFromStd` and lazy query accessor `req.Query()` to ensure uniform request representations across all protocols.
+- **Access Log Visibility**: `AccessLoggerMiddleware` now records full `RequestURI` in `/var/log/toron/access.log`, providing complete visibility of request query strings.
+
+### Added
+- **`httpparser.NewRequestFromStd` & `req.Query()`**: Centralized adapter converting standard library `*http.Request` to `*httpparser.Request`.
+- **Unit & Integration Tests (`pkg/proxy/proxy_test.go`, `pkg/httpparser/parser_test.go`)**: Tests covering HTTP/1.1 and HTTP/2 query forwarding, verbatim query string preservation, and target query merging.
+
+### Related Tasks
+- `TASK-060`: Implement Query Parameter Forwarding and Preservation Across HTTP/1.1, HTTP/2, and HTTP/3
+
 ## 2026-09-05 - Toron v1.5.4 Feature Release (Upstream Reverse Proxy Path Rewriting and Target Subpath Preservation)
 
 ### Milestone Summary

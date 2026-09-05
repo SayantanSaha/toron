@@ -299,34 +299,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 
 func (s *Server) http2AdapterHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reqURI := r.RequestURI
-		if reqURI == "" && r.URL != nil {
-			reqURI = r.URL.RequestURI()
-		}
-		if reqURI == "" && r.URL != nil {
-			reqURI = r.URL.Path
-		}
-		req := &httpparser.Request{
-			Method:     r.Method,
-			RequestURI: reqURI,
-			URL:        r.URL,
-			Path:       r.URL.Path,
-			Proto:      r.Proto,
-			Header:     make(httpparser.Header),
-		}
-		for k, vv := range r.Header {
-			for _, v := range vv {
-				req.Header.Add(k, v)
-			}
-		}
-		if r.Host != "" {
-			req.Header.Set("Host", r.Host)
-		}
-
-		// Transfer Extended CONNECT pseudo-header if present
-		if protoHeader := r.Header.Get(":protocol"); protoHeader != "" {
-			req.Header.Set(":protocol", protoHeader)
-		}
+		req := httpparser.NewRequestFromStd(r)
 
 		if r.Method != "CONNECT" && r.Body != nil {
 			bodyBytes, err := io.ReadAll(r.Body)

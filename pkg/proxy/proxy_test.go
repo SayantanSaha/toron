@@ -654,3 +654,77 @@ func TestReverseProxy_SubpathTarget_Integration(t *testing.T) {
 	}
 }
 
+func TestReverseProxy_QueryParametersForwarding(t *testing.T) {
+	var capturedQuery string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstreamServer.Close()
+
+	opts := proxy.ProxyOptions{
+		Targets: []string{upstreamServer.URL},
+	}
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	// 1. Standard HTTP/1.1 request parsed via httpparser
+	req1, _ := httpparser.NewRequest("GET", "/api/v1/trades?symbol=INFY&status=COMPLETE", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	px.ServeHTTPWithPrefix(req1, res1, "/api")
+	if capturedQuery != "symbol=INFY&status=COMPLETE" {
+		t.Errorf("expected upstream query 'symbol=INFY&status=COMPLETE', got %q", capturedQuery)
+	}
+
+	// 2. HTTP/2 converted request via NewRequestFromStd
+	httpReq, _ := http.NewRequest("GET", "https://example.com/api/v1/trades?page=2&limit=50&sort=desc", nil)
+	req2 := httpparser.NewRequestFromStd(httpReq)
+	res2 := httpparser.NewResponse()
+	px.ServeHTTPWithPrefix(req2, res2, "/api")
+	if capturedQuery != "page=2&limit=50&sort=desc" {
+		t.Errorf("expected upstream query 'page=2&limit=50&sort=desc', got %q", capturedQuery)
+	}
+
+	// 3. Flags and unencoded characters preserved verbatim
+	httpReq3, _ := http.NewRequest("GET", "https://example.com/api/search?q=hello+world&verbose", nil)
+	req3 := httpparser.NewRequestFromStd(httpReq3)
+	res3 := httpparser.NewResponse()
+	px.ServeHTTPWithPrefix(req3, res3, "/api")
+	if capturedQuery != "q=hello+world&verbose" {
+		t.Errorf("expected verbatim query 'q=hello+world&verbose', got %q", capturedQuery)
+	}
+}
+
+func TestReverseProxy_QueryParametersMergeWithTarget(t *testing.T) {
+	var capturedQuery string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstreamServer.Close()
+
+	// Upstream target with configured query parameters
+	targetWithQuery := upstreamServer.URL + "/data?apiKey=secret123"
+	opts := proxy.ProxyOptions{
+		Targets: []string{targetWithQuery},
+	}
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	// Client sends additional query parameters
+	httpReq, _ := http.NewRequest("GET", "https://example.com/data?filter=active&limit=10", nil)
+	req := httpparser.NewRequestFromStd(httpReq)
+	res := httpparser.NewResponse()
+	px.ServeHTTPWithPrefix(req, res, "/data")
+
+	expectedQuery := "apiKey=secret123&filter=active&limit=10"
+	if capturedQuery != expectedQuery {
+		t.Errorf("expected merged query %q, got %q", expectedQuery, capturedQuery)
+	}
+}
+
+

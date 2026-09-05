@@ -561,7 +561,25 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	targetURL := targetNode.URL
 	outURL := *targetURL
 	outURL.Path = JoinProxyPath(targetURL.Path, req.Path, prefix, p.StripPrefix)
-	outURL.RawQuery = req.QueryParams.Encode()
+
+	clientQuery := ""
+	if req.URL != nil && req.URL.RawQuery != "" {
+		clientQuery = req.URL.RawQuery
+	} else if len(req.QueryParams) > 0 {
+		clientQuery = req.QueryParams.Encode()
+	} else if req.Query() != nil && len(req.Query()) > 0 {
+		clientQuery = req.Query().Encode()
+	}
+
+	if targetURL.RawQuery != "" {
+		if clientQuery != "" {
+			outURL.RawQuery = targetURL.RawQuery + "&" + clientQuery
+		} else {
+			outURL.RawQuery = targetURL.RawQuery
+		}
+	} else {
+		outURL.RawQuery = clientQuery
+	}
 
 	if req.IsWebSocketUpgrade() {
 		p.serveWebSocketProxy(req, res, targetNode, outURL, prefix)

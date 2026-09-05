@@ -601,11 +601,15 @@ func AccessLoggerMiddleware(logMgr *logging.LogManager, r *Router) MiddlewareFun
 				if proto == "" {
 					proto = "HTTP/1.1"
 				}
+				logPath := req.RequestURI
+				if logPath == "" {
+					logPath = req.Path
+				}
 				logMgr.LogAccess(logging.AccessLogEntry{
 					Timestamp:   start,
 					ClientIP:    logging.ExtractClientIP(req),
 					Method:      req.Method,
-					Path:        req.Path,
+					Path:        logPath,
 					Protocol:    proto,
 					StatusCode:  res.StatusCode,
 					Duration:    duration,

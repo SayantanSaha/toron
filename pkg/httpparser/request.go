@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"io"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 )
@@ -87,3 +88,62 @@ func NewRequest(method, reqURI, proto string) (*Request, error) {
 		Body:        bytes.NewReader(nil),
 	}, nil
 }
+
+// Query returns QueryParams, or lazily parses URL.Query() if QueryParams is nil.
+func (r *Request) Query() url.Values {
+	if r == nil {
+		return nil
+	}
+	if r.QueryParams != nil {
+		return r.QueryParams
+	}
+	if r.URL != nil {
+		r.QueryParams = r.URL.Query()
+		return r.QueryParams
+	}
+	return nil
+}
+
+// NewRequestFromStd converts a Go standard library http.Request into an httpparser.Request,
+// preserving URL, QueryParams, Headers, and pseudo-headers.
+func NewRequestFromStd(r *http.Request) *Request {
+	if r == nil {
+		return nil
+	}
+	reqURI := r.RequestURI
+	if reqURI == "" && r.URL != nil {
+		reqURI = r.URL.RequestURI()
+	}
+	if reqURI == "" && r.URL != nil {
+		reqURI = r.URL.Path
+	}
+	path := ""
+	var queryParams url.Values
+	if r.URL != nil {
+		path = r.URL.Path
+		queryParams = r.URL.Query()
+	}
+	req := &Request{
+		Method:      r.Method,
+		RequestURI:  reqURI,
+		URL:         r.URL,
+		Path:        path,
+		Proto:       r.Proto,
+		Header:      make(Header),
+		QueryParams: queryParams,
+		Body:        bytes.NewReader(nil),
+	}
+	for k, vv := range r.Header {
+		for _, v := range vv {
+			req.Header.Add(k, v)
+		}
+	}
+	if r.Host != "" {
+		req.Header.Set("Host", r.Host)
+	}
+	if protoHeader := r.Header.Get(":protocol"); protoHeader != "" {
+		req.Header.Set(":protocol", protoHeader)
+	}
+	return req
+}
+

@@ -3,6 +3,7 @@ package httpparser_test
 import (
 	"bytes"
 	"io"
+	"net/http"
 	"testing"
 
 	"toron/pkg/httpparser"
@@ -144,3 +145,53 @@ func TestIsWebSocketUpgrade(t *testing.T) {
 		t.Errorf("expected IsWebSocketUpgrade() to return true for RFC 8441 Extended CONNECT")
 	}
 }
+
+func TestNewRequestFromStd(t *testing.T) {
+	stdReq, err := http.NewRequest("GET", "https://example.com/api/v1/trades?symbol=TCS&limit=25", nil)
+	if err != nil {
+		t.Fatalf("failed to create std request: %v", err)
+	}
+	stdReq.Header.Set("User-Agent", "Go-Test")
+	stdReq.Header.Set(":protocol", "websocket")
+
+	toronReq := httpparser.NewRequestFromStd(stdReq)
+	if toronReq == nil {
+		t.Fatal("expected non-nil Request")
+	}
+
+	if toronReq.Method != "GET" {
+		t.Errorf("expected method GET, got %q", toronReq.Method)
+	}
+	if toronReq.Path != "/api/v1/trades" {
+		t.Errorf("expected path /api/v1/trades, got %q", toronReq.Path)
+	}
+	if toronReq.QueryParams.Get("symbol") != "TCS" {
+		t.Errorf("expected query param symbol=TCS, got %q", toronReq.QueryParams.Get("symbol"))
+	}
+	if toronReq.QueryParams.Get("limit") != "25" {
+		t.Errorf("expected query param limit=25, got %q", toronReq.QueryParams.Get("limit"))
+	}
+	if toronReq.URL.RawQuery != "symbol=TCS&limit=25" {
+		t.Errorf("expected RawQuery 'symbol=TCS&limit=25', got %q", toronReq.URL.RawQuery)
+	}
+	if toronReq.Header.Get("User-Agent") != "Go-Test" {
+		t.Errorf("expected Header User-Agent=Go-Test, got %q", toronReq.Header.Get("User-Agent"))
+	}
+	toronReq.Method = "CONNECT"
+	if !toronReq.IsWebSocketUpgrade() {
+		t.Errorf("expected IsWebSocketUpgrade to be true from :protocol header")
+	}
+}
+
+func TestRequest_QueryLazy(t *testing.T) {
+	stdReq, _ := http.NewRequest("GET", "/test?flag=1", nil)
+	req := &httpparser.Request{
+		URL: stdReq.URL,
+	}
+
+	q := req.Query()
+	if q == nil || q.Get("flag") != "1" {
+		t.Errorf("expected Query() to lazily parse URL query, got %v", q)
+	}
+}
+

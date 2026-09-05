@@ -3,9 +3,11 @@ package transcoder
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"toron/pkg/config"
@@ -146,5 +148,103 @@ func TestTranscoderEngineMockGRPC(t *testing.T) {
 	}
 	if jsonOut["name"] != "Alice Bob" {
 		t.Errorf("JSON name = %q, want Alice Bob", jsonOut["name"])
+	}
+}
+
+func TestDecodeGRPCFrame_OversizedFrameRejected(t *testing.T) {
+	// Craft a malicious wire frame declaring 4 GB (0xFFFFFFFF) length
+	buf := make([]byte, 5)
+	buf[0] = 0x00 // uncompressed
+	buf[1] = 0xFF
+	buf[2] = 0xFF
+	buf[3] = 0xFF
+	buf[4] = 0xFF
+
+	reader := bytes.NewReader(buf)
+	_, err := DecodeGRPCFrame(reader)
+	if err == nil {
+		t.Fatal("expected error for 4GB frame length, got nil")
+	}
+
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("expected ErrFrameTooLarge, got: %v", err)
+	}
+}
+
+func TestDecodeGRPCFrameWithLimit(t *testing.T) {
+	payload := []byte("hello world")
+	framed := EncodeGRPCFrame(payload)
+
+	// Test 1: Limit lower than payload size (11 bytes payload vs 5 byte limit)
+	_, err := DecodeGRPCFrameWithLimit(bytes.NewReader(framed), 5)
+	if err == nil {
+		t.Fatal("expected ErrFrameTooLarge when payload exceeds limit")
+	}
+	if !errors.Is(err, ErrFrameTooLarge) {
+		t.Fatalf("expected ErrFrameTooLarge, got %v", err)
+	}
+
+	// Test 2: Limit equal or higher than payload size
+	decoded, err := DecodeGRPCFrameWithLimit(bytes.NewReader(framed), 100)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if string(decoded) != "hello world" {
+		t.Errorf("expected 'hello world', got %q", string(decoded))
+	}
+}
+
+func TestHandleTranscode_OversizedUpstreamFrame(t *testing.T) {
+	// Upstream gRPC server returning oversized frame header
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+
+		// Header declaring 10 MB payload (> 4 MB DefaultMaxGRPCFrameSize)
+		oversizedHeader := make([]byte, 5)
+		oversizedHeader[0] = 0x00
+		oversizedHeader[1] = 0x00
+		oversizedHeader[2] = 0xA0
+		oversizedHeader[3] = 0x00
+		oversizedHeader[4] = 0x00 // 10,485,760 bytes
+		_, _ = w.Write(oversizedHeader)
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/large",
+				GRPCMethod:  "/large.Service/GetLarge",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	req := &httpparser.Request{
+		Method: "GET",
+		Path:   "/v1/large",
+		Header: make(httpparser.Header),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("StatusCode = %d, want 502 Bad Gateway", res.StatusCode)
+	}
+
+	body, _ := io.ReadAll(res.Body)
+	if !strings.Contains(string(body), "502 Bad Gateway") {
+		t.Errorf("expected 502 Bad Gateway error message, got: %s", string(body))
 	}
 }

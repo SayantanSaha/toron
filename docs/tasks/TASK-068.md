@@ -2,7 +2,7 @@
 id: TASK-068
 type: task
 title: Implement Wire Frame Size Bounding and Buffer Allocation Protection in gRPC Transcoder
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-068
 implements:
   - REQ-068
-verified_by: []
+verified_by:
+  - TC-068
 decided_by:
   - ADR-063
 related_to:

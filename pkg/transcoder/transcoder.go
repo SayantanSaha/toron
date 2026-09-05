@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -193,8 +194,18 @@ func (e *Engine) HandleTranscode(req *httpparser.Request, res *httpparser.Respon
 
 	// Decode returning gRPC wire frame payload
 	outBytes, err := DecodeGRPCFrame(resp.Body)
-	if err != nil || len(outBytes) == 0 {
+	if err != nil {
+		if errors.Is(err, ErrFrameTooLarge) {
+			res.SetStatus(http.StatusBadGateway)
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(fmt.Sprintf(`{"error":"502 Bad Gateway","message":%q}`, err.Error()))
+			return
+		}
 		// Fallback raw output
+		_, _ = res.WriteString(`{}`)
+		return
+	}
+	if len(outBytes) == 0 {
 		_, _ = res.WriteString(`{}`)
 		return
 	}

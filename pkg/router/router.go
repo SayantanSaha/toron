@@ -720,3 +720,29 @@ func (r *Router) RemovePrefixRoute(host, prefix string) {
 	}
 	r.prefixRoutes = filtered
 }
+
+// HasHost checks if a specific domain host is registered on any exact or prefix route.
+func (r *Router) HasHost(host string) bool {
+	if r == nil || host == "" {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	h := strings.ToLower(strings.TrimSpace(host))
+	for _, pr := range r.prefixRoutes {
+		if pr.host != "" && strings.EqualFold(pr.host, h) {
+			return true
+		}
+	}
+	for _, methods := range r.routes {
+		for _, entries := range methods {
+			for _, entry := range entries {
+				if entry.host != "" && strings.EqualFold(entry.host, h) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}

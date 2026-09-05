@@ -385,6 +385,7 @@ func TestServer_HTTPRedirect_Integration(t *testing.T) {
 	cfg.HTTPRedirectEnabled = true
 	cfg.HTTPRedirectPort = 8080
 	cfg.HTTPSPort = 443
+	cfg.HTTPRedirectAllowedHosts = []string{"example.com"}
 
 	srv := server.New(cfg, r)
 	ln, err := net.Listen("tcp", cfg.Addr)
@@ -528,7 +529,70 @@ func TestServer_HTTPRedirect_Integration(t *testing.T) {
 		}
 	})
 
-	// Subtest 6: Clean graceful shutdown
+	// Subtest 6: Unrecognized host header returns 400 Bad Request (Open Redirect Prevention - ADR-065)
+	t.Run("Security Unrecognized Host Rejection", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("dial failed: %v", err)
+		}
+		defer conn.Close()
+
+		req := "GET /dashboard HTTP/1.1\r\nHost: attacker.com\r\nConnection: close\r\n\r\n"
+		_, _ = conn.Write([]byte(req))
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read failed: %v", err)
+		}
+		respStr := string(resp)
+
+		if !strings.Contains(respStr, "400 Bad Request") {
+			t.Errorf("expected 400 Bad Request for unrecognized host, got:\n%s", respStr)
+		}
+		if !strings.Contains(respStr, "Unrecognized Host Header") {
+			t.Errorf("expected 'Unrecognized Host Header' error message, got:\n%s", respStr)
+		}
+		if strings.Contains(strings.ToLower(respStr), "location:") {
+			t.Errorf("Location header should NOT be present for unrecognized host, got:\n%s", respStr)
+		}
+	})
+
+	// Subtest 7: Unrecognized host with DefaultHost configured redirects to DefaultHost
+	t.Run("DefaultHost Fallback For Unrecognized Host", func(t *testing.T) {
+		cfgFallback := cfg
+		cfgFallback.HTTPRedirectDefaultHost = "canonical.example.com"
+		srvFallback := server.New(cfgFallback, r)
+		lnFallback, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("listen failed: %v", err)
+		}
+		defer lnFallback.Close()
+		go func() { _ = srvFallback.Serve(lnFallback) }()
+
+		conn, err := net.Dial("tcp", lnFallback.Addr().String())
+		if err != nil {
+			t.Fatalf("dial failed: %v", err)
+		}
+		defer conn.Close()
+
+		req := "GET /dashboard HTTP/1.1\r\nHost: attacker.com\r\nConnection: close\r\n\r\n"
+		_, _ = conn.Write([]byte(req))
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read failed: %v", err)
+		}
+		respStr := string(resp)
+
+		if !strings.Contains(respStr, "301 Moved Permanently") {
+			t.Errorf("expected 301 Moved Permanently, got:\n%s", respStr)
+		}
+		if !strings.Contains(strings.ToLower(respStr), "location: https://canonical.example.com/dashboard") {
+			t.Errorf("expected Location redirect to canonical.example.com, got:\n%s", respStr)
+		}
+	})
+
+	// Subtest 8: Clean graceful shutdown
 	t.Run("Graceful Shutdown", func(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()

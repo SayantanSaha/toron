@@ -435,6 +435,18 @@ func (s *Server) serveHTTPRedirect(req *httpparser.Request, res *httpparser.Resp
 		host = h
 	}
 
+	// Validate Host against recognized domains to prevent Open Redirect (ADR-065 / CWE-601)
+	if !s.isRecognizedHost(host) {
+		if s.config.HTTPRedirectDefaultHost != "" {
+			host = s.config.HTTPRedirectDefaultHost
+		} else {
+			res.SetStatus(http.StatusBadRequest)
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(`{"error":"400 Bad Request: Unrecognized Host Header"}`)
+			return
+		}
+	}
+
 	targetPort := s.config.HTTPSPort
 	if targetPort <= 0 {
 		targetPort = 443
@@ -461,4 +473,56 @@ func (s *Server) serveHTTPRedirect(req *httpparser.Request, res *httpparser.Resp
 	res.SetStatus(http.StatusMovedPermanently)
 	res.Header.Set("Location", redirectURL)
 	res.Header.Set("Content-Length", "0")
+}
+
+// isRecognizedHost verifies whether the host header matches an allowed or configured domain (ADR-065 / CWE-601).
+func (s *Server) isRecognizedHost(host string) bool {
+	if host == "" {
+		return false
+	}
+	h := strings.ToLower(strings.TrimSpace(host))
+
+	// 1. Explicitly configured AllowedHosts
+	for _, allowed := range s.config.HTTPRedirectAllowedHosts {
+		allowed = strings.ToLower(strings.TrimSpace(allowed))
+		if allowed == "*" || allowed == h {
+			return true
+		}
+		if strings.HasPrefix(allowed, "*.") {
+			suffix := allowed[1:]
+			if strings.HasSuffix(h, suffix) || h == allowed[2:] {
+				return true
+			}
+		}
+	}
+
+	// 2. DefaultHost
+	if s.config.HTTPRedirectDefaultHost != "" && strings.EqualFold(h, s.config.HTTPRedirectDefaultHost) {
+		return true
+	}
+
+	// 3. SNIRegistry
+	if s.config.SNIRegistry != nil && s.config.SNIRegistry.HasHost(h) {
+		return true
+	}
+
+	// 4. Router configured route hosts
+	if s.router != nil && s.router.HasHost(h) {
+		return true
+	}
+
+	// 5. Server Addr host
+	if s.config.Addr != "" {
+		addrHost, _, err := net.SplitHostPort(s.config.Addr)
+		if err == nil && addrHost != "" && strings.EqualFold(h, addrHost) {
+			return true
+		}
+	}
+
+	// 5. Localhost and loopback addresses
+	if h == "localhost" || h == "127.0.0.1" || h == "::1" {
+		return true
+	}
+
+	return false
 }

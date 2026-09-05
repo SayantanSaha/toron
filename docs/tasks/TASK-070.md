@@ -2,7 +2,7 @@
 id: TASK-070
 type: task
 title: Implement Host Header Validation in Cleartext HTTP-to-HTTPS Redirection
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-070
 implements:
   - REQ-070
-verified_by: []
+verified_by:
+  - TC-070
 decided_by:
   - ADR-065
 related_to:

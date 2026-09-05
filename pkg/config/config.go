@@ -203,8 +203,10 @@ type SecurityHeadersConfig struct {
 
 // HTTPRedirectConfig captures cleartext HTTP to HTTPS redirection settings.
 type HTTPRedirectConfig struct {
-	Enabled bool `yaml:"enabled" json:"enabled"`
-	Port    int  `yaml:"port" json:"port"`
+	Enabled      bool     `yaml:"enabled" json:"enabled"`
+	Port         int      `yaml:"port" json:"port"`
+	AllowedHosts []string `yaml:"allowed_hosts" json:"allowed_hosts"`
+	DefaultHost  string   `yaml:"default_host" json:"default_host"`
 }
 
 // ServerConfig captures network and security settings.
@@ -568,6 +570,8 @@ func (c *AppConfig) ToServerConfig() server.Config {
 		HTTP3AltSvcHeader:         c.Server.HTTP3.AltSvcHeader,
 		HTTPRedirectEnabled:       c.Server.HTTPRedirect.Enabled,
 		HTTPRedirectPort:          c.Server.HTTPRedirect.Port,
+		HTTPRedirectAllowedHosts:  c.Server.HTTPRedirect.AllowedHosts,
+		HTTPRedirectDefaultHost:   c.Server.HTTPRedirect.DefaultHost,
 		HTTPSPort:                 c.Server.Port,
 	}
 }

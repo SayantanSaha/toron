@@ -587,6 +587,8 @@ func main() {
 		redirCfg.HTTP3Enabled = false
 		redirCfg.HTTPRedirectEnabled = true
 		redirCfg.HTTPRedirectPort = redirPort
+		redirCfg.HTTPRedirectAllowedHosts = appCfg.Server.HTTPRedirect.AllowedHosts
+		redirCfg.HTTPRedirectDefaultHost = appCfg.Server.HTTPRedirect.DefaultHost
 		redirCfg.HTTPSPort = appCfg.Server.Port
 		if redirCfg.HTTPSPort <= 0 {
 			redirCfg.HTTPSPort = 443

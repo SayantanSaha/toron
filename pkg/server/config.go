@@ -24,6 +24,8 @@ type Config struct {
 	HTTP3AltSvcHeader         bool
 	HTTPRedirectEnabled       bool
 	HTTPRedirectPort          int
+	HTTPRedirectAllowedHosts  []string
+	HTTPRedirectDefaultHost   string
 	HTTPSPort                 int
 }
 

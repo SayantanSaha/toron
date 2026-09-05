@@ -163,3 +163,26 @@ func (r *SNIRegistry) GetConfigForClient(hello *tls.ClientHelloInfo) (*tls.Confi
 
 	return r.fallbackConfig, nil
 }
+
+// HasHost checks whether a host matches an exact or wildcard registered SNI profile.
+func (r *SNIRegistry) HasHost(host string) bool {
+	if r == nil {
+		return false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	h := strings.ToLower(strings.TrimSpace(host))
+	if _, exists := r.profiles[h]; exists {
+		return true
+	}
+	for pattern := range r.profiles {
+		if strings.HasPrefix(pattern, "*.") {
+			suffix := pattern[1:] // .domain.com
+			if strings.HasSuffix(h, suffix) || h == pattern[2:] {
+				return true
+			}
+		}
+	}
+	return false
+}

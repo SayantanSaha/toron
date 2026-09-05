@@ -2,7 +2,7 @@
 id: TASK-074
 type: task
 title: Implement Multiple & Conflicting Content-Length Rejection (RFC 7230 §3.3.2)
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,8 +13,10 @@ derived_from:
   - REQ-074
 implements:
   - REQ-074
-verified_by: []
-decided_by: []
+verified_by:
+  - TC-074
+decided_by:
+  - ADR-069
 related_to:
   - TASK-061
   - TASK-073

@@ -24,6 +24,14 @@ func (h Header) Get(key string) string {
 	return values[0]
 }
 
+// Values returns all values associated with the given key.
+func (h Header) Values(key string) []string {
+	if h == nil {
+		return nil
+	}
+	return h[canonicalKey(key)]
+}
+
 // Set sets the header value associated with key to val.
 func (h Header) Set(key, val string) {
 	h[canonicalKey(key)] = []string{val}

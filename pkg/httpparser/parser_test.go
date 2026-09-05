@@ -266,3 +266,75 @@ func TestParseRequest_HeaderFieldNameWhitespaceRejection(t *testing.T) {
 	}
 }
 
+func TestParseRequest_ContentLengthMultiplicityAndConflict(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+
+	tests := []struct {
+		name         string
+		rawReq       string
+		expectError  bool
+		expectedBody string
+	}{
+		{
+			name:        "TC-074-01: Conflicting Multiple Content-Length Headers",
+			rawReq:      "POST /api HTTP/1.1\r\nHost: example.com\r\nContent-Length: 0\r\nContent-Length: 45\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "TC-074-02: Comma-Separated Distinct Content-Length",
+			rawReq:      "POST /api HTTP/1.1\r\nHost: example.com\r\nContent-Length: 10, 20\r\n\r\n0123456789",
+			expectError: true,
+		},
+		{
+			name:         "TC-074-03: Duplicate Identical Content-Length Headers",
+			rawReq:       "POST /api HTTP/1.1\r\nHost: example.com\r\nContent-Length: 10\r\nContent-Length: 10\r\n\r\n0123456789",
+			expectError:  false,
+			expectedBody: "0123456789",
+		},
+		{
+			name:         "Duplicate Identical Comma-Separated Content-Length",
+			rawReq:       "POST /api HTTP/1.1\r\nHost: example.com\r\nContent-Length: 10, 10\r\n\r\n0123456789",
+			expectError:  false,
+			expectedBody: "0123456789",
+		},
+		{
+			name:        "Invalid Non-Numeric Content-Length",
+			rawReq:      "POST /api HTTP/1.1\r\nHost: example.com\r\nContent-Length: abc\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Negative Content-Length",
+			rawReq:      "POST /api HTTP/1.1\r\nHost: example.com\r\nContent-Length: -5\r\n\r\n",
+			expectError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := httpparser.ParseRequest(bytes.NewBufferString(tt.rawReq), opts)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error for %s, but got none", tt.name)
+				}
+				if !errors.Is(err, httpparser.ErrBadRequest) {
+					t.Fatalf("expected ErrBadRequest, got %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error for %s: %v", err, tt.name)
+				}
+				if req.Body == nil {
+					t.Fatal("expected non-nil Body")
+				}
+				body, _ := io.ReadAll(req.Body)
+				if string(body) != tt.expectedBody {
+					t.Errorf("expected body %q, got %q", tt.expectedBody, string(body))
+				}
+				if req.Header.Get("Content-Length") != "10" {
+					t.Errorf("expected normalized Content-Length '10', got %q", req.Header.Get("Content-Length"))
+				}
+			}
+		})
+	}
+}
+

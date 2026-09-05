@@ -99,26 +99,43 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 	}
 
 	// HTTP Request Smuggling Prevention (RFC 7230 §3.3.3)
+	clValues := req.Header.Values("Content-Length")
 	if req.Header.Get("Transfer-Encoding") != "" {
-		if req.Header.Get("Content-Length") != "" {
+		if len(clValues) > 0 {
 			return nil, fmt.Errorf("%w: conflicting Content-Length and Transfer-Encoding headers", ErrBadRequest)
 		}
 		return nil, fmt.Errorf("%w: chunked or custom transfer-encoding is not supported", ErrUnsupportedTransferEncoding)
 	}
 
-	// Determine Body Length
-	if contentLengthStr := req.Header.Get("Content-Length"); contentLengthStr != "" {
-		cl, err := strconv.ParseInt(contentLengthStr, 10, 64)
-		if err != nil || cl < 0 {
-			return nil, fmt.Errorf("%w: invalid Content-Length", ErrBadRequest)
+	// Determine Body Length & Enforce RFC 7230 §3.3.2 (Multiple/Conflicting Content-Length)
+	if len(clValues) > 0 {
+		var clInt int64 = -1
+		for _, clRaw := range clValues {
+			parts := strings.Split(clRaw, ",")
+			for _, part := range parts {
+				p := strings.TrimSpace(part)
+				if p == "" {
+					return nil, fmt.Errorf("%w: empty Content-Length token", ErrBadRequest)
+				}
+				val, err := strconv.ParseInt(p, 10, 64)
+				if err != nil || val < 0 {
+					return nil, fmt.Errorf("%w: invalid Content-Length: %q", ErrBadRequest, p)
+				}
+				if clInt != -1 && val != clInt {
+					return nil, fmt.Errorf("%w: conflicting Content-Length values (%d vs %d)", ErrBadRequest, clInt, val)
+				}
+				clInt = val
+			}
 		}
-		if cl > opts.MaxBodyBytes {
+
+		if clInt > opts.MaxBodyBytes {
 			return nil, ErrBodyTooLarge
 		}
-		req.ContentLength = cl
+		req.ContentLength = clInt
+		req.Header.Set("Content-Length", strconv.FormatInt(clInt, 10))
 
 		// Read Body payload
-		bodyBuf := make([]byte, cl)
+		bodyBuf := make([]byte, clInt)
 		if _, err := io.ReadFull(bufr, bodyBuf); err != nil {
 			return nil, fmt.Errorf("%w: unexpected EOF reading body", ErrBadRequest)
 		}

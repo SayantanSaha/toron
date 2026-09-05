@@ -2,7 +2,7 @@
 id: TASK-075
 type: task
 title: Remediate Stored DOM-based XSS in Security Control Center
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,8 +13,10 @@ derived_from:
   - REQ-075
 implements:
   - REQ-075
-verified_by: []
-decided_by: []
+verified_by:
+  - TC-075
+decided_by:
+  - ADR-070
 related_to: []
 ---
 

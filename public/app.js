@@ -16,11 +16,22 @@ document.addEventListener('DOMContentLoaded', () => {
   pollStatus();
   fetchUpstreamHealth();
 
-  // Periodic real-time telemetry polling (every 4 seconds)
+// Periodic real-time telemetry polling (every 4 seconds)
   setInterval(() => {
     pollStatus();
   }, 4000);
 });
+
+// HTML entity escaping utility to prevent Stored & Reflected DOM XSS (CWE-79)
+function escapeHTML(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // ============================================================================
 // 1. THREE-STATE THEME ENGINE (Light, Dark, System Sync)
@@ -220,18 +231,18 @@ async function fetchAndRenderRoutes() {
       // Provider badge
       let providerPill = `<span class="tr-badge tr-badge-emerald font-mono">📄 File</span>`;
       if (isOci) {
-        providerPill = `<span class="tr-badge tr-badge-cyan font-mono">🐋 Docker (${r.container_name || 'Container'})</span>`;
+        providerPill = `<span class="tr-badge tr-badge-cyan font-mono">🐋 Docker (${escapeHTML(r.container_name || 'Container')})</span>`;
       } else if (r.source === 'k8s') {
         providerPill = `<span class="tr-badge tr-badge-indigo font-mono">☸️ Kubernetes</span>`;
       }
 
       // Build Traefik Rule Syntax: `Host(`example.com`) && PathPrefix(`/path`)`
-      let ruleExpression = `PathPrefix(\`${r.prefix}\`)`;
+      let ruleExpression = `PathPrefix(\`${escapeHTML(r.prefix)}\`)`;
       if (r.host) {
-        ruleExpression = `Host(\`${r.host}\`) && ${ruleExpression}`;
+        ruleExpression = `Host(\`${escapeHTML(r.host)}\`) && ${ruleExpression}`;
       }
       if (r.headers && Object.keys(r.headers).length > 0) {
-        const headerRules = Object.entries(r.headers).map(([k, v]) => `Header(\`${k}\`, \`${v}\`)`).join(' && ');
+        const headerRules = Object.entries(r.headers).map(([k, v]) => `Header(\`${escapeHTML(k)}\`, \`${escapeHTML(v)}\`)`).join(' && ');
         ruleExpression = `${ruleExpression} && ${headerRules}`;
       }
 
@@ -244,7 +255,7 @@ async function fetchAndRenderRoutes() {
       }
 
       if (r.algorithm) {
-        middlewarePills.push(`<span class="text-[10px] px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 font-mono">⚖️ ${r.algorithm}</span>`);
+        middlewarePills.push(`<span class="text-[10px] px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 dark:bg-indigo-950/40 dark:text-indigo-300 border border-indigo-200 dark:border-indigo-800/60 font-mono">⚖️ ${escapeHTML(r.algorithm)}</span>`);
       }
 
       // Targets / Service representation
@@ -253,20 +264,20 @@ async function fetchAndRenderRoutes() {
         targetsHTML = r.targets.map(t => `
           <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 font-mono text-xs text-slate-800 dark:text-slate-200">
             <span class="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>${t}</span>
+            <span>${escapeHTML(t)}</span>
           </div>
         `).join(' ');
       } else if (r.dir) {
         targetsHTML = `
           <div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/50 font-mono text-xs text-amber-800 dark:text-amber-300">
-            <span>📁 ${r.dir}</span>
+            <span>📁 ${escapeHTML(r.dir)}</span>
           </div>
         `;
       } else {
         targetsHTML = `<span class="text-xs text-slate-400 dark:text-slate-500 italic">Self-handled internal API</span>`;
       }
 
-      const routerName = r.container_name ? `router-${r.container_name}@docker` : `router-${r.prefix.replace(/[^a-zA-Z0-9]/g, '_')}@file`;
+      const routerName = r.container_name ? `router-${escapeHTML(r.container_name)}@docker` : `router-${escapeHTML(r.prefix.replace(/[^a-zA-Z0-9]/g, '_'))}@file`;
 
       return `
         <div class="route-card p-4 sm:p-5 rounded-xl traefik-panel space-y-3.5">
@@ -360,19 +371,19 @@ async function fetchUpstreamHealth() {
           <div class="flex items-center justify-between">
             <div class="flex items-center space-x-2 min-w-0">
               <span class="w-2.5 h-2.5 rounded-full ${pulseColor} animate-pulse flex-shrink-0"></span>
-              <span class="font-bold text-xs truncate text-slate-900 dark:text-white">${svc.name || ('Port ' + svc.port)}</span>
+              <span class="font-bold text-xs truncate text-slate-900 dark:text-white">${escapeHTML(svc.name || ('Port ' + svc.port))}</span>
             </div>
-            <span class="tr-badge ${badgeStyle} text-[10px] font-mono">${svc.status}</span>
+            <span class="tr-badge ${badgeStyle} text-[10px] font-mono">${escapeHTML(svc.status)}</span>
           </div>
 
           <div class="text-[11px] space-y-1 text-slate-500 dark:text-slate-400 font-mono">
             <div class="flex justify-between">
               <span>Port:</span>
-              <span class="font-bold text-slate-700 dark:text-slate-300">:${svc.port}</span>
+              <span class="font-bold text-slate-700 dark:text-slate-300">:${escapeHTML(svc.port)}</span>
             </div>
             <div class="flex justify-between">
               <span>Route:</span>
-              <span class="truncate max-w-[120px] text-slate-700 dark:text-slate-300">${svc.route || '/'}</span>
+              <span class="truncate max-w-[120px] text-slate-700 dark:text-slate-300">${escapeHTML(svc.route || '/')}</span>
             </div>
             <div class="flex justify-between">
               <span>Latency:</span>
@@ -380,7 +391,7 @@ async function fetchUpstreamHealth() {
             </div>
             <div class="flex justify-between">
               <span>HTTP Code:</span>
-              <span class="font-bold text-slate-700 dark:text-slate-300">${svc.http_code > 0 ? svc.http_code : 'N/A'}</span>
+              <span class="font-bold text-slate-700 dark:text-slate-300">${svc.http_code > 0 ? escapeHTML(svc.http_code) : 'N/A'}</span>
             </div>
           </div>
         </div>
@@ -420,10 +431,10 @@ async function fetchSecurityIncidents() {
 
     tbody.innerHTML = data.incidents.map(inc => `
       <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-        <td class="py-2.5 px-3 text-slate-500 dark:text-slate-400">${new Date(inc.timestamp).toLocaleTimeString()}</td>
-        <td class="py-2.5 px-3 text-slate-700 dark:text-slate-300">${inc.client_ip}</td>
-        <td class="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">${inc.path}</td>
-        <td class="py-2.5 px-3 text-amber-600 dark:text-amber-400">${inc.rule_id}</td>
+        <td class="py-2.5 px-3 text-slate-500 dark:text-slate-400">${escapeHTML(new Date(inc.timestamp).toLocaleTimeString())}</td>
+        <td class="py-2.5 px-3 text-slate-700 dark:text-slate-300">${escapeHTML(inc.client_ip)}</td>
+        <td class="py-2.5 px-3 font-semibold text-slate-900 dark:text-white">${escapeHTML(inc.path)}</td>
+        <td class="py-2.5 px-3 text-amber-600 dark:text-amber-400">${escapeHTML(inc.rule_id)}</td>
         <td class="py-2.5 px-3 text-right">
           <span class="tr-badge tr-badge-rose text-[10px]">BLOCKED</span>
         </td>

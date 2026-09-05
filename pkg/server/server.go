@@ -306,10 +306,27 @@ func (s *Server) http2AdapterHandler() http.Handler {
 		req := httpparser.NewRequestFromStd(r)
 
 		if r.Method != "CONNECT" && r.Body != nil {
-			bodyBytes, err := io.ReadAll(r.Body)
-			if err == nil {
-				req.Body = bytes.NewReader(bodyBytes)
+			defer r.Body.Close()
+			maxBodyBytes := s.config.MaxBodyBytes
+			if maxBodyBytes <= 0 {
+				maxBodyBytes = 4 * 1024 * 1024
 			}
+			lr := io.LimitReader(r.Body, maxBodyBytes+1)
+			bodyBytes, err := io.ReadAll(lr)
+			if err != nil {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"400 Bad Request"}`))
+				return
+			}
+			if int64(len(bodyBytes)) > maxBodyBytes {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				_, _ = w.Write([]byte(`{"error":"413 Payload Too Large"}`))
+				return
+			}
+			req.Body = bytes.NewReader(bodyBytes)
+			req.ContentLength = int64(len(bodyBytes))
 		}
 
 		res := httpparser.NewResponse()

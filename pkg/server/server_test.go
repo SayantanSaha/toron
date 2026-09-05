@@ -654,3 +654,47 @@ func TestServer_UnsupportedTransferEncodingRejection(t *testing.T) {
 		t.Errorf("expected Connection: close, got:\n%s", respStr)
 	}
 }
+
+func TestHTTP2AdapterHandler_MaxBodyBytes(t *testing.T) {
+	r := router.New()
+	r.POST("/upload", func(req *httpparser.Request, res *httpparser.Response) {
+		body, _ := io.ReadAll(req.Body)
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("received:" + string(body))
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.MaxBodyBytes = 1024 // 1 KB limit
+	srv := server.New(cfg, r)
+	handler := srv.HTTP2AdapterHandler()
+
+	t.Run("TC-076-01: Compliant Request Under MaxBodyBytes", func(t *testing.T) {
+		payload := bytes.Repeat([]byte("a"), 512)
+		httpReq := httptest.NewRequest("POST", "/upload", bytes.NewReader(payload))
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, httpReq)
+
+		if rec.Code != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "received:") {
+			t.Errorf("expected router to receive payload, got %q", rec.Body.String())
+		}
+	})
+
+	t.Run("TC-076-02: Oversized Request Exceeding MaxBodyBytes", func(t *testing.T) {
+		payload := bytes.Repeat([]byte("a"), 2048) // Exceeds 1024 limit
+		httpReq := httptest.NewRequest("POST", "/upload", bytes.NewReader(payload))
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, httpReq)
+
+		if rec.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("expected 413 Payload Too Large, got %d", rec.Code)
+		}
+		if !strings.Contains(rec.Body.String(), "413 Payload Too Large") {
+			t.Errorf("expected 413 error body, got %q", rec.Body.String())
+		}
+	})
+}

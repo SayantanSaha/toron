@@ -2,7 +2,7 @@
 id: TASK-076
 type: task
 title: Implement Bounded Body Reader in HTTP/2 Ingress Adapter
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,8 +13,10 @@ derived_from:
   - REQ-076
 implements:
   - REQ-076
-verified_by: []
-decided_by: []
+verified_by:
+  - TC-076
+decided_by:
+  - ADR-071
 related_to:
   - TASK-060
   - TASK-068

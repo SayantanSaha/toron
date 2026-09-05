@@ -331,3 +331,99 @@ func TestExtractClientIP(t *testing.T) {
 		t.Errorf("expected 192.168.1.50, got %q", ip)
 	}
 }
+
+func TestSanitizeLogField(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "clean string",
+			input:    "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+			expected: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+		},
+		{
+			name:     "crlf injection in user agent",
+			input:    "Mozilla/5.0\r\n127.0.0.1 - - [01/Jan/2026] \"GET /admin HTTP/1.1\" 200 0",
+			expected: "Mozilla/5.0  127.0.0.1 - - [01/Jan/2026] \"GET /admin HTTP/1.1\" 200 0",
+		},
+		{
+			name:     "tabs, bells, and null bytes",
+			input:    "evil\x00path\x07with\ttab\x7fdel",
+			expected: "evil path with tab del",
+		},
+		{
+			name:     "empty string",
+			input:    "",
+			expected: "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SanitizeLogField(tc.input)
+			if got != tc.expected {
+				t.Errorf("SanitizeLogField(%q) = %q; want %q", tc.input, got, tc.expected)
+			}
+		})
+	}
+}
+
+func TestLogAccess_CRLFInjectionMitigation(t *testing.T) {
+	tempDir := t.TempDir()
+	accessLog := filepath.Join(tempDir, "access.log")
+
+	mgr, err := NewLogManager(Config{
+		Level:     "INFO",
+		Format:    "text",
+		AccessLog: accessLog,
+	})
+	if err != nil {
+		t.Fatalf("failed to create LogManager: %v", err)
+	}
+	defer mgr.Close()
+
+	// Malicious access log entry attempting CRLF log forging
+	entry := AccessLogEntry{
+		Timestamp:  time.Date(2026, 9, 5, 12, 0, 0, 0, time.UTC),
+		ClientIP:   "192.0.2.1",
+		Method:     "GET\r\nINJECTED",
+		Path:       "/api/v1/resource\r\n10.0.0.1 - - [05/Sep/2026:12:00:00 +0000] \"GET /admin HTTP/1.1\" 200 9999",
+		Protocol:   "HTTP/1.1",
+		StatusCode: 404,
+		BytesSent:  128,
+		Duration:   15 * time.Millisecond,
+		UserAgent:  "EvilAgent/1.0\r\nForged-Header: attack",
+		Referer:    "http://example.com/exploit\r\n",
+	}
+
+	mgr.LogAccess(entry, "")
+
+	data, err := os.ReadFile(accessLog)
+	if err != nil {
+		t.Fatalf("failed to read access log: %v", err)
+	}
+
+	raw := string(data)
+	lines := strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
+
+	// Strictly exactly one physical line must be written
+	if len(lines) != 1 {
+		t.Fatalf("expected strictly 1 log line, got %d lines: %q", len(lines), raw)
+	}
+
+	// Line must not contain unescaped CR or LF
+	if strings.Contains(lines[0], "\r") || strings.Contains(lines[0], "\n") {
+		t.Fatalf("log line contains raw control characters: %q", lines[0])
+	}
+}
+
+func BenchmarkSanitizeLogField_Clean(b *testing.B) {
+	cleanUA := "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		_ = SanitizeLogField(cleanUA)
+	}
+}

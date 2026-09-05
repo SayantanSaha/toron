@@ -2,7 +2,7 @@
 id: TASK-066
 type: task
 title: Implement Access Log CRLF Sanitization and Control Character Filtering
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-066
 implements:
   - REQ-066
-verified_by: []
+verified_by:
+  - TC-066
 decided_by:
   - ADR-061
 related_to:

@@ -368,25 +368,27 @@ func (m *LogManager) LogAccess(entry AccessLogEntry, routeOverride string) {
 		line = string(data)
 	} else {
 		// Combined Log Format with latency appended
-		proto := entry.Protocol
+		proto := sanitizeLogField(entry.Protocol)
 		if proto == "" {
 			proto = "HTTP/1.1"
 		}
-		clientIP := entry.ClientIP
+		clientIP := sanitizeLogField(entry.ClientIP)
 		if clientIP == "" {
 			clientIP = "-"
 		}
-		referer := entry.Referer
+		referer := sanitizeLogField(entry.Referer)
 		if referer == "" {
 			referer = "-"
 		}
-		ua := entry.UserAgent
+		ua := sanitizeLogField(entry.UserAgent)
 		if ua == "" {
 			ua = "-"
 		}
+		method := sanitizeLogField(entry.Method)
+		path := sanitizeLogField(entry.Path)
 		ts := entry.Timestamp.Format("02/Jan/2006:15:04:05 -0700")
 		line = fmt.Sprintf(`%s - - [%s] "%s %s %s" %d %d "%s" "%s" %v`,
-			clientIP, ts, entry.Method, entry.Path, proto, entry.StatusCode, entry.BytesSent, referer, ua, entry.Duration)
+			clientIP, ts, method, path, proto, entry.StatusCode, entry.BytesSent, referer, ua, entry.Duration)
 	}
 
 	_, _ = targetSink.Write([]byte(line + "\n"))
@@ -526,4 +528,35 @@ func ExtractClientIP(req *httpparser.Request) string {
 		}
 	}
 	return "127.0.0.1"
+}
+
+// SanitizeLogField inspects val for carriage returns (\r), line feeds (\n),
+// and non-printable control characters (< 0x20 or 0x7f).
+// It provides a zero-allocation fast-path when no control characters are present.
+// When control characters are detected, they are replaced with spaces (' ') to prevent
+// CRLF log injection (CWE-117) and terminal escape sequences.
+func SanitizeLogField(val string) string {
+	hasControl := false
+	for i := 0; i < len(val); i++ {
+		b := val[i]
+		if b < 0x20 || b == 0x7f {
+			hasControl = true
+			break
+		}
+	}
+	if !hasControl {
+		return val
+	}
+
+	buf := []byte(val)
+	for i := 0; i < len(buf); i++ {
+		if buf[i] < 0x20 || buf[i] == 0x7f {
+			buf[i] = ' '
+		}
+	}
+	return string(buf)
+}
+
+func sanitizeLogField(val string) string {
+	return SanitizeLogField(val)
 }

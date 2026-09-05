@@ -209,8 +209,16 @@ func ValidateConfig(cfg *AppConfig) error {
 		}
 	}
 
+	if err := ValidateCORSConfig(cfg.Server.CORS, "server.cors"); err != nil {
+		return err
+	}
+
 	if cfg.Proxy.Enabled {
 		for i, route := range cfg.Proxy.Routes {
+			if err := ValidateCORSConfig(route.CORS, fmt.Sprintf("route %q cors", route.Prefix)); err != nil {
+				return err
+			}
+
 			if route.WAF.Enabled {
 				for j, cr := range route.WAF.CustomRules {
 					if strings.TrimSpace(cr.ID) == "" {
@@ -285,4 +293,24 @@ func LoadFromFile(filePath string) (*AppConfig, error) {
 // LoadFromFiles helper shortcut using default Manager.
 func LoadFromFiles(configPath, routesPath string) (*AppConfig, error) {
 	return NewManager().LoadFromFiles(configPath, routesPath)
+}
+
+// ValidateCORSConfig validates that a CORSConfig does not permit wildcard credentials (ADR-064 / CWE-942).
+func ValidateCORSConfig(c CORSConfig, location string) error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.AllowCredentials {
+		for _, o := range c.AllowOrigins {
+			if strings.TrimSpace(o) == "*" {
+				return fmt.Errorf("%s: insecure cors configuration - allow_credentials cannot be true when allow_origins contains '*'", location)
+			}
+		}
+	}
+	return nil
+}
+
+// ValidateCORS validates a standalone CORSConfig.
+func ValidateCORS(c CORSConfig) error {
+	return ValidateCORSConfig(c, "cors")
 }

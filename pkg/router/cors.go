@@ -1,6 +1,7 @@
 package router
 
 import (
+	"errors"
 	"net"
 	"net/http"
 	"net/url"
@@ -9,6 +10,9 @@ import (
 
 	"toron/pkg/httpparser"
 )
+
+// ErrInsecureCORSCredentialsWildcard indicates that allow_credentials was set to true while allow_origins contains '*'.
+var ErrInsecureCORSCredentialsWildcard = errors.New("cors: insecure configuration - allow_credentials cannot be true when allow_origins contains '*'")
 
 // CORSConfig defines Cross-Origin Resource Sharing settings.
 type CORSConfig struct {
@@ -21,8 +25,23 @@ type CORSConfig struct {
 	MaxAge           int      `yaml:"max_age" json:"max_age"`
 }
 
+// ValidateCORSConfig validates that CORS configuration complies with security constraints (ADR-064 / CWE-942).
+func ValidateCORSConfig(cfg CORSConfig) error {
+	if !cfg.Enabled {
+		return nil
+	}
+	if cfg.AllowCredentials {
+		for _, o := range cfg.AllowOrigins {
+			if strings.TrimSpace(o) == "*" {
+				return ErrInsecureCORSCredentialsWildcard
+			}
+		}
+	}
+	return nil
+}
+
 // isOriginAllowed checks if an incoming origin matches the configured allowed origins.
-func isOriginAllowed(origin string, allowOrigins []string) bool {
+func isOriginAllowed(origin string, allowOrigins []string, allowCredentials bool) bool {
 	if len(allowOrigins) == 0 {
 		return false
 	}
@@ -44,6 +63,9 @@ func isOriginAllowed(origin string, allowOrigins []string) bool {
 	for _, pattern := range allowOrigins {
 		pattern = strings.TrimSpace(pattern)
 		if pattern == "*" {
+			if allowCredentials {
+				continue // Wildcard origins are disallowed when credentials are enabled (ADR-064 / CWE-942)
+			}
 			return true
 		}
 		if strings.EqualFold(origin, pattern) {
@@ -107,10 +129,11 @@ func NewCORSMiddleware(cfg CORSConfig) MiddlewareFunc {
 				return
 			}
 
-			allowed := isOriginAllowed(origin, cfg.AllowOrigins)
+			allowed := isOriginAllowed(origin, cfg.AllowOrigins, cfg.AllowCredentials)
 
 			// Handle Preflight OPTIONS request
 			if req.Method == "OPTIONS" && req.Header.Get("Access-Control-Request-Method") != "" {
+				appendVaryHeader(res, "Origin")
 				if !allowed {
 					res.SetStatus(http.StatusForbidden)
 					res.Header.Set("Content-Type", "application/json")
@@ -136,7 +159,6 @@ func NewCORSMiddleware(cfg CORSConfig) MiddlewareFunc {
 				if maxAgeStr != "" {
 					res.Header.Set("Access-Control-Max-Age", maxAgeStr)
 				}
-				appendVaryHeader(res, "Origin")
 
 				res.SetStatus(http.StatusNoContent)
 				return
@@ -156,6 +178,8 @@ func NewCORSMiddleware(cfg CORSConfig) MiddlewareFunc {
 				if exposeStr != "" {
 					res.Header.Set("Access-Control-Expose-Headers", exposeStr)
 				}
+				appendVaryHeader(res, "Origin")
+			} else {
 				appendVaryHeader(res, "Origin")
 			}
 

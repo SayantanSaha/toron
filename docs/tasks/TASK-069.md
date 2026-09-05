@@ -2,7 +2,7 @@
 id: TASK-069
 type: task
 title: Implement Strict CORS Origin Validation and Prohibit Credentialed Wildcards
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-069
 implements:
   - REQ-069
-verified_by: []
+verified_by:
+  - TC-069
 decided_by:
   - ADR-064
 related_to:

@@ -2,6 +2,7 @@ package router
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"toron/pkg/httpparser"
@@ -173,3 +174,58 @@ func TestCORS_ActualRequestWithoutOrigin(t *testing.T) {
 		t.Errorf("expected empty CORS header, got %q", origin)
 	}
 }
+
+func TestCORS_CredentialedWildcardValidation(t *testing.T) {
+	cfg := CORSConfig{
+		Enabled:          true,
+		AllowOrigins:     []string{"*"},
+		AllowCredentials: true,
+	}
+
+	if err := ValidateCORSConfig(cfg); err != ErrInsecureCORSCredentialsWildcard {
+		t.Fatalf("expected ErrInsecureCORSCredentialsWildcard, got: %v", err)
+	}
+}
+
+func TestCORS_RuntimeCredentialedWildcardDisallowed(t *testing.T) {
+	// Even if a middleware is initialized with wildcard and credentials,
+	// runtime origin checking must reject wildcard matching and refuse to reflect origin.
+	cfg := CORSConfig{
+		Enabled:          true,
+		AllowOrigins:     []string{"*"},
+		AllowCredentials: true,
+	}
+
+	middleware := NewCORSMiddleware(cfg)
+	handler := middleware(func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+	})
+
+	// 1. Preflight request from untrusted origin
+	reqPreflight, _ := httpparser.NewRequest("OPTIONS", "/api/secure", "HTTP/1.1")
+	reqPreflight.Header.Set("Origin", "https://evil.com")
+	reqPreflight.Header.Set("Access-Control-Request-Method", "POST")
+	resPreflight := httpparser.NewResponse()
+
+	handler(reqPreflight, resPreflight)
+	if resPreflight.StatusCode != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden for preflight with credentialed wildcard, got %d", resPreflight.StatusCode)
+	}
+	if vary := resPreflight.Header.Get("Vary"); !strings.Contains(vary, "Origin") {
+		t.Errorf("expected Vary: Origin on preflight response, got %q", vary)
+	}
+
+	// 2. Simple GET request from untrusted origin
+	reqGet, _ := httpparser.NewRequest("GET", "/api/secure", "HTTP/1.1")
+	reqGet.Header.Set("Origin", "https://evil.com")
+	resGet := httpparser.NewResponse()
+
+	handler(reqGet, resGet)
+	if origin := resGet.Header.Get("Access-Control-Allow-Origin"); origin != "" {
+		t.Errorf("expected empty Access-Control-Allow-Origin on disallowed origin, got %q", origin)
+	}
+	if vary := resGet.Header.Get("Vary"); !strings.Contains(vary, "Origin") {
+		t.Errorf("expected Vary: Origin on GET response, got %q", vary)
+	}
+}
+

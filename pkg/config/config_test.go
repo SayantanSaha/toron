@@ -491,3 +491,34 @@ routes:
 		t.Errorf("route 2 GetAccessLog: expected fallback 'default.log', got %q", r2.GetAccessLog("default.log"))
 	}
 }
+
+func TestConfig_ValidateCORS(t *testing.T) {
+	// 1. Insecure configuration: AllowCredentials: true and AllowOrigins: ["*"]
+	insecureCORS := config.CORSConfig{
+		Enabled:          true,
+		AllowOrigins:     []string{"*"},
+		AllowCredentials: true,
+	}
+	if err := config.ValidateCORS(insecureCORS); err == nil {
+		t.Fatal("expected error when AllowCredentials is true with wildcard origin, got nil")
+	}
+
+	// 2. Insecure configuration inside AppConfig ValidateConfig
+	cfg := config.DefaultAppConfig()
+	cfg.Static.Enabled = false
+	cfg.Server.CORS = insecureCORS
+	if err := config.ValidateConfig(cfg); err == nil {
+		t.Fatal("expected ValidateConfig to reject server.cors with wildcard credentials")
+	}
+
+	// 3. Valid CORS configuration with explicit origins and credentials
+	validCORS := config.CORSConfig{
+		Enabled:          true,
+		AllowOrigins:     []string{"https://app.example.com"},
+		AllowCredentials: true,
+	}
+	if err := config.ValidateCORS(validCORS); err != nil {
+		t.Fatalf("expected valid CORS config, got: %v", err)
+	}
+}
+

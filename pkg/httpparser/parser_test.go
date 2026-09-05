@@ -2,6 +2,7 @@ package httpparser_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"net/http"
 	"testing"
@@ -63,6 +64,19 @@ func TestParseRequest_SmugglingRejection(t *testing.T) {
 	_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
 	if err == nil {
 		t.Fatal("expected error parsing request with conflicting Content-Length and Transfer-Encoding headers")
+	}
+}
+
+func TestParseRequest_StandaloneTransferEncodingRejection(t *testing.T) {
+	rawReq := "POST /submit HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+	opts := httpparser.DefaultParserOptions()
+
+	_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+	if err == nil {
+		t.Fatal("expected error parsing request with standalone Transfer-Encoding: chunked")
+	}
+	if !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
+		t.Fatalf("expected ErrUnsupportedTransferEncoding, got %v", err)
 	}
 }
 

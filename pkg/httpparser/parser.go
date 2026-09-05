@@ -11,10 +11,11 @@ import (
 )
 
 var (
-	ErrBadRequest          = errors.New("httpparser: bad request format")
-	ErrHeaderTooLarge      = errors.New("httpparser: request header fields too large")
-	ErrBodyTooLarge        = errors.New("httpparser: request payload body too large")
-	ErrUnsupportedProtocol = errors.New("httpparser: unsupported HTTP protocol version")
+	ErrBadRequest                  = errors.New("httpparser: bad request format")
+	ErrHeaderTooLarge              = errors.New("httpparser: request header fields too large")
+	ErrBodyTooLarge                = errors.New("httpparser: request payload body too large")
+	ErrUnsupportedProtocol         = errors.New("httpparser: unsupported HTTP protocol version")
+	ErrUnsupportedTransferEncoding = errors.New("httpparser: unsupported transfer encoding")
 )
 
 // ParserOptions holds security limit configurations for the parser.
@@ -95,8 +96,11 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 	}
 
 	// HTTP Request Smuggling Prevention (RFC 7230 §3.3.3)
-	if req.Header.Get("Content-Length") != "" && req.Header.Get("Transfer-Encoding") != "" {
-		return nil, fmt.Errorf("%w: conflicting Content-Length and Transfer-Encoding headers", ErrBadRequest)
+	if req.Header.Get("Transfer-Encoding") != "" {
+		if req.Header.Get("Content-Length") != "" {
+			return nil, fmt.Errorf("%w: conflicting Content-Length and Transfer-Encoding headers", ErrBadRequest)
+		}
+		return nil, fmt.Errorf("%w: chunked or custom transfer-encoding is not supported", ErrUnsupportedTransferEncoding)
 	}
 
 	// Determine Body Length

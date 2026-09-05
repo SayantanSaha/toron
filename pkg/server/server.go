@@ -212,6 +212,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 				res.SetStatus(http.StatusRequestEntityTooLarge)
 				res.Header.Set("Content-Type", "application/json")
 				_, _ = res.WriteString(`{"error":"413 Payload Too Large"}`)
+			case errors.Is(err, httpparser.ErrUnsupportedTransferEncoding):
+				res.SetStatus(http.StatusNotImplemented)
+				res.Header.Set("Content-Type", "application/json")
+				_, _ = res.WriteString(`{"error":"501 Not Implemented: Unsupported Transfer-Encoding"}`)
 			default:
 				res.SetStatus(http.StatusBadRequest)
 				res.Header.Set("Content-Type", "application/json")

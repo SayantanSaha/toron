@@ -537,3 +537,56 @@ func TestServer_HTTPRedirect_Integration(t *testing.T) {
 		}
 	})
 }
+
+func TestServer_UnsupportedTransferEncodingRejection(t *testing.T) {
+	r := router.New()
+	r.POST("/upload", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("uploaded")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	addr := ln.Addr().String()
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Send chunked request followed by pipelined smuggled request
+	req := "POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\nGET /smuggled HTTP/1.1\r\nHost: localhost\r\n\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("failed to write: %v", err)
+	}
+
+	resp, err := io.ReadAll(conn)
+	if err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("read failed: %v", err)
+	}
+
+	respStr := string(resp)
+	if !strings.Contains(respStr, "501 Not Implemented") {
+		t.Errorf("expected 501 Not Implemented, got:\n%s", respStr)
+	}
+	if !strings.Contains(strings.ToLower(respStr), "connection: close") {
+		t.Errorf("expected Connection: close, got:\n%s", respStr)
+	}
+}

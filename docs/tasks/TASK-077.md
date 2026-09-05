@@ -2,7 +2,7 @@
 id: TASK-077
 type: task
 title: Implement Concurrent Connection Dispatch in TCP Reactor
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,8 +13,10 @@ derived_from:
   - REQ-077
 implements:
   - REQ-077
-verified_by: []
-decided_by: []
+verified_by:
+  - TC-077
+decided_by:
+  - ADR-072
 related_to: []
 ---
 

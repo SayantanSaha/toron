@@ -180,6 +180,12 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 
 	firstRequest := true
 	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+
 		timeout := s.config.ReadTimeout
 		if !firstRequest && s.config.IdleTimeout > 0 {
 			timeout = s.config.IdleTimeout

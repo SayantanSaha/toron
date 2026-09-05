@@ -304,3 +304,66 @@ func TestAuth_ExcludedPaths(t *testing.T) {
 		t.Fatalf("expected status 200 on excluded path without key, got %d", res.StatusCode)
 	}
 }
+
+func TestAuth_HardenedPathExclusions(t *testing.T) {
+	// TC-078-01: Root Exclusion Exemption Boundary
+	authCfg := AuthConfig{
+		Type: AuthTypeAPIKey,
+		APIKey: APIKeyConfig{
+			Keys: []string{"valid-key"},
+		},
+		Excluded: []string{"/"},
+	}
+
+	r := New()
+	r.Use(NewAuthMiddleware(authCfg))
+
+	r.GET("/", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("root ok")
+	})
+	r.GET("/admin/dashboard", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("admin secret")
+	})
+
+	// Action 1: GET / without credentials -> status 200
+	reqRoot, _ := httpparser.NewRequest("GET", "/", "HTTP/1.1")
+	resRoot := httpparser.NewResponse()
+	r.ServeHTTP(reqRoot, resRoot)
+	if resRoot.StatusCode != http.StatusOK {
+		t.Fatalf("TC-078-01: expected status 200 on root path with excluded=['/'], got %d", resRoot.StatusCode)
+	}
+
+	// Action 2: GET /admin/dashboard without credentials -> status 401 Unauthorized
+	reqAdmin, _ := httpparser.NewRequest("GET", "/admin/dashboard", "HTTP/1.1")
+	resAdmin := httpparser.NewResponse()
+	r.ServeHTTP(reqAdmin, resAdmin)
+	if resAdmin.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("TC-078-01: expected status 401 on /admin/dashboard when excluded=['/'], got %d", resAdmin.StatusCode)
+	}
+
+	// TC-078-02: Empty String Exclusion Ignored
+	authEmptyCfg := AuthConfig{
+		Type: AuthTypeAPIKey,
+		APIKey: APIKeyConfig{
+			Keys: []string{"valid-key"},
+		},
+		Excluded: []string{""},
+	}
+
+	rEmpty := New()
+	rEmpty.Use(NewAuthMiddleware(authEmptyCfg))
+	rEmpty.GET("/api/data", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("data")
+	})
+
+	reqData, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+	resData := httpparser.NewResponse()
+	rEmpty.ServeHTTP(reqData, resData)
+	if resData.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("TC-078-02: expected status 401 when excluded=[''], got %d", resData.StatusCode)
+	}
+}
+

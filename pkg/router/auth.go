@@ -313,7 +313,18 @@ func NewAuthMiddleware(cfg AuthConfig) MiddlewareFunc {
 
 			// Check path exclusions
 			for _, p := range cfg.Excluded {
-				if req.Path == p || strings.HasPrefix(req.Path, strings.TrimSuffix(p, "/")+"/") {
+				pTrimmed := strings.TrimSpace(p)
+				if pTrimmed == "" {
+					continue
+				}
+				if pTrimmed == "/" {
+					if req.Path == "/" {
+						next(req, res)
+						return
+					}
+					continue
+				}
+				if req.Path == pTrimmed || strings.HasPrefix(req.Path, strings.TrimSuffix(pTrimmed, "/")+"/") {
 					next(req, res)
 					return
 				}

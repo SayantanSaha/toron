@@ -28,7 +28,18 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 
 			// Check path exclusions (e.g. routes with dedicated route-level WAF policies)
 			for _, p := range engine.Config().Excluded {
-				if req.Path == p || strings.HasPrefix(req.Path, strings.TrimSuffix(p, "/")+"/") {
+				pTrimmed := strings.TrimSpace(p)
+				if pTrimmed == "" {
+					continue
+				}
+				if pTrimmed == "/" {
+					if req.Path == "/" {
+						next(req, res)
+						return
+					}
+					continue
+				}
+				if req.Path == pTrimmed || strings.HasPrefix(req.Path, strings.TrimSuffix(pTrimmed, "/")+"/") {
 					next(req, res)
 					return
 				}

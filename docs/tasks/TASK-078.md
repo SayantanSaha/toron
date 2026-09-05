@@ -2,7 +2,7 @@
 id: TASK-078
 type: task
 title: Harden Path Exclusion Matching in Authentication and WAF Middlewares
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,8 +13,10 @@ derived_from:
   - REQ-078
 implements:
   - REQ-078
-verified_by: []
-decided_by: []
+verified_by:
+  - TC-078
+decided_by:
+  - ADR-073
 related_to: []
 ---
 

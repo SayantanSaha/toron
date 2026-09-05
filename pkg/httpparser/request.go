@@ -35,6 +35,13 @@ func (h Header) Add(key, val string) {
 	h[k] = append(h[k], val)
 }
 
+// Del deletes the header values associated with key.
+func (h Header) Del(key string) {
+	if h != nil {
+		delete(h, canonicalKey(key))
+	}
+}
+
 func canonicalKey(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }

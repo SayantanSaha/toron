@@ -299,3 +299,137 @@ func TestCache_DistinctStaticPaths(t *testing.T) {
 		t.Fatalf("unexpected JS body: %s", resJS.Body.String())
 	}
 }
+
+func TestCache_SetCookieStripped(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 10 * time.Second
+	r.Use(NewCacheMiddleware(cfg))
+
+	r.GET("/api/session", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		res.Header.Set("Set-Cookie", "session=secret_token_12345; Path=/; HttpOnly")
+		res.Header.Set("Set-Cookie2", "session2=secret_token_67890; Path=/")
+		_, _ = res.WriteString(`{"user":"authenticated"}`)
+	})
+
+	// Request 1: Initial response emits Set-Cookie from upstream
+	req1, _ := httpparser.NewRequest("GET", "/api/session", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if res1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("expected MISS on first request")
+	}
+	if cookie := res1.Header.Get("Set-Cookie"); cookie != "session=secret_token_12345; Path=/; HttpOnly" {
+		t.Fatalf("expected Set-Cookie to be present on upstream response, got %q", cookie)
+	}
+
+	// Request 2: Cached HIT must NEVER emit Set-Cookie
+	req2, _ := httpparser.NewRequest("GET", "/api/session", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if res2.Header.Get("X-Cache") != "HIT" {
+		t.Fatalf("expected HIT on second request")
+	}
+	if cookie := res2.Header.Get("Set-Cookie"); cookie != "" {
+		t.Fatalf("SECURITY VIOLATION: Set-Cookie leaked in cached response: %q", cookie)
+	}
+	if cookie2 := res2.Header.Get("Set-Cookie2"); cookie2 != "" {
+		t.Fatalf("SECURITY VIOLATION: Set-Cookie2 leaked in cached response: %q", cookie2)
+	}
+}
+
+func TestCache_AuthorizationBoundary(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 10 * time.Second
+	r.Use(NewCacheMiddleware(cfg))
+
+	var privateCalls int64
+	r.GET("/api/user/profile", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&privateCalls, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		_, _ = res.WriteString(fmt.Sprintf(`{"profile_id":%d}`, atomic.LoadInt64(&privateCalls)))
+	})
+
+	var publicCalls int64
+	r.GET("/api/public/data", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&publicCalls, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		res.Header.Set("Cache-Control", "public, max-age=60")
+		_, _ = res.WriteString(fmt.Sprintf(`{"public_id":%d}`, atomic.LoadInt64(&publicCalls)))
+	})
+
+	// 1. Request with Authorization on private endpoint must not be cached (RFC 7234 §3.2)
+	reqAuth1, _ := httpparser.NewRequest("GET", "/api/user/profile", "HTTP/1.1")
+	reqAuth1.Header.Set("Authorization", "Bearer user1-token")
+	resAuth1 := httpparser.NewResponse()
+	r.ServeHTTP(reqAuth1, resAuth1)
+	if resAuth1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("expected MISS")
+	}
+
+	// Subsequent request without auth must NOT receive cached private data
+	reqAnon, _ := httpparser.NewRequest("GET", "/api/user/profile", "HTTP/1.1")
+	resAnon := httpparser.NewResponse()
+	r.ServeHTTP(reqAnon, resAnon)
+	if resAnon.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("SECURITY VIOLATION: Anonymous request received cached authenticated response")
+	}
+	if calls := atomic.LoadInt64(&privateCalls); calls != 2 {
+		t.Fatalf("expected handler to run twice for authenticated requests without public directive, got %d", calls)
+	}
+
+	// 2. Request with Authorization on public endpoint CAN be cached
+	reqPub1, _ := httpparser.NewRequest("GET", "/api/public/data", "HTTP/1.1")
+	reqPub1.Header.Set("Authorization", "Bearer user1-token")
+	resPub1 := httpparser.NewResponse()
+	r.ServeHTTP(reqPub1, resPub1)
+	if resPub1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("expected MISS on first public request")
+	}
+
+	reqPub2, _ := httpparser.NewRequest("GET", "/api/public/data", "HTTP/1.1")
+	reqPub2.Header.Set("Authorization", "Bearer user1-token")
+	resPub2 := httpparser.NewResponse()
+	r.ServeHTTP(reqPub2, resPub2)
+	if resPub2.Header.Get("X-Cache") != "HIT" {
+		t.Fatalf("expected HIT on second public request")
+	}
+	if calls := atomic.LoadInt64(&publicCalls); calls != 1 {
+		t.Fatalf("expected public endpoint to be cached once, got %d calls", calls)
+	}
+}
+
+func TestCache_VaryHeader(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 10 * time.Second
+	r.Use(NewCacheMiddleware(cfg))
+
+	var customVaryCalls int64
+	r.GET("/api/vary-custom", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&customVaryCalls, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Vary", "User-Agent, Cookie")
+		_, _ = res.WriteString("custom vary content")
+	})
+
+	// Request with unhandled Vary dimensions must NOT be cached
+	req1, _ := httpparser.NewRequest("GET", "/api/vary-custom", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	req2, _ := httpparser.NewRequest("GET", "/api/vary-custom", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if calls := atomic.LoadInt64(&customVaryCalls); calls != 2 {
+		t.Fatalf("expected responses with unsupported Vary dimensions not to be cached, got %d calls", calls)
+	}
+}

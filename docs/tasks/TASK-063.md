@@ -2,7 +2,7 @@
 id: TASK-063
 type: task
 title: Enforce Shared Cache Isolation by Stripping Set-Cookie and Enforcing Authorization Boundaries
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-063
 implements:
   - REQ-063
-verified_by: []
+verified_by:
+  - TC-063
 decided_by:
   - ADR-058
 related_to:

@@ -35,6 +35,7 @@ type CachedResponse struct {
 	Body       []byte
 	CachedAt   time.Time
 	ExpiresAt  time.Time
+	Public     bool
 }
 
 // IsExpired checks if the cached response has exceeded its time-to-live.
@@ -178,32 +179,45 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 			clientPragma := strings.ToLower(req.Header.Get("Pragma"))
 			clientBypass := clientCC.NoCache || clientCC.NoStore || (clientCC.MaxAge != nil && *clientCC.MaxAge == 0) || strings.Contains(clientPragma, "no-cache")
 
+			hasAuth := req.Header.Get("Authorization") != ""
+
 			uri := req.RequestURI
 			if uri == "" {
 				uri = req.Path
 			}
 			cacheKey := req.Method + ":" + extractHost(req) + ":" + uri
+			if ae := req.Header.Get("Accept-Encoding"); ae != "" {
+				cacheKey += ":ae=" + ae
+			}
 			now := time.Now()
 
 			if !clientBypass {
 				if cached, hit := cache.Get(cacheKey, now); hit {
-					res.SetStatus(cached.StatusCode)
-					for k, vals := range cached.Header {
-						for _, v := range vals {
-							res.Header.Set(k, v)
+					// RFC 7234 §3.2: Requests with Authorization header cannot be satisfied
+					// from shared cache unless the cached response is explicitly public.
+					if !hasAuth || cached.Public {
+						res.SetStatus(cached.StatusCode)
+						for k, vals := range cached.Header {
+							for _, v := range vals {
+								res.Header.Set(k, v)
+							}
 						}
-					}
-					res.Header.Set("X-Cache", "HIT")
-					ageSec := int(now.Sub(cached.CachedAt).Seconds())
-					if ageSec < 0 {
-						ageSec = 0
-					}
-					res.Header.Set("Age", strconv.Itoa(ageSec))
+						// Ensure Set-Cookie is never emitted from shared cache
+						res.Header.Del("Set-Cookie")
+						res.Header.Del("Set-Cookie2")
 
-					res.Body.Reset()
-					_, _ = res.Body.Write(cached.Body)
-					res.Header.Set("Content-Length", strconv.Itoa(res.Body.Len()))
-					return
+						res.Header.Set("X-Cache", "HIT")
+						ageSec := int(now.Sub(cached.CachedAt).Seconds())
+						if ageSec < 0 {
+							ageSec = 0
+						}
+						res.Header.Set("Age", strconv.Itoa(ageSec))
+
+						res.Body.Reset()
+						_, _ = res.Body.Write(cached.Body)
+						res.Header.Set("Content-Length", strconv.Itoa(res.Body.Len()))
+						return
+					}
 				}
 			}
 
@@ -233,6 +247,25 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 				return
 			}
 
+			// RFC 7234 §3.2: Shared cache must not store response to request with Authorization
+			// unless explicitly marked public.
+			if hasAuth && !resCC.Public {
+				return
+			}
+
+			// Evaluate Vary header: if Vary is * or contains dimensions other than Accept-Encoding, bypass caching
+			if vary := res.Header.Get("Vary"); vary != "" {
+				if strings.TrimSpace(vary) == "*" {
+					return
+				}
+				for _, part := range strings.Split(vary, ",") {
+					item := strings.TrimSpace(strings.ToLower(part))
+					if item != "" && item != "accept-encoding" {
+						return
+					}
+				}
+			}
+
 			// Determine expiration duration
 			ttl := cfg.DefaultTTL
 			if resCC.MaxAge != nil {
@@ -243,10 +276,12 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 				return
 			}
 
-			// Clone headers for cached snapshot
+			// Clone headers for cached snapshot, explicitly stripping Set-Cookie, Set-Cookie2, Age, X-Cache, Connection
 			clonedHeader := make(httpparser.Header)
 			for k, vals := range res.Header {
-				if strings.EqualFold(k, "X-Cache") || strings.EqualFold(k, "Age") {
+				if strings.EqualFold(k, "X-Cache") || strings.EqualFold(k, "Age") ||
+					strings.EqualFold(k, "Set-Cookie") || strings.EqualFold(k, "Set-Cookie2") ||
+					strings.EqualFold(k, "Connection") {
 					continue
 				}
 				clonedVals := make([]string, len(vals))
@@ -263,6 +298,7 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 				Body:       bodySnapshot,
 				CachedAt:   now,
 				ExpiresAt:  now.Add(ttl),
+				Public:     resCC.Public,
 			})
 		}
 	}

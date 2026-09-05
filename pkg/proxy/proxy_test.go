@@ -1,6 +1,7 @@
 package proxy_test
 
 import (
+	"crypto/x509"
 	"fmt"
 	"io"
 	"net"
@@ -726,5 +727,116 @@ func TestReverseProxy_QueryParametersMergeWithTarget(t *testing.T) {
 		t.Errorf("expected merged query %q, got %q", expectedQuery, capturedQuery)
 	}
 }
+
+func TestWebSocketProxy_TLSVerification(t *testing.T) {
+	// Setup TLS server that upgrades to WebSocket
+	tlsServer := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.ToLower(r.Header.Get("Upgrade")) == "websocket" {
+			hj, ok := w.(http.Hijacker)
+			if !ok {
+				http.Error(w, "hijack unsupported", 500)
+				return
+			}
+			conn, bufrw, err := hj.Hijack()
+			if err != nil {
+				http.Error(w, err.Error(), 500)
+				return
+			}
+			defer conn.Close()
+
+			upgradeResp := "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+			_, _ = bufrw.WriteString(upgradeResp)
+			_ = bufrw.Flush()
+
+			buf := make([]byte, 1024)
+			n, _ := bufrw.Read(buf)
+			if n > 0 {
+				_, _ = bufrw.Write(buf[:n])
+				_ = bufrw.Flush()
+			}
+		}
+	}))
+	defer tlsServer.Close()
+
+	t.Run("Self-signed certificate is rejected with 502 Bad Gateway by default", func(t *testing.T) {
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{tlsServer.URL},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+
+		req, _ := httpparser.NewRequest("GET", "/ws", "HTTP/1.1")
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-WebSocket-Key", "testkey")
+
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusBadGateway {
+			t.Fatalf("SECURITY VIOLATION: Expected 502 Bad Gateway due to untrusted self-signed cert, got %d", res.StatusCode)
+		}
+		if res.UpgradedConn != nil {
+			t.Fatalf("expected UpgradedConn to be nil on TLS verification failure")
+		}
+	})
+
+	t.Run("Custom CA certificate pool succeeds handshake", func(t *testing.T) {
+		caPool := x509.NewCertPool()
+		caPool.AddCert(tlsServer.Certificate())
+
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets:       []string{tlsServer.URL},
+			TLSCACertPool: caPool,
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+
+		req, _ := httpparser.NewRequest("GET", "/ws", "HTTP/1.1")
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-WebSocket-Key", "testkey")
+
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusSwitchingProtocols {
+			t.Fatalf("expected 101 Switching Protocols with trusted CA, got %d", res.StatusCode)
+		}
+		if res.UpgradedConn == nil {
+			t.Fatalf("expected non-nil UpgradedConn")
+		}
+		res.UpgradedConn.Close()
+	})
+
+	t.Run("InsecureSkipVerify true succeeds handshake", func(t *testing.T) {
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets:            []string{tlsServer.URL},
+			InsecureSkipVerify: true,
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+
+		req, _ := httpparser.NewRequest("GET", "/ws", "HTTP/1.1")
+		req.Header.Set("Connection", "Upgrade")
+		req.Header.Set("Upgrade", "websocket")
+		req.Header.Set("Sec-WebSocket-Key", "testkey")
+
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusSwitchingProtocols {
+			t.Fatalf("expected 101 Switching Protocols with InsecureSkipVerify: true, got %d", res.StatusCode)
+		}
+		if res.UpgradedConn == nil {
+			t.Fatalf("expected non-nil UpgradedConn")
+		}
+		res.UpgradedConn.Close()
+	})
+}
+
 
 

@@ -278,6 +278,7 @@ type ProxyRouteConfig struct {
 	RewriteCookiePath   *bool                 `yaml:"rewrite_cookie_path,omitempty" json:"rewrite_cookie_path,omitempty"`
 	Auth                AuthConfig            `yaml:"auth" json:"auth"`
 	TLS                 RouteTLSConfig        `yaml:"tls" json:"tls"`
+	InsecureSkipVerify  bool                  `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
 	CORS                CORSConfig            `yaml:"cors" json:"cors"`
 	SecurityHeaders     SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
 	WAF                 waf.WAFConfig         `yaml:"waf" json:"waf"`

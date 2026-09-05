@@ -468,6 +468,13 @@ func main() {
 					RedirectHTTP:        pr.GetRedirectHTTP(),
 					AccessLog:           pr.AccessLog,
 					SecurityLog:         pr.SecurityLog,
+					TLS: proxy.ProxyTLSConfig{
+						CAFile:             pr.TLS.CAFile,
+						CertFile:           pr.TLS.CertFile,
+						KeyFile:            pr.TLS.KeyFile,
+						InsecureSkipVerify: pr.InsecureSkipVerify,
+					},
+					InsecureSkipVerify: pr.InsecureSkipVerify,
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)

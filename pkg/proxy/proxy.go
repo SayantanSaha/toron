@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -11,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -408,14 +410,24 @@ func NewLoadBalancerWithOptions(algo Algorithm, targets []*UpstreamTarget, cooki
 	}
 }
 
+// ProxyTLSConfig captures TLS configuration for upstream reverse proxy connections.
+type ProxyTLSConfig struct {
+	CAFile             string
+	CertFile           string
+	KeyFile            string
+	InsecureSkipVerify bool
+}
+
 // ReverseProxy handles proxying HTTP requests to upstream target URL(s).
 type ReverseProxy struct {
-	TargetURL         *url.URL     // Single primary target (for backward compatibility)
-	Balancer          LoadBalancer // Load balancer interface for target selection
-	Client            *http.Client
-	StripPrefix       bool
-	RewriteRedirects  bool
-	RewriteCookiePath bool
+	TargetURL          *url.URL     // Single primary target (for backward compatibility)
+	Balancer           LoadBalancer // Load balancer interface for target selection
+	Client             *http.Client
+	StripPrefix        bool
+	RewriteRedirects   bool
+	RewriteCookiePath  bool
+	InsecureSkipVerify bool
+	TLSCACertPool      *x509.CertPool
 }
 
 // NewReverseProxy creates a ReverseProxy instance for a single target URL string.
@@ -446,6 +458,9 @@ type ProxyOptions struct {
 	RedirectHTTP        *bool
 	AccessLog           string
 	SecurityLog         string
+	TLS                 ProxyTLSConfig
+	InsecureSkipVerify  bool
+	TLSCACertPool       *x509.CertPool
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.
@@ -467,8 +482,42 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		opts.Timeout = 10 * time.Second
 	}
 
+	var caPool *x509.CertPool
+	if opts.TLSCACertPool != nil {
+		caPool = opts.TLSCACertPool
+	} else if opts.TLS.CAFile != "" {
+		caData, err := os.ReadFile(opts.TLS.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("proxy: failed to read CAFile %q: %w", opts.TLS.CAFile, err)
+		}
+		caPool = x509.NewCertPool()
+		if !caPool.AppendCertsFromPEM(caData) {
+			return nil, fmt.Errorf("proxy: failed to parse CA certificates from %q", opts.TLS.CAFile)
+		}
+	}
+
+	insecureSkipVerify := opts.InsecureSkipVerify || opts.TLS.InsecureSkipVerify
+
+	tr := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   opts.Timeout,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+		TLSClientConfig: &tls.Config{
+			InsecureSkipVerify: insecureSkipVerify,
+			RootCAs:            caPool,
+		},
+	}
+
 	client := &http.Client{
-		Timeout: opts.Timeout,
+		Timeout:   opts.Timeout,
+		Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -507,12 +556,14 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 	}
 
 	return &ReverseProxy{
-		TargetURL:         upstreamTargets[0].URL,
-		Balancer:          lb,
-		Client:            client,
-		StripPrefix:       stripPrefix,
-		RewriteRedirects:  rewriteRedirects,
-		RewriteCookiePath: rewriteCookiePath,
+		TargetURL:          upstreamTargets[0].URL,
+		Balancer:           lb,
+		Client:             client,
+		StripPrefix:        stripPrefix,
+		RewriteRedirects:   rewriteRedirects,
+		RewriteCookiePath:  rewriteCookiePath,
+		InsecureSkipVerify: insecureSkipVerify,
+		TLSCACertPool:      caPool,
 	}, nil
 }
 
@@ -775,7 +826,23 @@ func (p *ReverseProxy) serveWebSocketProxy(req *httpparser.Request, res *httppar
 	var upstreamConn net.Conn
 	var dialErr error
 	if outURL.Scheme == "https" || outURL.Scheme == "wss" {
-		upstreamConn, dialErr = tls.Dial("tcp", host, &tls.Config{InsecureSkipVerify: true})
+		serverName := outURL.Hostname()
+		tlsConfig := &tls.Config{
+			ServerName:         serverName,
+			InsecureSkipVerify: p.InsecureSkipVerify,
+			RootCAs:            p.TLSCACertPool,
+		}
+		timeout := p.Client.Timeout
+		if timeout <= 0 {
+			timeout = 10 * time.Second
+		}
+		dialer := &tls.Dialer{
+			NetDialer: &net.Dialer{
+				Timeout: timeout,
+			},
+			Config: tlsConfig,
+		}
+		upstreamConn, dialErr = dialer.Dial("tcp", host)
 	} else {
 		timeout := p.Client.Timeout
 		if timeout <= 0 {

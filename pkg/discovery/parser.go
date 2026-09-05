@@ -37,6 +37,15 @@ func ParseContainerLabels(container Container, defaultWeight int) (*DiscoveredRo
 		prefix = "/" + prefix
 	}
 
+	// Security (TASK-079): Disallow unhosted root ("" or "/") and reserved administrative prefixes
+	if (prefix == "" || prefix == "/") && host == "" {
+		return nil, false
+	}
+	if prefix == "/internal" || strings.HasPrefix(prefix, "/internal/") ||
+		prefix == "/api/status" || strings.HasPrefix(prefix, "/api/status/") {
+		return nil, false
+	}
+
 	targetPort := 0
 	if portStr := strings.TrimSpace(container.Labels[LabelPort]); portStr != "" {
 		if p, err := strconv.Atoi(portStr); err == nil && p > 0 {

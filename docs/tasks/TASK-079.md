@@ -2,7 +2,7 @@
 id: TASK-079
 type: task
 title: Implement Prefix and Protected Path Validation in Container Auto-Discovery
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,8 +13,10 @@ derived_from:
   - REQ-079
 implements:
   - REQ-079
-verified_by: []
-decided_by: []
+verified_by:
+  - TC-079
+decided_by:
+  - ADR-074
 related_to: []
 ---
 

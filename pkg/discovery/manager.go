@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -206,6 +207,11 @@ func (m *Manager) periodicPollWorker(ctx context.Context) {
 func (m *Manager) handleContainerStart(c Container) {
 	route, ok := ParseContainerLabels(c, m.cfg.DefaultWeight)
 	if !ok {
+		enableVal := strings.ToLower(strings.TrimSpace(c.Labels[LabelEnable]))
+		if enableVal == "true" || enableVal == "1" || enableVal == "yes" {
+			log.Printf("[DISCOVERY] WARNING: OCI container %s route rejected by prefix/security policy (Host: %q, Prefix: %q)",
+				c.ID, c.Labels[LabelHost], c.Labels[LabelPrefix])
+		}
 		return
 	}
 

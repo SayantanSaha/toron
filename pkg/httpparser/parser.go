@@ -91,6 +91,9 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 		}
 
 		k := lineTrimmed[:colonIdx]
+		if k == "" || strings.ContainsAny(k, " \t\r\n") {
+			return nil, fmt.Errorf("%w: whitespace in header field-name", ErrBadRequest)
+		}
 		v := strings.TrimSpace(lineTrimmed[colonIdx+1:])
 		req.Header.Add(k, v)
 	}

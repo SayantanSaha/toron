@@ -209,3 +209,60 @@ func TestRequest_QueryLazy(t *testing.T) {
 	}
 }
 
+func TestParseRequest_HeaderFieldNameWhitespaceRejection(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+
+	tests := []struct {
+		name        string
+		rawReq      string
+		expectError bool
+	}{
+		{
+			name:        "TC-073-01: Transfer-Encoding Space Before Colon",
+			rawReq:      "GET / HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding : chunked\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "TC-073-02: Header Tab Before Colon",
+			rawReq:      "GET / HTTP/1.1\r\nHost\t: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Leading Space Before Header Name",
+			rawReq:      "GET / HTTP/1.1\r\n Host: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Empty Header Name",
+			rawReq:      "GET / HTTP/1.1\r\n: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "TC-073-03: Valid Header Whitespace Handling",
+			rawReq:      "GET / HTTP/1.1\r\nHost: example.com\r\nX-Custom:  value with spaces  \r\n\r\n",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := httpparser.ParseRequest(bytes.NewBufferString(tt.rawReq), opts)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error for %s, but got none", tt.name)
+				}
+				if !errors.Is(err, httpparser.ErrBadRequest) {
+					t.Fatalf("expected error wrapping ErrBadRequest, got %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error for %s: %v", err, tt.name)
+				}
+				if req.Header.Get("X-Custom") != "value with spaces" {
+					t.Errorf("expected trimmed value 'value with spaces', got %q", req.Header.Get("X-Custom"))
+				}
+			}
+		})
+	}
+}
+

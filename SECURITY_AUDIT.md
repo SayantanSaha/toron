@@ -1,9 +1,9 @@
 # 🛡️ Toron Web Server & Edge Gateway: Security Audit Report (`toron_v3`)
 
 **Role**: Security Analyst / Security Researcher (AGENT-007)  
-**Date**: September 5, 2026 (Updated)  
-**Audited Commit**: `bf9d7b7` (`v1.5.0` + TASK-058, TASK-059, TASK-060)  
-**Reference Document**: [`docs/securityReview/SR-054.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-054.md)
+**Date**: September 5, 2026 (Post-Remediation Full Audit)  
+**Audited Commit**: `a4bada8` (`master` post-`TASK-061` through `TASK-072`)  
+**Reference Document**: [`docs/securityReview/SR-070.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-070.md) (Historical: [`docs/securityReview/SR-054.md`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-054.md))
 
 ---
 
@@ -24,14 +24,23 @@ Each identified security vulnerability has been broken down into an atomic funct
 | **P1** | **SEC-03** | Shared Cache Session Leakage (`Set-Cookie` & Auth Caching) | **High** | CWE-524, CWE-539 | **Resolved** | [`TASK-063`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-063.md) | `TC-063`, `SR-060`, `CR-059` | `45ade09` |
 | **P1** | **SEC-04** | Denial of Service (OOM) via Unbounded Rate-Limiter Map | **High** | CWE-400, CWE-770 | **Resolved** | [`TASK-064`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-064.md) | `TC-064`, `SR-061`, `CR-060` | `69a0ed3` |
 | **P1** | **SEC-05** | Upstream TLS Verification Disabled in WebSocket Proxy | **High** | CWE-295 | **Resolved** | [`TASK-065`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-065.md) | `TC-065`, `SR-062`, `CR-061` | `37c8878` |
-| **P2** | **SEC-06** | **NEW**: CRLF Log Injection & Log Forgery in Access Logger | **Medium** | CWE-117 | **Resolved** | [`TASK-066`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-066.md) | `TC-066`, `SR-063`, `CR-062` | `20aa0bd` |
-| **P2** | **SEC-07** | **NEW**: Upstream Path Traversal via Uncleaned Route Path | **Medium** | CWE-22 | **Resolved** | [`TASK-067`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-067.md) | `TC-067`, `SR-064`, `CR-063` | `f4d6652` |
+| **P2** | **SEC-06** | CRLF Log Injection & Log Forgery in Access Logger | **Medium** | CWE-117 | **Resolved** | [`TASK-066`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-066.md) | `TC-066`, `SR-063`, `CR-062` | `20aa0bd` |
+| **P2** | **SEC-07** | Upstream Path Traversal via Uncleaned Route Path | **Medium** | CWE-22 | **Resolved** | [`TASK-067`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-067.md) | `TC-067`, `SR-064`, `CR-063` | `f4d6652` |
 | **P2** | **SEC-08** | Unbounded Allocation Panic in gRPC Frame Decoder | **Medium** | CWE-789 | **Resolved** | [`TASK-068`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-068.md) | `TC-068`, `SR-065`, `CR-064` | `ac5baf5` |
 | **P2** | **SEC-09** | Permissive CORS Wildcard Reflection with Credentials | **Medium** | CWE-942 | **Resolved** | [`TASK-069`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-069.md) | `TC-069`, `SR-066`, `CR-065` | `b3bb02d` |
 | **P2** | **SEC-10** | Open Redirect via Unvalidated Host Header in HTTPS Upgrade | **Medium** | CWE-601 | **Resolved** | [`TASK-070`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-070.md) | `TC-070`, `SR-067`, `CR-066` | `f7eafe2` |
 | **P2** | **SEC-11** | Client IP & Protocol Header Spoofing in Reverse Proxy | **Medium** | CWE-345 | **Resolved** | [`TASK-071`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-071.md) | `TC-071`, `SR-068`, `CR-067` | `ff95b29` |
-| **P3** | **SEC-12** | **NEW**: HTTP Parameter Pollution (HPP) in Query Forwarding | **Low** | CWE-235 | **Resolved** | [`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md) | `TC-072`, `SR-069`, `CR-068` | `ee4d29d` |
-| *Deferred* | **SEC-13** | Stored DOM-based XSS via Security Audit Log View | **Critical** | CWE-79 | *Deferred* | *UI Remediation Deferred* | *Deferred* | — |
+| **P3** | **SEC-12** | HTTP Parameter Pollution (HPP) in Query Forwarding | **Low** | CWE-235 | **Resolved** | [`TASK-072`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-072.md) | `TC-072`, `SR-069`, `CR-068` | `ee4d29d` |
+| **P0** | **SEC-13** | Stored DOM-based XSS via Security Audit Log View | **Critical** | CWE-79 | **Open** | Pending Task | — | — |
+| **P0** | **SEC-14** | HTTP Request Smuggling via Header Field-Name Trailing Whitespace | **Critical** | CWE-444 | **Open** | Pending Task | — | — |
+| **P0** | **SEC-15** | HTTP Request Smuggling (CL.CL Desync) via Multiple Content-Length | **Critical** | CWE-444 | **Open** | Pending Task | — | — |
+| **P1** | **SEC-16** | Denial of Service (OOM) via Unbounded Request Body in HTTP/2 Adapter | **High** | CWE-400, CWE-770 | **Open** | Pending Task | — | — |
+| **P1** | **SEC-17** | Connection Starvation & DoS via Reactor Worker Pool Monopolization | **High** | CWE-400 | **Open** | Pending Task | — | — |
+| **P1** | **SEC-18** | Global Authentication & WAF Bypass via Root / Empty Path Exclusions | **High** | CWE-287, CWE-693 | **Open** | Pending Task | — | — |
+| **P2** | **SEC-19** | Ingress Route Hijacking via Unrestricted Container Discovery Labels | **Medium** | CWE-284 | **Open** | Pending Task | — | — |
+| **P2** | **SEC-20** | WAF Path Traversal Bypass via Uppercase Percent-Encoding (`TRAVERSAL-001`) | **Medium** | CWE-693, CWE-22 | **Open** | Pending Task | — | — |
+| **P2** | **SEC-21** | Request Body Dropping in Sidecar Proxy Engine | **Medium** | CWE-436 | **Open** | Pending Task | — | — |
+| **P3** | **SEC-22** | Missing Expiration (`exp`) Claim Enforcement in JWT Verification | **Low** | CWE-613 | **Open** | Pending Task | — | — |
 
 ---
 
@@ -234,13 +243,97 @@ Each identified security vulnerability has been broken down into an atomic funct
 
 ---
 
-### Deferred Finding
+### Priority 5: Post-Remediation Newly Identified Findings (SR-070)
+
+#### SEC-14: HTTP Request Smuggling via Header Field-Name Trailing Whitespace (RFC 7230 §3.2.4)
+- **Severity**: **Critical** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N - Score 9.1)
+- **Location**: [`pkg/httpparser/parser.go:L88-L104`](file:///Users/sneha/Developer/toron/pkg/httpparser/parser.go#L88-L104)
+- **CWE**: CWE-444
+- **Root Cause**:  
+  `httpparser.ParseRequest` splits header lines on the first colon without rejecting trailing whitespace preceding the colon. If a client transmits `Transfer-Encoding : chunked` or `Transfer-Encoding\t: chunked`, the parsed header key contains trailing whitespace (`"Transfer-Encoding "`). Because `http.Header` lookups do not strip whitespace, `req.Header.Get("Transfer-Encoding")` returns empty, bypassing the Transfer-Encoding protocol check. Downstream services or proxies that strip whitespace will interpret the chunked payload, resulting in HTTP request smuggling.
+- **Impact**: Request smuggling, cache poisoning, and security filter bypass.
+- **Remediation**: Reject any header with `HTTP 400 Bad Request` if whitespace precedes the colon per RFC 7230 §3.2.4 (`strings.ContainsAny(k, " \t\r\n")`).
+
+#### SEC-15: HTTP Request Smuggling (CL.CL Desync) via Multiple / Duplicate Content-Length Headers
+- **Severity**: **Critical** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N - Score 9.1)
+- **Location**: [`pkg/httpparser/parser.go:L107-L123`](file:///Users/sneha/Developer/toron/pkg/httpparser/parser.go#L107-L123)
+- **CWE**: CWE-444
+- **Root Cause**:  
+  When multiple `Content-Length` headers are supplied (e.g. `Content-Length: 0\r\nContent-Length: 45\r\n`), `req.Header.Get("Content-Length")` returns only the first value. Toron reads 0 bytes and leaves the unconsumed 45 bytes on the persistent keep-alive connection (`pkg/server/server.go:L182-L250`), where it is parsed as the next incoming request line.
+- **Impact**: Request desync, cross-tenant request hijacking, credential theft.
+- **Remediation**: Enforce RFC 7230 §3.3.2 by verifying that multiple `Content-Length` headers are rejected with `HTTP 400 Bad Request` unless all values are identical.
+
+#### SEC-16: Denial of Service (OOM) via Unbounded Request Body Ingestion in `http2AdapterHandler`
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H - Score 7.5)
+- **Location**: [`pkg/server/server.go:L308-L313`](file:///Users/sneha/Developer/toron/pkg/server/server.go#L308-L313)
+- **CWE**: CWE-400, CWE-770
+- **Root Cause**:  
+  In `http2AdapterHandler()`, the server reads incoming request bodies via `io.ReadAll(r.Body)` without enforcing `s.config.MaxBodyBytes`. An attacker transmitting an oversized payload over HTTP/2 can force unbounded memory allocation, triggering kernel Out-Of-Memory (OOM) termination.
+- **Impact**: Server crash / Denial of Service.
+- **Remediation**: Wrap `r.Body` with `io.LimitReader` or `http.MaxBytesReader` bounded by `MaxBodyBytes`, rejecting oversized payloads with `HTTP 413 Payload Too Large`.
+
+#### SEC-17: Connection Starvation & Denial of Service via Reactor Worker Pool Monopolization
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H - Score 7.5)
+- **Location**: [`pkg/reactor/reactor.go:L128-L176`](file:///Users/sneha/Developer/toron/pkg/reactor/reactor.go#L128-L176), [`pkg/server/server.go:L182-L301`](file:///Users/sneha/Developer/toron/pkg/server/server.go#L182-L301)
+- **CWE**: CWE-400
+- **Root Cause**:  
+  The reactor allocates a fixed worker pool (`WorkerPoolSize`, default 128). Each worker synchronously runs `srv.handleConn`, looping over keep-alive requests for up to `IdleTimeout` (default 30s). When 128 clients idle concurrently, all workers block. Once the `tasks` channel (capacity 512) fills, `ln.Accept()` freezes, refusing all new TCP connections.
+- **Impact**: Complete gateway denial of service under minimal connection load.
+- **Remediation**: Process idle keep-alive states asynchronously or allocate goroutines per connection.
+
+#### SEC-18: Global Authentication & WAF Bypass via Root / Empty Path Exclusions
+- **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N - Score 8.6)
+- **Location**: [`pkg/router/auth.go:L314-L320`](file:///Users/sneha/Developer/toron/pkg/router/auth.go#L314-L320), [`pkg/waf/middleware.go:L29-L35`](file:///Users/sneha/Developer/toron/pkg/waf/middleware.go#L29-L35)
+- **CWE**: CWE-287, CWE-693
+- **Root Cause**:  
+  Path exclusion logic evaluates `strings.HasPrefix(req.Path, strings.TrimSuffix(p, "/")+"/")`. If `cfg.Excluded` contains `""` or `"/"`, the expression evaluates to `"/"`, matching 100% of valid paths and completely disabling authentication and WAF protection globally.
+- **Impact**: Total authentication and threat protection bypass.
+- **Remediation**: Discard empty exclusions and require exact matching for root path (`p == "/"`).
+
+#### SEC-19: Ingress Route Hijacking via Unrestricted Container Discovery Labels
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:L - Score 6.0)
+- **Location**: [`pkg/discovery/parser.go:L33-L40`](file:///Users/sneha/Developer/toron/pkg/discovery/parser.go#L33-L40), [`pkg/discovery/manager.go:L206-L233`](file:///Users/sneha/Developer/toron/pkg/discovery/manager.go#L206-L233)
+- **CWE**: CWE-284
+- **Root Cause**:  
+  Any container with `toron.enable=true` on the local container engine can specify `toron.prefix: "/"` or shadow sensitive routes (`/api`, `/admin`). `m.router.RoutePrefix` registers the route and overrides existing router policies.
+- **Impact**: Unauthorized traffic interception and endpoint shadowing.
+- **Remediation**: Enforce container namespace restrictions and disallow registration of root (`/`) or administrative paths.
+
+#### SEC-20: WAF Path Traversal Bypass via Uppercase Percent-Encoding in `TRAVERSAL-001`
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N - Score 5.3)
+- **Location**: [`pkg/waf/rules.go:L61-L67`](file:///Users/sneha/Developer/toron/pkg/waf/rules.go#L61-L67)
+- **CWE**: CWE-693, CWE-22
+- **Root Cause**:  
+  Rule `TRAVERSAL-001` lacks the case-insensitivity flag `(?i)`. Payloads containing uppercase percent-encoded sequences (`%2E%2E/`, `%2E%2e/`, `%2e%2E%2F`) in request headers and JSON bodies evade regex matching.
+- **Impact**: WAF detection bypass for directory traversal attacks.
+- **Remediation**: Add `(?i)` flag and expand pattern to cover uppercase and backslash hex encodings.
+
+#### SEC-21: Request Body Dropping in Sidecar Proxy Engine
+- **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:L - Score 5.3)
+- **Location**: [`pkg/sidecar/proxy.go:L199-L202`](file:///Users/sneha/Developer/toron/pkg/sidecar/proxy.go#L199-L202), [`pkg/httpparser/request.go:L141`](file:///Users/sneha/Developer/toron/pkg/httpparser/request.go#L141)
+- **CWE**: CWE-436
+- **Root Cause**:  
+  `httpparser.NewRequestFromStd(r)` instantiates `Body: bytes.NewReader(nil)`. In `pkg/sidecar/proxy.go`, incoming requests are adapted without preserving `r.Body`. Consequently, all POST, PUT, and PATCH bodies passing through the sidecar proxy are discarded.
+- **Impact**: Data loss and API failure on mutating requests.
+- **Remediation**: Populate `toronReq.Body` from `r.Body` prior to forwarding.
+
+#### SEC-22: Missing Expiration (`exp`) Claim Enforcement in JWT Verification
+- **Severity**: **Low** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N - Score 4.3)
+- **Location**: [`pkg/router/auth.go:L171-L185`](file:///Users/sneha/Developer/toron/pkg/router/auth.go#L171-L185)
+- **CWE**: CWE-613
+- **Root Cause**:  
+  `VerifyJWT` only validates the `exp` claim if present. Tokens without an `exp` claim remain valid indefinitely, exposing the system to permanent session replay risks.
+- **Impact**: Permanent credential validity for leaked tokens.
+- **Remediation**: Require `exp` claim by default or provide a configuration flag `require_exp: true`.
 
 #### SEC-13: Stored DOM-based Cross-Site Scripting (DOM XSS) via Security Incident Audit Log
 - **Severity**: **Critical** (CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:N - Score 9.3)
 - **Location**: [`public/app.js:L421-L431`](file:///Users/sneha/Developer/toron/public/app.js#L421-L431)
-- **Status**: **Deferred** (Excluded from active remediation priority per operational direction)
-- **Summary**: `fetchIncidentLogs()` renders unescaped incident fields (`inc.path`, `inc.client_ip`, `inc.rule_id`) directly into DOM nodes via `innerHTML`.
+- **CWE**: CWE-79
+- **Root Cause**:  
+  `fetchIncidentLogs()` renders unescaped incident fields (`inc.path`, `inc.client_ip`) directly into `tbody.innerHTML`. A malicious URI triggering a WAF rule is logged and executed as JavaScript in the administrator's browser upon viewing the dashboard.
+- **Impact**: Administrative account takeover, session hijacking.
+- **Remediation**: Replace `innerHTML` string interpolation with `textContent` or strict HTML escaping.
 
 ---
 

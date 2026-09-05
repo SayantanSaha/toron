@@ -6,6 +6,7 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -432,8 +433,27 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string, opts proxy.Prox
 	}
 }
 
+// cleanRequestPath canonicalizes an incoming URL path, resolving dot segments (. and ..)
+// and redundant slashes according to RFC 3986 / ADR-062, while preserving trailing slashes.
+func cleanRequestPath(p string) string {
+	if p == "" {
+		return "/"
+	}
+	clean := path.Clean(p)
+	if !strings.HasPrefix(clean, "/") {
+		clean = "/" + clean
+	}
+	if strings.HasSuffix(p, "/") && clean != "/" && !strings.HasSuffix(clean, "/") {
+		clean += "/"
+	}
+	return clean
+}
+
 // ServeHTTP dispatches the request to registered handlers through the middleware chain.
 func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
+	if req != nil {
+		req.Path = cleanRequestPath(req.Path)
+	}
 	r.mu.RLock()
 	var targetHandler HandlerFunc
 
@@ -513,10 +533,11 @@ func (r *Router) ShouldRedirectHTTP(req *httpparser.Request) bool {
 	defer r.mu.RUnlock()
 
 	reqHost := extractHost(req)
+	reqPath := cleanRequestPath(req.Path)
 
 	for i := range r.prefixRoutes {
 		pr := &r.prefixRoutes[i]
-		if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
+		if pr.prefix == "" || strings.HasPrefix(reqPath, pr.prefix+"/") || reqPath == pr.prefix {
 			if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
 				if pr.redirectHTTP != nil && !*pr.redirectHTTP {
 					return false
@@ -563,9 +584,10 @@ func (r *Router) MatchPrefixRoute(req *httpparser.Request) (prefix string, acces
 	defer r.mu.RUnlock()
 
 	reqHost := extractHost(req)
+	reqPath := cleanRequestPath(req.Path)
 	for i := range r.prefixRoutes {
 		pr := &r.prefixRoutes[i]
-		if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
+		if pr.prefix == "" || strings.HasPrefix(reqPath, pr.prefix+"/") || reqPath == pr.prefix {
 			if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
 				return pr.prefix, pr.accessLog, pr.securityLog, true
 			}

@@ -2,7 +2,7 @@
 id: TASK-067
 type: task
 title: Implement Upstream Path Canonicalization and Route Traversal Guards
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-067
 implements:
   - REQ-067
-verified_by: []
+verified_by:
+  - TC-067
 decided_by:
   - ADR-062
 related_to:

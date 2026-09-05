@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -767,19 +768,31 @@ func singleJoiningSlash(a, b string) string {
 }
 
 // JoinProxyPath resolves the upstream destination path by joining targetPath with reqPath,
-// taking prefix stripping and target subpath preservation into account.
+// taking prefix stripping and target subpath preservation into account, while
+// enforcing path canonicalization and directory traversal guards (ADR-062).
 func JoinProxyPath(targetPath, reqPath, prefix string, stripPrefix bool) string {
 	if !stripPrefix || prefix == "" {
-		if targetPath == "" || targetPath == "/" {
-			if reqPath == "" {
-				return "/"
-			}
-			if !strings.HasPrefix(reqPath, "/") {
-				return "/" + reqPath
-			}
-			return reqPath
+		cleanReq := path.Clean(reqPath)
+		if !strings.HasPrefix(cleanReq, "/") {
+			cleanReq = "/" + cleanReq
 		}
-		return singleJoiningSlash(targetPath, reqPath)
+		if targetPath == "" || targetPath == "/" {
+			if strings.HasSuffix(reqPath, "/") && cleanReq != "/" && !strings.HasSuffix(cleanReq, "/") {
+				cleanReq += "/"
+			}
+			return cleanReq
+		}
+
+		cleanTarget := path.Clean(targetPath)
+		joined := singleJoiningSlash(cleanTarget, cleanReq)
+		cleanJoined := path.Clean(joined)
+		if !strings.HasPrefix(cleanJoined, cleanTarget) {
+			cleanJoined = singleJoiningSlash(cleanTarget, strings.TrimPrefix(cleanJoined, "/"))
+		}
+		if (strings.HasSuffix(reqPath, "/") || strings.HasSuffix(targetPath, "/")) && !strings.HasSuffix(cleanJoined, "/") {
+			cleanJoined += "/"
+		}
+		return cleanJoined
 	}
 
 	trimmed := strings.TrimPrefix(reqPath, prefix)
@@ -797,20 +810,41 @@ func JoinProxyPath(targetPath, reqPath, prefix string, stripPrefix bool) string 
 			}
 			return targetPath + "/"
 		}
-		if !strings.HasPrefix(trimmed, "/") {
-			trimmed = "/" + trimmed
+
+		cleanTrimmed := path.Clean("/" + strings.TrimPrefix(trimmed, "/"))
+		if cleanTrimmed == "/" {
+			if strings.HasSuffix(reqPath, "/") || strings.HasSuffix(targetPath, "/") {
+				if !strings.HasSuffix(targetPath, "/") {
+					return targetPath + "/"
+				}
+			}
+			return targetPath
 		}
-		return singleJoiningSlash(targetPath, trimmed)
+
+		cleanTarget := path.Clean(targetPath)
+		joined := singleJoiningSlash(cleanTarget, cleanTrimmed)
+		cleanJoined := path.Clean(joined)
+		if !strings.HasPrefix(cleanJoined, cleanTarget) {
+			cleanJoined = singleJoiningSlash(cleanTarget, strings.TrimPrefix(cleanJoined, "/"))
+		}
+		if strings.HasSuffix(reqPath, "/") && !strings.HasSuffix(cleanJoined, "/") {
+			cleanJoined += "/"
+		}
+		return cleanJoined
 	}
 
 	// Target has no subpath (e.g. targetPath is "" or "/")
 	if trimmed == "" || trimmed == "/" {
 		return "/"
 	}
-	if !strings.HasPrefix(trimmed, "/") {
-		trimmed = "/" + trimmed
+	cleanTrimmed := path.Clean("/" + strings.TrimPrefix(trimmed, "/"))
+	if cleanTrimmed == "/" {
+		return "/"
 	}
-	return trimmed
+	if strings.HasSuffix(reqPath, "/") && !strings.HasSuffix(cleanTrimmed, "/") {
+		cleanTrimmed += "/"
+	}
+	return cleanTrimmed
 }
 
 func (p *ReverseProxy) serveWebSocketProxy(req *httpparser.Request, res *httpparser.Response, targetNode *UpstreamTarget, outURL url.URL, prefix string) {

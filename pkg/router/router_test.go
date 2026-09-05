@@ -721,3 +721,57 @@ func TestRouter_AccessLoggerMiddleware_RouteOverrides(t *testing.T) {
 		t.Errorf("custom access log missing /custom/index.html: %s", string(customContent))
 	}
 }
+
+func TestRouter_PathCanonicalizationAndTraversalGuards(t *testing.T) {
+	r := router.New()
+
+	publicCalled := false
+	internalCalled := false
+	rootCalled := false
+
+	r.GET("/public", func(req *httpparser.Request, res *httpparser.Response) {
+		publicCalled = true
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("public")
+	})
+
+	r.GET("/internal", func(req *httpparser.Request, res *httpparser.Response) {
+		internalCalled = true
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("internal")
+	})
+
+	r.GET("/", func(req *httpparser.Request, res *httpparser.Response) {
+		rootCalled = true
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("root")
+	})
+
+	// Test 1: Dot segment traversal (/public/../internal -> /internal) must NOT match /public
+	req1, _ := httpparser.NewRequest("GET", "/public/../internal", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if publicCalled {
+		t.Errorf("expected /public handler NOT to be called for /public/../internal")
+	}
+	if !internalCalled {
+		t.Errorf("expected /internal handler to be called for /public/../internal, got status %d", res1.StatusCode)
+	}
+
+	// Test 2: Redundant slashes (//internal -> /internal)
+	internalCalled = false
+	req2, _ := httpparser.NewRequest("GET", "//internal", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if !internalCalled {
+		t.Errorf("expected /internal handler to be called for //internal, got status %d", res2.StatusCode)
+	}
+
+	// Test 3: Traversal above root (/.. or /../../ -> /)
+	req3, _ := httpparser.NewRequest("GET", "/../../", "HTTP/1.1")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+	if !rootCalled {
+		t.Errorf("expected / handler to be called for /../../, got status %d", res3.StatusCode)
+	}
+}

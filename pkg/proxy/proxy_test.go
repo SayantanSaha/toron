@@ -597,6 +597,39 @@ func TestJoinProxyPath_TableDriven(t *testing.T) {
 			stripPrefix: false,
 			expected:    "/api/v1/users",
 		},
+		// Traversal containment tests (ADR-062 / TASK-067)
+		{
+			name:        "traversal guard prevents escaping subpath target with stripPrefix",
+			targetPath:  "/subpath",
+			reqPath:     "/api/../admin",
+			prefix:      "/api",
+			stripPrefix: true,
+			expected:    "/subpath/admin",
+		},
+		{
+			name:        "traversal guard prevents escaping subpath target without stripPrefix",
+			targetPath:  "/v1",
+			reqPath:     "/v1/../../etc/passwd",
+			prefix:      "/v1",
+			stripPrefix: false,
+			expected:    "/v1/etc/passwd",
+		},
+		{
+			name:        "traversal above root on non-subpath target normalizes safely",
+			targetPath:  "",
+			reqPath:     "/api/../../../root",
+			prefix:      "/api",
+			stripPrefix: true,
+			expected:    "/root",
+		},
+		{
+			name:        "traversal with trailing slash preserved",
+			targetPath:  "/api",
+			reqPath:     "/v1/../users/",
+			prefix:      "/v1",
+			stripPrefix: true,
+			expected:    "/api/users/",
+		},
 	}
 
 	for _, tc := range tests {

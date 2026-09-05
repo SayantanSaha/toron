@@ -647,6 +647,80 @@ func isPeerTrusted(remoteAddr net.Addr, trusted []*net.IPNet) (string, bool) {
 	return host, false
 }
 
+// mergeTargetAndClientQuery merges pre-configured target URL query parameters with
+// client-supplied query parameters, ensuring target parameters strictly take precedence
+// and cannot be polluted or overridden by client parameters (HTTP Parameter Pollution guard, REQ-072).
+func mergeTargetAndClientQuery(targetRawQuery, clientQuery string) string {
+	if targetRawQuery == "" {
+		return clientQuery
+	}
+	if clientQuery == "" {
+		return targetRawQuery
+	}
+
+	targetKeys := make(map[string]struct{})
+	if parsedTarget, err := url.ParseQuery(targetRawQuery); err == nil {
+		for k := range parsedTarget {
+			targetKeys[k] = struct{}{}
+		}
+	} else {
+		for _, part := range strings.Split(targetRawQuery, "&") {
+			if part == "" {
+				continue
+			}
+			rawKey := part
+			if idx := strings.Index(part, "="); idx != -1 {
+				rawKey = part[:idx]
+			}
+			if unescaped, err := url.QueryUnescape(rawKey); err == nil {
+				targetKeys[unescaped] = struct{}{}
+			} else {
+				targetKeys[rawKey] = struct{}{}
+			}
+		}
+	}
+
+	var filteredClientParts []string
+	for _, part := range strings.Split(clientQuery, "&") {
+		if part == "" {
+			continue
+		}
+
+		collides := false
+		for _, subpart := range strings.Split(part, ";") {
+			rawKey := subpart
+			if idx := strings.Index(subpart, "="); idx != -1 {
+				rawKey = subpart[:idx]
+			}
+			unescapedKey, err := url.QueryUnescape(rawKey)
+			if err != nil {
+				unescapedKey = rawKey
+			}
+
+			if _, exists := targetKeys[unescapedKey]; exists {
+				collides = true
+				break
+			}
+			if _, exists := targetKeys[rawKey]; exists {
+				collides = true
+				break
+			}
+		}
+
+		if collides {
+			continue
+		}
+
+		filteredClientParts = append(filteredClientParts, part)
+	}
+
+	if len(filteredClientParts) == 0 {
+		return targetRawQuery
+	}
+
+	return targetRawQuery + "&" + strings.Join(filteredClientParts, "&")
+}
+
 // ServeHTTP translates a Toron Request, proxies it to the upstream server, and writes the upstream response to Res.
 func (p *ReverseProxy) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	p.ServeHTTPWithPrefix(req, res, "")
@@ -695,15 +769,7 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		clientQuery = req.Query().Encode()
 	}
 
-	if targetURL.RawQuery != "" {
-		if clientQuery != "" {
-			outURL.RawQuery = targetURL.RawQuery + "&" + clientQuery
-		} else {
-			outURL.RawQuery = targetURL.RawQuery
-		}
-	} else {
-		outURL.RawQuery = clientQuery
-	}
+	outURL.RawQuery = mergeTargetAndClientQuery(targetURL.RawQuery, clientQuery)
 
 	if req.IsWebSocketUpgrade() {
 		p.serveWebSocketProxy(req, res, targetNode, outURL, prefix)

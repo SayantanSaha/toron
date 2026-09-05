@@ -1010,5 +1010,86 @@ func TestReverseProxy_ConnectionIntegrityAndTrustedProxies(t *testing.T) {
 	})
 }
 
+func TestReverseProxy_HTTPParameterPollutionMitigation(t *testing.T) {
+	var capturedQuery string
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedQuery = r.URL.RawQuery
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstreamServer.Close()
+
+	// Upstream target configured with gateway policy constraints: role=guest&env=production
+	targetWithQuery := upstreamServer.URL + "/api?role=guest&env=production"
+	opts := proxy.ProxyOptions{
+		Targets: []string{targetWithQuery},
+	}
+	px, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	t.Run("Colliding parameter stripped and non-colliding preserved", func(t *testing.T) {
+		// Client attempts to escalate privileges by overriding role=admin
+		httpReq, _ := http.NewRequest("GET", "https://example.com/api?role=admin&user=alice&action=view", nil)
+		req := httpparser.NewRequestFromStd(httpReq)
+		res := httpparser.NewResponse()
+		px.ServeHTTPWithPrefix(req, res, "/api")
+
+		// Expect role=guest (from target) & env=production (from target) & user=alice & action=view (from client)
+		// role=admin MUST NOT appear in upstream query!
+		expected := "role=guest&env=production&user=alice&action=view"
+		if capturedQuery != expected {
+			t.Errorf("expected query %q, got %q", expected, capturedQuery)
+		}
+	})
+
+	t.Run("Duplicate colliding parameter injection stripped", func(t *testing.T) {
+		// Client attempts multiple parameter pollution
+		httpReq, _ := http.NewRequest("GET", "https://example.com/api?role=admin&role=root&env=dev", nil)
+		req := httpparser.NewRequestFromStd(httpReq)
+		res := httpparser.NewResponse()
+		px.ServeHTTPWithPrefix(req, res, "/api")
+
+		// All colliding keys stripped; only target query remains
+		expected := "role=guest&env=production"
+		if capturedQuery != expected {
+			t.Errorf("expected query %q, got %q", expected, capturedQuery)
+		}
+	})
+
+	t.Run("Semicolon delimited parameter pollution stripped", func(t *testing.T) {
+		// Client attempts delimiter injection via semicolon
+		httpReq, _ := http.NewRequest("GET", "https://example.com/api?user=alice&other=1;role=admin", nil)
+		req := httpparser.NewRequestFromStd(httpReq)
+		res := httpparser.NewResponse()
+		px.ServeHTTPWithPrefix(req, res, "/api")
+
+		expected := "role=guest&env=production&user=alice"
+		if capturedQuery != expected {
+			t.Errorf("expected query %q, got %q", expected, capturedQuery)
+		}
+	})
+
+	t.Run("Empty target parameters preserves client query verbatim", func(t *testing.T) {
+		optsNoQuery := proxy.ProxyOptions{
+			Targets: []string{upstreamServer.URL + "/plain"},
+		}
+		pxPlain, err := proxy.NewProxyWithOptions(optsNoQuery)
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+
+		httpReq, _ := http.NewRequest("GET", "https://example.com/plain?q=hello+world&debug", nil)
+		req := httpparser.NewRequestFromStd(httpReq)
+		res := httpparser.NewResponse()
+		pxPlain.ServeHTTPWithPrefix(req, res, "/plain")
+
+		expected := "q=hello+world&debug"
+		if capturedQuery != expected {
+			t.Errorf("expected query %q, got %q", expected, capturedQuery)
+		}
+	})
+}
+
 
 

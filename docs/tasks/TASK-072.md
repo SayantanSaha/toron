@@ -2,7 +2,7 @@
 id: TASK-072
 type: task
 title: Implement HTTP Parameter Pollution (HPP) Mitigation in Target Query Merging
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-072
 implements:
   - REQ-072
-verified_by: []
+verified_by:
+  - TC-072
 decided_by:
   - ADR-067
 related_to:

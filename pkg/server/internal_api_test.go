@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -131,6 +132,9 @@ func TestInternalAPIRoutes(t *testing.T) {
 			`{"path":"http://evil.com/ssrf","method":"GET"}`,
 			`{"path":"//evil.com/ssrf","method":"GET"}`,
 			`{"path":"https://169.254.169.254/latest/meta-data","method":"GET"}`,
+			`{"path":"/secret-admin-area","method":"GET"}`,
+			`{"path":"/internal/api/status","method":"GET"}`,
+			`{"path":"/health","method":"DELETE"}`,
 		}
 
 		for _, body := range ssrfPayloads {
@@ -144,7 +148,30 @@ func TestInternalAPIRoutes(t *testing.T) {
 			r.ServeHTTP(req, res)
 
 			if res.StatusCode != http.StatusBadRequest {
-				t.Errorf("expected 400 Bad Request for SSRF payload %s, got %d", body, res.StatusCode)
+				t.Errorf("expected 400 Bad Request for disallowed payload %s, got %d", body, res.StatusCode)
+			}
+		}
+	})
+
+	t.Run("POST /internal/api/proxy-test Rejects Sensitive Headers", func(t *testing.T) {
+		disallowedHeaderPayloads := []string{
+			`{"path":"/health","method":"GET","headers":{"X-Authenticated-User":"root"}}`,
+			`{"path":"/health","method":"GET","headers":{"X-Admin":"true"}}`,
+			`{"path":"/health","method":"GET","headers":{"x-user":"admin"}}`,
+		}
+
+		for _, body := range disallowedHeaderPayloads {
+			req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+			req.Body = bytes.NewBufferString(body)
+
+			res := httpparser.NewResponse()
+			r.ServeHTTP(req, res)
+
+			if res.StatusCode != http.StatusBadRequest {
+				t.Errorf("expected 400 Bad Request when attempting to inject sensitive header %s, got %d", body, res.StatusCode)
 			}
 		}
 	})
@@ -169,6 +196,146 @@ func TestInternalAPIRoutes(t *testing.T) {
 
 		if _, ok := payload["incidents"]; !ok {
 			t.Error("expected incidents key in payload")
+		}
+	})
+}
+
+type mockAddr struct {
+	addr string
+}
+
+func (m *mockAddr) Network() string { return "tcp" }
+func (m *mockAddr) String() string  { return m.addr }
+
+type mockConn struct {
+	net.Conn
+	remoteAddr net.Addr
+}
+
+func (m *mockConn) RemoteAddr() net.Addr { return m.remoteAddr }
+
+func TestInternalAPI_Authentication(t *testing.T) {
+	cfg := InternalAPIConfig{
+		Port:             8080,
+		AdminAuthEnabled: true,
+		AdminToken:       "super-admin-secret-999",
+		AdminAPIKeys:     []string{"secondary-key-456"},
+		AdminUsername:    "admin",
+		AdminPassword:    "secure-pass-789",
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	t.Run("Unauthenticated request returns 401", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/status", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", res.StatusCode)
+		}
+		if res.Header.Get("WWW-Authenticate") == "" {
+			t.Error("expected WWW-Authenticate header in 401 response")
+		}
+	})
+
+	t.Run("Invalid token returns 401", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/status", "HTTP/1.1")
+		req.Header.Set("X-Toron-Admin-Key", "wrong-secret")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("expected 401 Unauthorized, got %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Valid token via X-Toron-Admin-Key returns 200", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/status", "HTTP/1.1")
+		req.Header.Set("X-Toron-Admin-Key", "super-admin-secret-999")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Valid token via Authorization Bearer returns 200", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/metrics", "HTTP/1.1")
+		req.Header.Set("Authorization", "Bearer super-admin-secret-999")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Valid secondary key via Bearer returns 200", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/routes", "HTTP/1.1")
+		req.Header.Set("Authorization", "Bearer secondary-key-456")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Valid Basic Auth returns 200", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/status", "HTTP/1.1")
+		// base64("admin:secure-pass-789") -> "YWRtaW46c2VjdXJlLXBhc3MtNzg5"
+		req.Header.Set("Authorization", "Basic YWRtaW46c2VjdXJlLXBhc3MtNzg5")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+	})
+}
+
+func TestInternalAPI_SubnetRestriction(t *testing.T) {
+	cfg := InternalAPIConfig{
+		Port:         8080,
+		AdminSubnets: []string{"127.0.0.1/32", "10.0.0.0/16"},
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	t.Run("Disallowed source IP returns 403 Forbidden", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/status", "HTTP/1.1")
+		req.RawConn = &mockConn{remoteAddr: &mockAddr{addr: "198.51.100.25:52341"}}
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusForbidden {
+			t.Fatalf("expected 403 Forbidden for IP outside subnet, got %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Allowed localhost IP returns 200 OK", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/status", "HTTP/1.1")
+		req.RawConn = &mockConn{remoteAddr: &mockAddr{addr: "127.0.0.1:49152"}}
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK for allowed localhost IP, got %d", res.StatusCode)
+		}
+	})
+
+	t.Run("Allowed private LAN subnet IP returns 200 OK", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/api/status", "HTTP/1.1")
+		req.RawConn = &mockConn{remoteAddr: &mockAddr{addr: "10.0.4.12:51234"}}
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK for allowed 10.0.0.0/16 IP, got %d", res.StatusCode)
 		}
 	})
 }

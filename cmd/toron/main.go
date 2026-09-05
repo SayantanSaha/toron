@@ -299,6 +299,23 @@ func main() {
 			return res
 		},
 		AuditLogger: auditLogger,
+		AdminAuthEnabled: appCfg.Server.AdminAuth.Enabled ||
+			os.Getenv("TORON_ADMIN_KEY") != "" ||
+			appCfg.Server.AdminAuth.Token != "" ||
+			len(appCfg.Server.AdminAuth.APIKeys) > 0 ||
+			appCfg.Server.AdminAuth.Username != "" ||
+			len(appCfg.Server.AdminAuth.Users) > 0,
+		AdminToken: func() string {
+			if envToken := os.Getenv("TORON_ADMIN_KEY"); envToken != "" {
+				return envToken
+			}
+			return appCfg.Server.AdminAuth.Token
+		}(),
+		AdminAPIKeys:  appCfg.Server.AdminAuth.APIKeys,
+		AdminUsername: appCfg.Server.AdminAuth.Username,
+		AdminPassword: appCfg.Server.AdminAuth.Password,
+		AdminUsers:    appCfg.Server.AdminAuth.Users,
+		AdminSubnets:  appCfg.Server.AdminSubnets,
 	}
 	server.RegisterInternalAPIRoutes(r, internalCfg)
 

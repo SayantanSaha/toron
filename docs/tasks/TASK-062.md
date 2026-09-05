@@ -2,7 +2,7 @@
 id: TASK-062
 type: task
 title: Implement Authentication Middleware and Subnet Restrictions on Internal Management APIs
-status: draft
+status: approved
 version: 1.0
 project: PROJECT-001
 owner: development-lead
@@ -13,7 +13,8 @@ derived_from:
   - REQ-062
 implements:
   - REQ-062
-verified_by: []
+verified_by:
+  - TC-062
 decided_by:
   - ADR-057
 related_to:

@@ -1,11 +1,15 @@
 package server
 
 import (
+	"crypto/subtle"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -53,6 +57,14 @@ type InternalAPIConfig struct {
 	DiscoveryEnabled       bool               `json:"discovery_enabled"`
 	DiscoveryFunc          func() []RouteInfo `json:"-"`
 	AuditLogger            *waf.AuditLogger   `json:"-"`
+	AdminAuthEnabled       bool               `json:"admin_auth_enabled"`
+	AdminToken             string             `json:"admin_token"`
+	AdminAPIKeys           []string           `json:"admin_api_keys"`
+	AdminUsername          string             `json:"admin_username"`
+	AdminPassword          string             `json:"admin_password"`
+	AdminUsers             map[string]string  `json:"admin_users"`
+	AdminSubnets           []string           `json:"admin_subnets"`
+	AllowedProxyTestPaths  []string           `json:"allowed_proxy_test_paths"`
 }
 
 // UpstreamNodeHealth describes the health state of an individual upstream service node.
@@ -83,6 +95,64 @@ type ProxyTestResponse struct {
 	Body       string            `json:"body"`
 }
 
+// validateAdminAuth verifies administrative credentials against configured token, API keys, or basic auth.
+func validateAdminAuth(req *httpparser.Request, cfg InternalAPIConfig) bool {
+	// 1. Check X-Toron-Admin-Key header
+	if key := req.Header.Get("X-Toron-Admin-Key"); key != "" {
+		if cfg.AdminToken != "" && subtle.ConstantTimeCompare([]byte(key), []byte(cfg.AdminToken)) == 1 {
+			return true
+		}
+		for _, k := range cfg.AdminAPIKeys {
+			if subtle.ConstantTimeCompare([]byte(key), []byte(k)) == 1 {
+				return true
+			}
+		}
+	}
+
+	// 2. Check Authorization header
+	authHeader := req.Header.Get("Authorization")
+	if authHeader != "" {
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) == 2 {
+			scheme := strings.ToLower(parts[0])
+			cred := strings.TrimSpace(parts[1])
+
+			if scheme == "bearer" {
+				if cfg.AdminToken != "" && subtle.ConstantTimeCompare([]byte(cred), []byte(cfg.AdminToken)) == 1 {
+					return true
+				}
+				for _, k := range cfg.AdminAPIKeys {
+					if subtle.ConstantTimeCompare([]byte(cred), []byte(k)) == 1 {
+						return true
+					}
+				}
+			} else if scheme == "basic" {
+				decoded, err := base64.StdEncoding.DecodeString(cred)
+				if err == nil {
+					userPass := strings.SplitN(string(decoded), ":", 2)
+					if len(userPass) == 2 {
+						u, p := userPass[0], userPass[1]
+						if cfg.AdminUsername != "" &&
+							subtle.ConstantTimeCompare([]byte(u), []byte(cfg.AdminUsername)) == 1 &&
+							subtle.ConstantTimeCompare([]byte(p), []byte(cfg.AdminPassword)) == 1 {
+							return true
+						}
+						if cfg.AdminUsers != nil {
+							if expectedPass, exists := cfg.AdminUsers[u]; exists {
+								if subtle.ConstantTimeCompare([]byte(p), []byte(expectedPass)) == 1 {
+									return true
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return false
+}
+
 // RegisterInternalAPIRoutes registers /internal/api/ management routes on the router.
 func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	if cfg.Port == 0 {
@@ -90,6 +160,89 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	}
 	if cfg.WorkerPoolSize == 0 {
 		cfg.WorkerPoolSize = 128
+	}
+
+	// Parse configured administrative subnets
+	var parsedSubnets []*net.IPNet
+	for _, s := range cfg.AdminSubnets {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if !strings.Contains(s, "/") {
+			if ip := net.ParseIP(s); ip != nil {
+				if ip.To4() != nil {
+					s = s + "/32"
+				} else {
+					s = s + "/128"
+				}
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(s)
+		if err == nil && ipNet != nil {
+			parsedSubnets = append(parsedSubnets, ipNet)
+		}
+	}
+
+	authRequired := cfg.AdminAuthEnabled || cfg.AdminToken != "" || len(cfg.AdminAPIKeys) > 0 || cfg.AdminUsername != "" || len(cfg.AdminUsers) > 0
+
+	// Security middleware guard wrapping all internal API routes
+	wrapHandler := func(h router.HandlerFunc) router.HandlerFunc {
+		return func(req *httpparser.Request, res *httpparser.Response) {
+			// Subnet check
+			if len(parsedSubnets) > 0 {
+				var clientIP net.IP
+				if req.RawConn != nil {
+					if remoteAddr := req.RawConn.RemoteAddr(); remoteAddr != nil {
+						host, _, err := net.SplitHostPort(remoteAddr.String())
+						if err == nil {
+							clientIP = net.ParseIP(host)
+						} else {
+							clientIP = net.ParseIP(remoteAddr.String())
+						}
+					}
+				}
+				if clientIP == nil && req.Header != nil {
+					if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+						parts := strings.Split(xff, ",")
+						raw := strings.TrimSpace(parts[0])
+						if host, _, err := net.SplitHostPort(raw); err == nil {
+							clientIP = net.ParseIP(host)
+						} else {
+							clientIP = net.ParseIP(raw)
+						}
+					}
+				}
+				allowed := false
+				if clientIP != nil {
+					for _, subnet := range parsedSubnets {
+						if subnet.Contains(clientIP) {
+							allowed = true
+							break
+						}
+					}
+				}
+				if !allowed {
+					res.SetStatus(http.StatusForbidden)
+					res.Header.Set("Content-Type", "application/json")
+					_, _ = res.WriteString(`{"error":"403 Forbidden","message":"Access denied by administrative subnet policy"}`)
+					return
+				}
+			}
+
+			// Auth check
+			if authRequired {
+				if !validateAdminAuth(req, cfg) {
+					res.SetStatus(http.StatusUnauthorized)
+					res.Header.Set("Content-Type", "application/json")
+					res.Header.Set("WWW-Authenticate", `Bearer realm="Toron Management", Basic realm="Toron Management"`)
+					_, _ = res.WriteString(`{"error":"401 Unauthorized","message":"Authentication required for internal management API"}`)
+					return
+				}
+			}
+
+			h(req, res)
+		}
 	}
 
 	// Helper to get aggregated routes (static/proxy config + dynamic OCI discovery)
@@ -124,7 +277,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	}
 
 	// 1. GET /internal/api/status
-	r.GET("/internal/api/status", func(req *httpparser.Request, res *httpparser.Response) {
+	r.GET("/internal/api/status", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 		wafAllowed := cfg.WAFAllowedIPs
 		if wafAllowed == nil {
@@ -172,17 +325,17 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		}
 		data, _ := json.Marshal(payload)
 		_, _ = res.Write(data)
-	})
+	}))
 
 	// 1b. GET /internal/api/metrics
-	r.GET("/internal/api/metrics", func(req *httpparser.Request, res *httpparser.Response) {
+	r.GET("/internal/api/metrics", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 		data, _ := json.Marshal(metrics.DefaultRegistry.GetSummaryJSON())
 		_, _ = res.Write(data)
-	})
+	}))
 
 	// 2. GET /internal/api/routes
-	r.GET("/internal/api/routes", func(req *httpparser.Request, res *httpparser.Response) {
+	r.GET("/internal/api/routes", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 
 		routesList := getAggregatedRoutes()
@@ -198,10 +351,10 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		}
 		data, _ := json.Marshal(payload)
 		_, _ = res.Write(data)
-	})
+	}))
 
 	// 3. GET /internal/api/upstreams/health
-	r.GET("/internal/api/upstreams/health", func(req *httpparser.Request, res *httpparser.Response) {
+	r.GET("/internal/api/upstreams/health", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 
 		type targetEntry struct {
@@ -331,10 +484,10 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		}
 		data, _ := json.Marshal(payload)
 		_, _ = res.Write(data)
-	})
+	}))
 
 	// 4. POST /internal/api/proxy-test
-	r.POST("/internal/api/proxy-test", func(req *httpparser.Request, res *httpparser.Response) {
+	r.POST("/internal/api/proxy-test", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 
 		bodyBytes, err := io.ReadAll(req.Body)
@@ -358,6 +511,14 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			testReq.Method = "GET"
 		}
 
+		// Security: Constrain methods to safe diagnostic methods
+		methodUpper := strings.ToUpper(testReq.Method)
+		if methodUpper != "GET" && methodUpper != "HEAD" && methodUpper != "POST" {
+			res.SetStatus(http.StatusBadRequest)
+			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Method not allowed for proxy test probe"}`)
+			return
+		}
+
 		// Security: Prevent SSRF & Authority Overrides
 		parsedPath, err := url.Parse(testReq.Path)
 		if err != nil || parsedPath.Scheme != "" || parsedPath.Host != "" || parsedPath.User != nil {
@@ -366,10 +527,53 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			return
 		}
 
-		cleanPath := parsedPath.Path
+		cleanPath := path.Clean(parsedPath.Path)
 		if !strings.HasPrefix(cleanPath, "/") {
 			cleanPath = "/" + cleanPath
 		}
+
+		// Strictly forbid internal management routes
+		if strings.HasPrefix(cleanPath, "/internal") {
+			res.SetStatus(http.StatusBadRequest)
+			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Access to internal management routes via proxy-test is forbidden"}`)
+			return
+		}
+
+		// Whitelist check: only allow safe diagnostic endpoints and configured non-internal routes
+		allowedPaths := map[string]bool{
+			"/health":     true,
+			"/api/status": true,
+		}
+		for _, p := range cfg.AllowedProxyTestPaths {
+			allowedPaths[p] = true
+		}
+		for _, r := range cfg.Routes {
+			if r.Prefix != "" && !strings.HasPrefix(r.Prefix, "/internal") {
+				allowedPaths[r.Prefix] = true
+			}
+		}
+
+		if !allowedPaths[cleanPath] {
+			res.SetStatus(http.StatusBadRequest)
+			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Target path is not in the allowed diagnostic whitelist"}`)
+			return
+		}
+
+		// Security: Reject sensitive identity header injections
+		disallowedHeaders := map[string]bool{
+			"x-authenticated-user": true,
+			"x-admin":              true,
+			"x-user":               true,
+			"x-remote-user":        true,
+		}
+		for k := range testReq.Headers {
+			if disallowedHeaders[strings.ToLower(k)] {
+				res.SetStatus(http.StatusBadRequest)
+				_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Disallowed sensitive header in proxy test request"}`)
+				return
+			}
+		}
+
 		if parsedPath.RawQuery != "" {
 			cleanPath += "?" + parsedPath.RawQuery
 		}
@@ -377,15 +581,25 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		serverPort := cfg.Port
 		targetURL := fmt.Sprintf("http://127.0.0.1:%d%s", serverPort, cleanPath)
 
-		httpReq, err := http.NewRequest(strings.ToUpper(testReq.Method), targetURL, nil)
+		httpReq, err := http.NewRequest(methodUpper, targetURL, nil)
 		if err != nil {
 			res.SetStatus(http.StatusInternalServerError)
 			_, _ = res.WriteString(fmt.Sprintf(`{"error":"500 Internal Error","message":%q}`, err.Error()))
 			return
 		}
 
+		// Strip forwarded and hop-by-hop identity headers
+		stripHeaders := map[string]bool{
+			"x-forwarded-for":   true,
+			"x-forwarded-host":  true,
+			"x-forwarded-proto": true,
+			"authorization":     true,
+			"cookie":            true,
+		}
 		for k, v := range testReq.Headers {
-			httpReq.Header.Set(k, v)
+			if !stripHeaders[strings.ToLower(k)] {
+				httpReq.Header.Set(k, v)
+			}
 		}
 
 		client := &http.Client{Timeout: 5 * time.Second}
@@ -425,10 +639,10 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 
 		data, _ := json.Marshal(resOut)
 		_, _ = res.Write(data)
-	})
+	}))
 
 	// 5. GET /internal/api/security/incidents
-	r.GET("/internal/api/security/incidents", func(req *httpparser.Request, res *httpparser.Response) {
+	r.GET("/internal/api/security/incidents", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 		events := []waf.SecurityEvent{}
 		if cfg.AuditLogger != nil {
@@ -444,5 +658,5 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		}
 		data, _ := json.Marshal(payload)
 		_, _ = res.Write(data)
-	})
+	}))
 }

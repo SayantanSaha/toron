@@ -160,6 +160,16 @@ type BasicAuthConfig struct {
 	Realm string            `yaml:"realm" json:"realm"`
 }
 
+// AdminAuthConfig captures administrative API authentication settings.
+type AdminAuthConfig struct {
+	Enabled  bool              `yaml:"enabled" json:"enabled"`
+	Token    string            `yaml:"token" json:"token"`
+	APIKeys  []string          `yaml:"api_keys" json:"api_keys"`
+	Username string            `yaml:"username" json:"username"`
+	Password string            `yaml:"password" json:"password"`
+	Users    map[string]string `yaml:"users" json:"users"`
+}
+
 // AuthConfig captures multi-scheme authentication settings.
 type AuthConfig struct {
 	Type     string          `yaml:"type" json:"type"`
@@ -218,6 +228,8 @@ type ServerConfig struct {
 	CORS            CORSConfig            `yaml:"cors" json:"cors"`
 	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
 	WAF             waf.WAFConfig         `yaml:"waf" json:"waf"`
+	AdminAuth       AdminAuthConfig       `yaml:"admin_auth" json:"admin_auth"`
+	AdminSubnets    []string              `yaml:"admin_subnets" json:"admin_subnets"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -504,6 +516,10 @@ func DefaultAppConfig() *AppConfig {
 				ReferrerPolicy:     "strict-origin-when-cross-origin",
 			},
 			WAF: waf.DefaultConfig(),
+			AdminAuth: AdminAuthConfig{
+				Enabled: false,
+			},
+			AdminSubnets: []string{"127.0.0.1/32", "::1/128"},
 		},
 		Static: StaticConfig{
 			Enabled: false,

@@ -3,8 +3,10 @@ package sidecar
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -118,3 +120,81 @@ func TestSidecarProxyEngine(t *testing.T) {
 		t.Errorf("StatusCode = %d, want 200", resp.StatusCode)
 	}
 }
+
+func TestSidecarProxyEngine_BodyForwarding(t *testing.T) {
+	var receivedBody string
+	var receivedMethod string
+
+	// Mock upstream server capturing received body
+	appServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedMethod = r.Method
+		b, _ := io.ReadAll(r.Body)
+		receivedBody = string(b)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer appServer.Close()
+
+	var appPort int
+	_, _ = fmt.Sscanf(appServer.URL, "http://127.0.0.1:%d", &appPort)
+	if appPort == 0 {
+		appPort = 8080
+	}
+
+	cfg := config.SidecarConfig{
+		Enabled:     true,
+		Mode:        "ingress",
+		IngressPort: 15998,
+		AppPort:     appPort,
+	}
+
+	r := router.New()
+	engine, err := NewProxyEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewProxyEngine failed: %v", err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := engine.Start(ctx); err != nil {
+		t.Fatalf("engine.Start() failed: %v", err)
+	}
+	defer engine.Stop()
+
+	// TC-081-01: JSON POST Body Forwarding
+	postPayload := `{"account":"123","amount":500}`
+	resp, err := http.Post("http://127.0.0.1:15998/api/data", "application/json", strings.NewReader(postPayload))
+	if err != nil {
+		t.Fatalf("POST request failed: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", resp.StatusCode)
+	}
+	if receivedMethod != "POST" {
+		t.Errorf("expected method POST, got %q", receivedMethod)
+	}
+	if receivedBody != postPayload {
+		t.Errorf("TC-081-01: expected body %q, got %q", postPayload, receivedBody)
+	}
+
+	// TC-081-02: Empty GET Request Body Handling
+	respGet, err := http.Get("http://127.0.0.1:15998/api/data")
+	if err != nil {
+		t.Fatalf("GET request failed: %v", err)
+	}
+	_ = respGet.Body.Close()
+
+	if respGet.StatusCode != http.StatusOK {
+		t.Errorf("expected 200 OK, got %d", respGet.StatusCode)
+	}
+	if receivedMethod != "GET" {
+		t.Errorf("expected method GET, got %q", receivedMethod)
+	}
+	if receivedBody != "" {
+		t.Errorf("TC-081-02: expected empty body on GET, got %q", receivedBody)
+	}
+}
+

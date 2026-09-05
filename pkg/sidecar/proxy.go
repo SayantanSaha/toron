@@ -1,9 +1,11 @@
 package sidecar
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -197,6 +199,15 @@ func (p *ProxyEngine) proxyToURL(w http.ResponseWriter, r *http.Request, targetU
 
 	// Adapt stdlib http.Request to Toron Request
 	toronReq := httpparser.NewRequestFromStd(r)
+	if r.Body != nil && r.Method != "GET" && r.Method != "HEAD" {
+		defer r.Body.Close()
+		const maxSidecarBody = 10 * 1024 * 1024 // 10 MB limit
+		bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxSidecarBody+1))
+		if err == nil {
+			toronReq.Body = bytes.NewReader(bodyBytes)
+			toronReq.ContentLength = int64(len(bodyBytes))
+		}
+	}
 	toronRes := httpparser.NewResponse()
 
 	px.ServeHTTP(toronReq, toronRes)

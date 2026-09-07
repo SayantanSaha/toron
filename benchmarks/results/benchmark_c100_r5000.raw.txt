@@ -1,0 +1,31 @@
+================================================================================
+   TORON HIGH-PRECISION LOAD GENERATOR & LATENCY PROFILER (wrk2-compatible)    
+================================================================================
+ Target URL:   http://127.0.0.1:8080/health
+ Concurrency:  100 connections
+ Duration:     5s
+ Target Rate:  5000 req/sec
+ Running benchmark warmup and execution...
+--------------------------------------------------------------------------------
+ Benchmark Completed in:  5.00 seconds
+ Total Requests Executed: 24923
+ Successful Responses:    24923
+ Failed / Errored Reqs:   0
+ Requests / sec (RPS):    4984.48
+ Transfer Throughput:     0.07 MB/s
+--------------------------------------------------------------------------------
+ Latency Distribution (ms):
+   Min:        0.07 ms
+   Mean:       0.10 ms
+   50%:        0.09 ms (p50 median)
+   75%:        0.10 ms (p75)
+   90%:        0.12 ms (p90)
+   95%:        0.12 ms (p95)
+   99%:        0.21 ms (p99 tail)
+   99.9%:      1.50 ms (p99.9 tail)
+   Max:        5.07 ms
+ HTTP Status Codes:
+   [200]: 24923 requests
+================================================================================
+ [Artifact Saved] JSON result -> /Users/sneha/Developer/toron/benchmarks/results/benchmark_c100_r5000.json
+ [Artifact Saved] CSV result  -> /Users/sneha/Developer/toron/benchmarks/results/benchmark_c100_r5000.csv

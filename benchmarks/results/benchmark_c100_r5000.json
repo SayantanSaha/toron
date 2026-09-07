@@ -1,0 +1,26 @@
+{
+  "target_url": "http://127.0.0.1:8080/health",
+  "concurrency": 100,
+  "duration_seconds": 5.0001245,
+  "target_rate_rps": 5000,
+  "total_requests": 24923,
+  "success_requests": 24923,
+  "failed_requests": 0,
+  "actual_rps": 4984.475886550425,
+  "bytes_read": 373845,
+  "throughput_mb_s": 0.0713034995062412,
+  "latencies_ms": {
+    "min": 0.068,
+    "mean": 0.09691746579464279,
+    "p50": 0.088,
+    "p75": 0.099,
+    "p90": 0.115,
+    "p95": 0.125,
+    "p99": 0.211,
+    "p999": 1.496,
+    "max": 5.069
+  },
+  "status_codes": {
+    "200": 24923
+  }
+}

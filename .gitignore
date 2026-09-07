@@ -7,3 +7,4 @@ certs/
 dummy
 .vscode/
 .idea/
+logs/

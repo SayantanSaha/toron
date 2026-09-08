@@ -163,6 +163,9 @@ func validateConfigDefaults(cfg *AppConfig) {
 	if cfg.Server.MaxBodyBytes <= 0 {
 		cfg.Server.MaxBodyBytes = 4 * 1024 * 1024
 	}
+	if cfg.Sidecar.MaxBodyBytes <= 0 {
+		cfg.Sidecar.MaxBodyBytes = 10 * 1024 * 1024
+	}
 }
 
 // ValidateConfig performs strict validation of the configuration structure for dry-run CLI test checks.

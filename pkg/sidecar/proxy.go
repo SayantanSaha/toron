@@ -44,6 +44,9 @@ func NewProxyEngine(cfg config.SidecarConfig, r *router.Router) (*ProxyEngine, e
 	if cfg.AppPort <= 0 {
 		cfg.AppPort = 8080
 	}
+	if cfg.MaxBodyBytes <= 0 {
+		cfg.MaxBodyBytes = 10 * 1024 * 1024
+	}
 
 	splitters := make(map[string]*WeightedSplitter)
 	for _, route := range cfg.TrafficSplits {
@@ -199,11 +202,36 @@ func (p *ProxyEngine) proxyToURL(w http.ResponseWriter, r *http.Request, targetU
 
 	// Adapt stdlib http.Request to Toron Request
 	toronReq := httpparser.NewRequestFromStd(r)
+	maxBody := p.cfg.MaxBodyBytes
+	if maxBody <= 0 {
+		maxBody = 10 * 1024 * 1024
+	}
+
 	if r.Body != nil && r.Method != "GET" && r.Method != "HEAD" {
 		defer r.Body.Close()
-		const maxSidecarBody = 10 * 1024 * 1024 // 10 MB limit
-		bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxSidecarBody+1))
-		if err == nil {
+
+		// a. Fast-fail check: If r.ContentLength > maxBody && r.ContentLength > 0
+		if r.ContentLength > maxBody && r.ContentLength > 0 {
+			log.Printf("[SIDECAR] 413 Payload Too Large: %s %s declared Content-Length %d exceeds limit %d", r.Method, r.URL.Path, r.ContentLength, maxBody)
+			http.Error(w, fmt.Sprintf("Payload Too Large: request Content-Length %d exceeds limit of %d bytes", r.ContentLength, maxBody), http.StatusRequestEntityTooLarge)
+			r.Body.Close()
+			return
+		}
+
+		if r.ContentLength == 0 {
+			toronReq.ContentLength = 0
+		} else {
+			// b. Stream over-read bounded ingestion
+			bodyBytes, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
+			if err != nil {
+				http.Error(w, fmt.Sprintf("Bad Request: %v", err), http.StatusBadRequest)
+				return
+			}
+			if int64(len(bodyBytes)) > maxBody {
+				log.Printf("[SIDECAR] 413 Payload Too Large: %s %s request body exceeds limit %d", r.Method, r.URL.Path, maxBody)
+				http.Error(w, fmt.Sprintf("Payload Too Large: request body exceeds limit of %d bytes", maxBody), http.StatusRequestEntityTooLarge)
+				return
+			}
 			toronReq.Body = bytes.NewReader(bodyBytes)
 			toronReq.ContentLength = int64(len(bodyBytes))
 		}

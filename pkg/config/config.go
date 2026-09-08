@@ -106,6 +106,7 @@ type SidecarConfig struct {
 	IngressPort   int                 `yaml:"ingress_port" json:"ingress_port"`
 	EgressPort    int                 `yaml:"egress_port" json:"egress_port"`
 	AppPort       int                 `yaml:"app_port" json:"app_port"`
+	MaxBodyBytes  int64               `yaml:"max_body_bytes" json:"max_body_bytes"`
 	StrictmTLS    bool                `yaml:"strict_mtls" json:"strict_mtls"`
 	CertFile      string              `yaml:"cert_file" json:"cert_file"`
 	KeyFile       string              `yaml:"key_file" json:"key_file"`
@@ -534,6 +535,9 @@ func DefaultAppConfig() *AppConfig {
 		Proxy: ProxyConfig{
 			Enabled: true,
 			Routes:  []ProxyRouteConfig{},
+		},
+		Sidecar: SidecarConfig{
+			MaxBodyBytes: 10 * 1024 * 1024,
 		},
 		Logging: LoggingConfig{
 			Level:       "info",

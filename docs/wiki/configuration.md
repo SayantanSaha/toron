@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-04
+updated: 2026-09-08
 
 depends_on:
   - REQ-007
@@ -14,6 +14,7 @@ depends_on:
   - REQ-035
   - REQ-036
   - REQ-056
+  - REQ-086
   - TASK-007
   - TASK-019
   - TASK-027
@@ -21,6 +22,7 @@ depends_on:
   - TASK-035
   - TASK-036
   - TASK-056
+  - TASK-090
 
 derived_from:
   - REQ-007
@@ -202,6 +204,7 @@ sidecar:
   ingress_port: 15006       # Pod inbound mTLS listener port
   egress_port: 15001        # Pod outbound proxy listener port
   app_port: 8080            # Local app container target port (127.0.0.1:8080)
+  max_body_bytes: 10485760  # Max request body size in bytes (default: 10MB; 413 rejection if exceeded)
   strict_mtls: false        # Enforce RequireAndVerifyClientCert mTLS
   traffic_splits:           # Weighted canary traffic splitting
     - prefix: "/api"

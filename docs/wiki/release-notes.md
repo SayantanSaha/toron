@@ -1,5 +1,40 @@
 # Release Notes
 
+## 2026-09-08 - Toron v1.5.6 Security Release (SEC-25: Configurable Request Body Limits & HTTP 413 Rejection in Service Mesh Sidecar)
+
+### Milestone Summary
+- **Configurable Request Body Limit in Sidecar Proxy (`pkg/config`, `pkg/sidecar`)**: Introduced configurable maximum request body size parameter [`SidecarConfig.MaxBodyBytes`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L109) (and `max_body_bytes` in YAML/JSON) into [`SidecarConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L103), eliminating hardcoded buffer limits and providing a reliable default fallback of 10 MB (`10,485,760` bytes) when unset or non-positive ([`TASK-090`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-090.md), [`REQ-086`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-086.md), [`ADR-081`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-081.md), [`SEC-25`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L366-L374)).
+- **Elimination of Silent Body Truncation & Upstream Data Corruption (`pkg/sidecar`)**: Fixed critical vulnerability [`SEC-25`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L366-L374) (CWE-436, CWE-400) in [`ProxyEngine.proxyToURL`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L192) where payloads exceeding the limit were silently truncated and forwarded upstream as corrupt data. Oversized requests are now immediately rejected with HTTP `413 Request Entity Too Large` (`http.StatusRequestEntityTooLarge`), request bodies are closed, and proxying is terminated with zero bytes transmitted upstream ([`TASK-091`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-091.md)).
+- **Dual-Stage Overflow Protection**:
+  - **Fast-Path Declared `Content-Length` Guard**: If an incoming request declares a `Content-Length` greater than `MaxBodyBytes`, the sidecar closes the body and immediately returns HTTP 413 without reading the payload, avoiding memory allocation overhead.
+  - **Streaming Bounded Over-Read Guard**: For chunked transfer encodings or streams with undeclared lengths, ingestion is bounded using `io.LimitReader(r.Body, MaxBodyBytes+1)`. If the payload exceeds the limit, the stream is aborted, read bytes discarded, and HTTP 413 returned.
+- **Direct Bypass for Non-Mutating Requests**: Safe requests (`GET`, `HEAD`) or empty requests (`ContentLength == 0` or `r.Body == nil`) bypass body reading and are dispatched directly to upstream handlers without buffer allocation.
+- **Byte-Fidelity Payload Forwarding**: In-bounds requests within `MaxBodyBytes` are forwarded to the target application with exact byte fidelity and accurate content lengths.
+- **Automated Verification Suite (`pkg/sidecar/sidecar_test.go`)**: Implemented unit, integration, and high-concurrency race test cases ([`TASK-092`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-092.md), [`TC-086`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-086.md)) validating default fallback, fast-fail 413 responses, chunked stream rejection, in-bounds byte preservation, and concurrent race safety under `go test -race ./pkg/sidecar/...`.
+
+### Added
+- **`MaxBodyBytes int64` Field**: Added to [`SidecarConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L103) in [`pkg/config/config.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go) with tags `yaml:"max_body_bytes" json:"max_body_bytes"`.
+- **Default Fallback Normalization**: Added 10 MB fallback in [`DefaultAppConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L466), [`validateConfigDefaults`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/loader.go#L153), and [`NewProxyEngine`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L37).
+- **Automated Test Cases (`pkg/sidecar/sidecar_test.go`)**:
+  - `TestTC086_01_DefaultLimitAndFallback`: Validates 10 MB fallback for zero/negative values.
+  - `TestTC086_02_DeclaredContentLength413Rejection`: Validates fast-path 413 rejection on declared `Content-Length` overflow.
+  - `TestTC086_03_ChunkedStreamOverRead413Rejection`: Validates bounded `io.LimitReader` 413 rejection on chunked/streamed overflow.
+  - `TestTC086_04_ByteFidelityInBoundsForwarding`: Validates exact byte preservation for valid requests under the limit.
+  - `TestTC086_05_NonMutatingAndEmptyPayloadBypass`: Validates direct bypass for GET/HEAD and empty requests.
+  - `TestTC086_06_HighConcurrencyRaceSafety`: Validates concurrent execution across parallel goroutines with zero data races.
+
+### Changed
+- **Proxy Body Handler (`pkg/sidecar/proxy.go`)**: Replaced silent truncation logic in [`ProxyEngine.proxyToURL`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L192) with dual-stage fail-fast HTTP 413 rejection and diagnostic logging.
+
+### Related Tasks & Requirements
+- [`TASK-090`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-090.md): Configurable Sidecar Body Size Limit in SidecarConfig
+- [`TASK-091`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-091.md): Immediate HTTP 413 Payload Too Large Rejection in Sidecar ProxyEngine
+- [`TASK-092`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-092.md): Automated Verification Suite for Sidecar Body Limiting & 413 Rejection
+- [`REQ-086`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-086.md): Configurable Request Body Limit and Truncation Rejection in Service Mesh Sidecar Proxy
+- [`ADR-081`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-081.md): Configurable Request Body Limiting and Truncation Rejection in Service Mesh Sidecar Proxy
+- [`TC-086`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-086.md): Sidecar Request Body Size Limit and HTTP 413 Rejection Verification
+- [`SEC-25`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L366-L374): Silent Request Body Truncation in Service Mesh Sidecar Proxy
+
 ## 2026-09-05 - Toron v1.5.5 Feature Release (Universal Query Parameter Forwarding & Preservation)
 
 ### Milestone Summary

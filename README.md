@@ -609,7 +609,7 @@ spec:
 
 ### 28. Service Mesh Sidecar Mode (`pkg/sidecar`)
 
-Toron operates as a lightweight Service Mesh Sidecar proxy (`pkg/sidecar`) running alongside pod application containers (`127.0.0.1`). It transparently enforces pod-to-pod Mutual TLS (mTLS) encryption (`client_auth: "require_and_verify"`) and weighted traffic splitting (e.g. 80/20 canary releases) with minimal memory overhead (<10MB RAM per pod).
+Toron operates as a lightweight Service Mesh Sidecar proxy (`pkg/sidecar`) running alongside pod application containers (`127.0.0.1`). It transparently enforces pod-to-pod Mutual TLS (mTLS) encryption (`client_auth: "require_and_verify"`), weighted traffic splitting (e.g. 80/20 canary releases), and configurable request body limits (`max_body_bytes`, defaulting to 10MB) with immediate HTTP 413 Payload Too Large rejection on overflow, all with minimal memory overhead (<10MB RAM per pod).
 
 **Sample Configuration (`config.yaml`)**:
 ```yaml
@@ -619,6 +619,7 @@ sidecar:
   ingress_port: 15006       # Inbound pod mTLS listener port
   egress_port: 15001        # Outbound pod proxy listener port
   app_port: 8080            # Target local app container port (127.0.0.1:8080)
+  max_body_bytes: 10485760  # Maximum request body size in bytes (default: 10MB; HTTP 413 if exceeded)
   strict_mtls: true         # RequireAndVerifyClientCert mTLS verification
   traffic_splits:           # Weighted canary traffic distribution
     - prefix: "/api"

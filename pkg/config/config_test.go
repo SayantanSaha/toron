@@ -22,6 +22,32 @@ func TestConfig_DefaultValues(t *testing.T) {
 	if cfg.Static.Dir != "./public" {
 		t.Errorf("expected default static dir './public', got %q", cfg.Static.Dir)
 	}
+	if cfg.Sidecar.MaxBodyBytes != 10*1024*1024 {
+		t.Errorf("expected default sidecar max body bytes 10MB, got %d", cfg.Sidecar.MaxBodyBytes)
+	}
+}
+
+func TestConfig_SidecarMaxBodyBytes(t *testing.T) {
+	tmpDir := t.TempDir()
+	yamlPath := filepath.Join(tmpDir, "config.yaml")
+
+	yamlData := `
+sidecar:
+  enabled: true
+  max_body_bytes: 2097152
+`
+	if err := os.WriteFile(yamlPath, []byte(yamlData), 0644); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	cfg, err := config.LoadFromFile(yamlPath)
+	if err != nil {
+		t.Fatalf("failed to load yaml config: %v", err)
+	}
+
+	if cfg.Sidecar.MaxBodyBytes != 2097152 {
+		t.Errorf("expected sidecar max body bytes 2097152, got %d", cfg.Sidecar.MaxBodyBytes)
+	}
 }
 
 func TestConfig_YAMLFileLoading(t *testing.T) {

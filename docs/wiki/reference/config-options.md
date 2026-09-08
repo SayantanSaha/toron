@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-04
+updated: 2026-09-08
 
 depends_on:
   - REQ-007
@@ -12,12 +12,14 @@ depends_on:
   - REQ-034
   - REQ-035
   - REQ-036
+  - REQ-086
   - TASK-007
   - TASK-019
   - TASK-027
   - TASK-034
   - TASK-035
   - TASK-036
+  - TASK-090
 
 derived_from:
   - REQ-007
@@ -169,7 +171,11 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `ingress_port` | `integer` | `15006` | Pod inbound mTLS listener port |
 | `egress_port` | `integer` | `15001` | Pod outbound proxy listener port |
 | `app_port` | `integer` | `8080` | Local application container port (127.0.0.1) |
+| `max_body_bytes` | `integer` | `10485760` (10 MB) | Maximum request body size in bytes before returning HTTP 413 (defaults to 10MB if omitted or <= 0) |
 | `strict_mtls` | `boolean` | `false` | Enforce RequireAndVerifyClientCert mTLS |
+| `cert_file` | `string` | `""` | Path to sidecar X.509 certificate file |
+| `key_file` | `string` | `""` | Path to sidecar private key file |
+| `ca_file` | `string` | `""` | Path to trusted CA bundle file for client verification |
 | `traffic_splits` | `list` | `[]` | Canary weighted traffic splits (`prefix`, `backends: [{target, weight}]`) |
 
 ## Section: `transcoder` (REST-to-gRPC Transcoding)

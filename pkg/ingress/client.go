@@ -187,6 +187,17 @@ func (c *Client) WatchIngresses(ctx context.Context, events chan<- K8sWatchEvent
 		return fmt.Errorf("watch ingresses returned status %d", resp.StatusCode)
 	}
 
+	// Guarantee socket unblocks immediately if ctx is cancelled while reading
+	stopWatcher := make(chan struct{})
+	defer close(stopWatcher)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = resp.Body.Close()
+		case <-stopWatcher:
+		}
+	}()
+
 	reader := bufio.NewReader(resp.Body)
 	for {
 		select {
@@ -197,6 +208,9 @@ func (c *Client) WatchIngresses(ctx context.Context, events chan<- K8sWatchEvent
 
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
 		}
 
@@ -206,7 +220,11 @@ func (c *Client) WatchIngresses(ctx context.Context, events chan<- K8sWatchEvent
 
 		var evt K8sWatchEvent
 		if err := json.Unmarshal(line, &evt); err == nil && evt.Type != "" {
-			events <- evt
+			select {
+			case events <- evt:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}
 	}
 }

@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -221,3 +222,245 @@ func TestK8sMockAPIServerClient(t *testing.T) {
 		t.Errorf("Route TargetIP = %q, want 10.96.0.50", routes[0].TargetIP)
 	}
 }
+
+// TC-084-01: Context cancellation during blocked channel send
+func TestTC084_WatchIngresses_ContextCancellationOnSend(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/apis/networking.k8s.io/v1/ingresses", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("watch") == "true" {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			flusher, ok := w.(http.Flusher)
+			for i := 0; i < 50; i++ {
+				_, _ = w.Write([]byte(`{"type":"ADDED","object":{"metadata":{"name":"test"}}}` + "\n"))
+				if ok {
+					flusher.Flush()
+				}
+				time.Sleep(2 * time.Millisecond)
+			}
+			<-r.Context().Done()
+			return
+		}
+		http.NotFound(w, r)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cfg := config.IngressConfig{
+		Enabled:       true,
+		IngressClass:  "toron",
+		KubeAPIServer: server.URL,
+	}
+
+	cli, err := NewClient(cfg)
+	if err != nil {
+		t.Fatalf("NewClient failed: %v", err)
+	}
+
+	// Tiny buffer with NO consumer
+	events := make(chan K8sWatchEvent, 2)
+	ctx, cancel := context.WithCancel(context.Background())
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- cli.WatchIngresses(ctx, events)
+	}()
+
+	// Give it a brief moment to send 2 items and block on 3rd
+	time.Sleep(20 * time.Millisecond)
+
+	// Cancel context; WatchIngresses MUST unblock immediately
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if err != context.Canceled {
+			t.Errorf("expected context.Canceled, got: %v", err)
+		}
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("WatchIngresses deadlocked / failed to cancel within 300ms")
+	}
+}
+
+// TC-084-02: Consumer worker continuously drains events (>100 events) without deadlocking
+func TestTC084_Controller_ConsumerDrainsOver100Events(t *testing.T) {
+	ingClass := "toron"
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("/apis/networking.k8s.io/v1/ingresses", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("watch") == "true" {
+			w.WriteHeader(http.StatusOK)
+			flusher, ok := w.(http.Flusher)
+			// Emit 150 events (exceeds channel capacity of 100)
+			for i := 1; i <= 150; i++ {
+				_, _ = w.Write([]byte(fmt.Sprintf(`{"type":"MODIFIED","object":{"metadata":{"name":"ing-%d"}}}`+"\n", i)))
+				if ok {
+					flusher.Flush()
+				}
+			}
+			<-r.Context().Done()
+			return
+		}
+
+		// List endpoint
+		list := IngressList{
+			Kind:       "IngressList",
+			APIVersion: "networking.k8s.io/v1",
+			Items: []Ingress{
+				{
+					Metadata: ObjectMeta{Name: "stream-ing", Namespace: "default"},
+					Spec: IngressSpec{
+						IngressClassName: &ingClass,
+						Rules: []IngressRule{
+							{
+								Host: "stream.cluster.local",
+								HTTP: &HTTPIngressRuleValue{
+									Paths: []HTTPIngressPath{
+										{
+											Path: "/stream",
+											Backend: IngressBackend{
+												Service: &IngressServiceBackend{
+													Name: "stream-svc",
+													Port: ServiceBackendPort{Number: 8080},
+												},
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(list)
+	})
+
+	mux.HandleFunc("/api/v1/namespaces/default/endpoints/stream-svc", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		ep := Endpoints{
+			Metadata: ObjectMeta{Name: "stream-svc", Namespace: "default"},
+			Subsets: []EndpointSubset{
+				{
+					Addresses: []EndpointAddress{{IP: "10.96.1.100"}},
+					Ports:     []EndpointPort{{Port: 8080}},
+				},
+			},
+		}
+		_ = json.NewEncoder(w).Encode(ep)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cfg := config.IngressConfig{
+		Enabled:       true,
+		IngressClass:  "toron",
+		KubeAPIServer: server.URL,
+	}
+
+	r := router.New()
+	ctrl, err := NewController(cfg, r)
+	if err != nil {
+		t.Fatalf("NewController failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatalf("ctrl.Start() failed: %v", err)
+	}
+
+	// Wait for consumer to process events and debounce
+	time.Sleep(100 * time.Millisecond)
+
+	routes := ctrl.ActiveRoutes()
+	if len(routes) == 0 {
+		t.Fatalf("Expected active routes after stream ingestion, got 0")
+	}
+
+	// Verify Stop completes without deadlock
+	stopDone := make(chan struct{})
+	go func() {
+		ctrl.Stop()
+		close(stopDone)
+	}()
+
+	select {
+	case <-stopDone:
+		// Clean stop!
+	case <-time.After(300 * time.Millisecond):
+		t.Fatal("ctrl.Stop() deadlocked after consuming >100 events")
+	}
+}
+
+// TC-084-03: Zero-deadlock shutdown under continuous high-frequency event streaming
+func TestTC084_Controller_ZeroDeadlockShutdownUnderLoad(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/apis/networking.k8s.io/v1/ingresses", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("watch") == "true" {
+			w.WriteHeader(http.StatusOK)
+			flusher, ok := w.(http.Flusher)
+			for {
+				select {
+				case <-r.Context().Done():
+					return
+				default:
+					_, err := w.Write([]byte(`{"type":"MODIFIED","object":{"metadata":{"name":"flood"}}}` + "\n"))
+					if err != nil {
+						return
+					}
+					if ok {
+						flusher.Flush()
+					}
+				}
+			}
+		}
+		list := IngressList{Kind: "IngressList", APIVersion: "networking.k8s.io/v1"}
+		_ = json.NewEncoder(w).Encode(list)
+	})
+
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	cfg := config.IngressConfig{
+		Enabled:       true,
+		IngressClass:  "toron",
+		KubeAPIServer: server.URL,
+	}
+
+	r := router.New()
+	ctrl, err := NewController(cfg, r)
+	if err != nil {
+		t.Fatalf("NewController failed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := ctrl.Start(ctx); err != nil {
+		t.Fatalf("ctrl.Start() failed: %v", err)
+	}
+
+	// Let the flood stream for a moment
+	time.Sleep(30 * time.Millisecond)
+
+	// Stop must finish quickly without hanging
+	stopDone := make(chan struct{})
+	go func() {
+		ctrl.Stop()
+		close(stopDone)
+	}()
+
+	select {
+	case <-stopDone:
+		// Successful shutdown
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ctrl.Stop() hung or deadlocked under active flood stream")
+	}
+}
+

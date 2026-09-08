@@ -72,6 +72,10 @@ func (c *Controller) Start(parentCtx context.Context) error {
 	// Initial sync
 	c.syncIngresses(ctx)
 
+	// Start event consumer worker
+	c.wg.Add(1)
+	go c.consumeEventsWorker(ctx)
+
 	// Start watch event worker
 	c.wg.Add(1)
 	go c.watchWorker(ctx)
@@ -177,3 +181,50 @@ func (c *Controller) periodicResyncWorker(ctx context.Context) {
 		}
 	}
 }
+
+func (c *Controller) consumeEventsWorker(ctx context.Context) {
+	defer c.wg.Done()
+
+	var debounceTimer *time.Timer
+	var debounceCh <-chan time.Time
+
+	triggerSync := func() {
+		if debounceTimer == nil {
+			debounceTimer = time.NewTimer(25 * time.Millisecond)
+			debounceCh = debounceTimer.C
+		} else {
+			if !debounceTimer.Stop() {
+				select {
+				case <-debounceTimer.C:
+				default:
+				}
+			}
+			debounceTimer.Reset(25 * time.Millisecond)
+		}
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			if debounceTimer != nil {
+				debounceTimer.Stop()
+			}
+			return
+		case evt, ok := <-c.events:
+			if !ok {
+				if debounceTimer != nil {
+					debounceTimer.Stop()
+				}
+				return
+			}
+			if evt.Type != "" {
+				triggerSync()
+			}
+		case <-debounceCh:
+			debounceTimer = nil
+			debounceCh = nil
+			c.syncIngresses(ctx)
+		}
+	}
+}
+

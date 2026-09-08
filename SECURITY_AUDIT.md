@@ -41,7 +41,7 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
 | **P2** | **SEC-20** | WAF Path Traversal Bypass via Uppercase Percent-Encoding (`TRAVERSAL-001`) | **Medium** | CWE-693, CWE-22 | **Resolved** | [`TASK-080`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-080.md) | `TC-080`, `SR-078`, `CR-076` | `4203aba` |
 | **P2** | **SEC-21** | Request Body Dropping in Sidecar Proxy Engine | **Medium** | CWE-436 | **Resolved** | [`TASK-081`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-081.md) | `TC-081`, `SR-079`, `CR-077` | `0bd0cc8` |
 | **P3** | **SEC-22** | Missing Expiration (`exp`) Claim Enforcement in JWT Verification | **Low** | CWE-613 | **Resolved** | [`TASK-082`](file:///Users/sneha/Developer/toron/docs/tasks/TASK-082.md) | `TC-082`, `SR-080`, `CR-078` | `b48848e` |
-| **P1** | **SEC-23** | K8s Ingress Controller Watch Stream Unconsumed Channel Deadlock | **High** | CWE-400, CWE-833 | **Open** | Pending | `SR-081` | Pending |
+| **P1** | **SEC-23** | K8s Ingress Controller Watch Stream Unconsumed Channel Deadlock | **High** | CWE-400, CWE-833 | **Resolved** | [`TASK-084`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-084.md)..[`086`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-086.md) | `TC-084`, `SR-083`, `CR-080` | `Pending` |
 | **P2** | **SEC-24** | Ingress Route Hijacking & Route Shadowing in K8s Ingress Controller | **Medium** | CWE-284, CWE-285 | **Open** | Pending | `SR-081` | Pending |
 | **P2** | **SEC-25** | Silent Request Body Truncation in Service Mesh Sidecar Proxy | **Medium** | CWE-436, CWE-400 | **Open** | Pending | `SR-081` | Pending |
 | **P1** | **SEC-26** | Unbounded Goroutine & Socket Allocation in Layer 4 UDP/TCP Proxies | **High** | CWE-400 | **Open** | Pending | `SR-081` | Pending |
@@ -447,8 +447,8 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
   8. `TASK-080` (SEC-20): Case-insensitive `(?i)` WAF `TRAVERSAL-001` pattern hardening (`4203aba`).
   9. `TASK-081` (SEC-21): Request body preservation in sidecar proxy engine (`0bd0cc8`).
   10. `TASK-082` (SEC-22): Mandatory `exp` claim enforcement in JWT verification (`b48848e`).
-- **Phase 5 (Extended Subsystem Hardening - SEC-23..30 - PLANNED)**:
-  1. Resolve K8s Ingress Controller watch stream deadlock (`SEC-23`).
+- **Phase 5 (Extended Subsystem Hardening - SEC-23..30 - IN PROGRESS)**:
+  1. Resolve K8s Ingress Controller watch stream deadlock (`SEC-23`) - **COMPLETED** (`TASK-084`..`086`, `TC-084`, `SR-083`, `CR-080`).
   2. Enforce prefix scoping and route shadowing guards in K8s Ingress Controller (`SEC-24`).
   3. Enforce 413 Payload Too Large on sidecar body overflow (`SEC-25`).
   4. Implement worker pools and connection limits in Layer 4 proxies (`SEC-26`).
@@ -461,9 +461,10 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
 
 ## 5. Remediation Status & Verification Summary
 
-All 22 initial security vulnerabilities (`SEC-01` through `SEC-22`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, code reviewed, and committed to `master`:
+23 security vulnerabilities (`SEC-01` through `SEC-23`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
+- **`SEC-23`**: Verified in `TC-084` (`TASK-084`, `TASK-085`, `TASK-086`).
 
-The latest comprehensive audit ([`SR-081`](file:///Users/sneha/Developer/toron/docs/securityReview/SR-081.md)) verified zero regressions in core HTTP/1.1, HTTP/2, WAF, and Auth engines. 8 findings in extended subsystems (`SEC-23` through `SEC-30`) have been documented and scheduled for Phase 5 remediation.
+7 remaining findings in extended subsystems (`SEC-24` through `SEC-30`) remain documented and scheduled for remediation.
 

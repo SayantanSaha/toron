@@ -2,14 +2,14 @@
 id: TASK-017
 type: task
 title: Implement /internal/api/ Management Endpoints and Update Frontend Client
-status: active
+status: completed
 version: 1.0
 
 project: PROJECT-001
 owner: development-lead
 
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-09-08
 
 depends_on:
   - REQ-017

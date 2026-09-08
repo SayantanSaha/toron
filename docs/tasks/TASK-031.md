@@ -2,14 +2,14 @@
 id: TASK-031
 type: task
 title: Implement Prometheus Metrics Registry and W3C Traceparent Header Propagation
-status: active
+status: completed
 version: 1.0
 
 project: PROJECT-001
 owner: development-lead
 
 created: 2026-08-13
-updated: 2026-08-13
+updated: 2026-09-08
 
 depends_on:
   - REQ-031

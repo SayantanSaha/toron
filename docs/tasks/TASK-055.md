@@ -2,7 +2,7 @@
 
 ## Task Details
 - **Requirement**: REQ-055
-- **Status**: IN_PROGRESS
+- **Status**: COMPLETED
 
 ## Tasks
 1. Create canonical root `VERSION` file (`1.5.0`).

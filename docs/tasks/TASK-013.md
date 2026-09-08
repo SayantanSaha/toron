@@ -2,14 +2,14 @@
 id: TASK-013
 type: task
 title: Update config.yaml to Map Proxy Routes to Dummy Web Services
-status: active
+status: completed
 version: 1.0
 
 project: PROJECT-001
 owner: development-lead
 
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-09-08
 
 depends_on:
   - REQ-013

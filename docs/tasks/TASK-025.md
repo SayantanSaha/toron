@@ -2,14 +2,14 @@
 id: TASK-025
 type: task
 title: Implement HTTP/2 WebSocket Support via Extended CONNECT (RFC 8441)
-status: active
+status: completed
 version: 1.0
 
 project: PROJECT-001
 owner: development-lead
 
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-09-08
 
 depends_on:
   - REQ-025

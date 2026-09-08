@@ -2,12 +2,12 @@
 id: TASK-058
 type: task
 title: Implement Config-Based Multi-Stream Logging, Route Overrides, and Logrotate Support
-status: draft
+status: completed
 version: 1.0
 project: PROJECT-001
 owner: development-lead
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-08
 depends_on: []
 derived_from:
   - REQ-058

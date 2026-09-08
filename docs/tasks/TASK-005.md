@@ -2,14 +2,14 @@
 id: TASK-005
 type: task
 title: Toron Server Orchestration & Main Application Entry
-status: draft
+status: completed
 version: 1.0
 
 project: PROJECT-001
 owner: development-lead
 
 created: 2026-08-11
-updated: 2026-08-11
+updated: 2026-09-08
 
 depends_on:
   - TASK-001

@@ -2,12 +2,12 @@
 id: TASK-081
 type: task
 title: Implement Request Body Preservation in Sidecar Proxy Engine
-status: approved
+status: completed
 version: 1.0
 project: PROJECT-001
 owner: development-lead
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-08
 depends_on: []
 derived_from:
   - REQ-081

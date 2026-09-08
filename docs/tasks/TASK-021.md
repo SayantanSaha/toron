@@ -2,14 +2,14 @@
 id: TASK-021
 type: task
 title: Implement Configuration Test Option (-test-config / -t) and Strict Validator
-status: active
+status: completed
 version: 1.0
 
 project: PROJECT-001
 owner: development-lead
 
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-09-08
 
 depends_on:
   - REQ-021

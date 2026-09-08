@@ -2,7 +2,7 @@
 
 ## Task Details
 - **Requirement**: REQ-053
-- **Status**: IN_PROGRESS
+- **Status**: COMPLETED
 
 ## Tasks
 1. Refactor `/internal/api/upstreams/health` in `pkg/server/internal_api.go` to dynamically extract all upstream targets from `router.Router` and `cfg.Routes`.

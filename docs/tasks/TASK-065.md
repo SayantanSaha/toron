@@ -2,12 +2,12 @@
 id: TASK-065
 type: task
 title: Enforce Upstream TLS Certificate Verification in WebSocket Reverse Proxy
-status: approved
+status: completed
 version: 1.0
 project: PROJECT-001
 owner: development-lead
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-08
 depends_on: []
 derived_from:
   - REQ-065

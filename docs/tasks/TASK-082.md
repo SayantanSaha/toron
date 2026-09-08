@@ -2,12 +2,12 @@
 id: TASK-082
 type: task
 title: Implement Mandatory exp Claim Enforcement in JWT Verification
-status: approved
+status: completed
 version: 1.0
 project: PROJECT-001
 owner: development-lead
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-08
 depends_on: []
 derived_from:
   - REQ-082

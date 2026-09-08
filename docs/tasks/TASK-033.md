@@ -2,14 +2,14 @@
 id: TASK-033
 type: task
 title: Implement ACME Engine, HTTP-01/TLS-ALPN-01 Responders, and Certificate Caching
-status: active
+status: completed
 version: 1.0
 
 project: PROJECT-001
 owner: development-lead
 
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-09-08
 
 depends_on:
   - REQ-033

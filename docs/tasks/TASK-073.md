@@ -2,12 +2,12 @@
 id: TASK-073
 type: task
 title: Implement HTTP Header Field-Name Whitespace Rejection (RFC 7230 §3.2.4)
-status: approved
+status: completed
 version: 1.0
 project: PROJECT-001
 owner: development-lead
 created: 2026-09-05
-updated: 2026-09-05
+updated: 2026-09-08
 depends_on: []
 derived_from:
   - REQ-073

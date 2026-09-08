@@ -2,6 +2,8 @@ package ingress
 
 import (
 	"fmt"
+	"log"
+	"path"
 	"strings"
 
 	"toron/pkg/discovery"
@@ -37,10 +39,37 @@ func TranslateIngress(ing Ingress, targetIngressClass string, endpointsMap map[s
 		}
 
 		for _, pathRule := range rule.HTTP.Paths {
-			prefix := strings.TrimSpace(pathRule.Path)
-			if prefix != "" && !strings.HasPrefix(prefix, "/") {
-				prefix = "/" + prefix
+			rawPrefix := strings.TrimSpace(pathRule.Path)
+			if rawPrefix != "" && !strings.HasPrefix(rawPrefix, "/") {
+				rawPrefix = "/" + rawPrefix
 			}
+			cleanPrefix := path.Clean(rawPrefix)
+			if cleanPrefix == "." || cleanPrefix == "" {
+				cleanPrefix = "/"
+			}
+
+			// Security (TASK-087 & TASK-088): Disallow unhosted root ("" or "/") and reserved administrative prefixes
+			if (cleanPrefix == "/" || cleanPrefix == "") && host == "" {
+				log.Printf("[INGRESS] Security rejection in %s/%s: unhosted root path %q is prohibited",
+					ing.Metadata.Namespace, ing.Metadata.Name, pathRule.Path)
+				continue
+			}
+
+			if cleanPrefix == "/internal" || strings.HasPrefix(cleanPrefix, "/internal/") ||
+				cleanPrefix == "/api/status" || strings.HasPrefix(cleanPrefix, "/api/status/") {
+				log.Printf("[INGRESS] Security rejection in %s/%s: attempted to shadow protected system path %q (host: %q)",
+					ing.Metadata.Namespace, ing.Metadata.Name, cleanPrefix, host)
+				continue
+			}
+
+			if host == "" && (cleanPrefix == "/health" || strings.HasPrefix(cleanPrefix, "/health/") ||
+				cleanPrefix == "/metrics" || strings.HasPrefix(cleanPrefix, "/metrics/")) {
+				log.Printf("[INGRESS] Security rejection in %s/%s: unhosted shadowing of probe/telemetry endpoint %q is prohibited",
+					ing.Metadata.Namespace, ing.Metadata.Name, cleanPrefix)
+				continue
+			}
+
+			prefix := cleanPrefix
 
 			if pathRule.Backend.Service == nil {
 				continue

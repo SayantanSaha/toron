@@ -464,3 +464,108 @@ func TestTC084_Controller_ZeroDeadlockShutdownUnderLoad(t *testing.T) {
 	}
 }
 
+// TC-085: Verification of Ingress Route Scoping and Sensitive Endpoint Boundary Protection (SEC-24)
+func TestTC085_TranslateIngress_SecurityGuards(t *testing.T) {
+	ingClass := "toron"
+	epMap := map[string]*Endpoints{
+		"test-ns/svc": {
+			Metadata: ObjectMeta{Name: "svc", Namespace: "test-ns"},
+			Subsets: []EndpointSubset{
+				{
+					Addresses: []EndpointAddress{{IP: "10.0.0.1"}},
+					Ports:     []EndpointPort{{Port: 8080}},
+				},
+			},
+		},
+	}
+
+	createIng := func(host, pathStr string) Ingress {
+		return Ingress{
+			Metadata: ObjectMeta{Name: "test-ing", Namespace: "test-ns"},
+			Spec: IngressSpec{
+				IngressClassName: &ingClass,
+				Rules: []IngressRule{
+					{
+						Host: host,
+						HTTP: &HTTPIngressRuleValue{
+							Paths: []HTTPIngressPath{
+								{
+									Path: pathStr,
+									Backend: IngressBackend{
+										Service: &IngressServiceBackend{
+											Name: "svc",
+											Port: ServiceBackendPort{Number: 8080},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		}
+	}
+
+	// 1. TC-085-01: Rejection of unhosted root path ("" or "/")
+	_, ok := TranslateIngress(createIng("", "/"), "toron", epMap)
+	if ok {
+		t.Errorf("expected unhosted root path '/' to be rejected, got ok=true")
+	}
+	_, ok = TranslateIngress(createIng("", ""), "toron", epMap)
+	if ok {
+		t.Errorf("expected unhosted empty path '' to be rejected, got ok=true")
+	}
+
+	// 2. TC-085-02: Hosted root path ("/" with host) is allowed
+	routes, ok := TranslateIngress(createIng("web.example.com", "/"), "toron", epMap)
+	if !ok || len(routes) == 0 {
+		t.Fatalf("expected hosted root path '/' to be accepted, got ok=%v", ok)
+	}
+	if routes[0].Host != "web.example.com" || routes[0].Prefix != "/" {
+		t.Errorf("expected host 'web.example.com' and prefix '/', got host=%q, prefix=%q",
+			routes[0].Host, routes[0].Prefix)
+	}
+
+	// 3. TC-085-03: Rejection of /internal and /internal/* shadowing
+	for _, p := range []string{"/internal", "/internal/dashboard", "/internal/api/status"} {
+		_, ok := TranslateIngress(createIng("web.example.com", p), "toron", epMap)
+		if ok {
+			t.Errorf("expected path %q to be rejected as protected internal path, got ok=true", p)
+		}
+	}
+
+	// 4. TC-085-04: Rejection of /api/status shadowing
+	for _, p := range []string{"/api/status", "/api/status/routes"} {
+		_, ok := TranslateIngress(createIng("web.example.com", p), "toron", epMap)
+		if ok {
+			t.Errorf("expected path %q to be rejected as protected api status path, got ok=true", p)
+		}
+	}
+
+	// 5. TC-085-05: Rejection of unhosted /health and /metrics
+	_, ok = TranslateIngress(createIng("", "/health"), "toron", epMap)
+	if ok {
+		t.Errorf("expected unhosted /health to be rejected, got ok=true")
+	}
+	_, ok = TranslateIngress(createIng("", "/metrics"), "toron", epMap)
+	if ok {
+		t.Errorf("expected unhosted /metrics to be rejected, got ok=true")
+	}
+
+	// 6. TC-085-06: Path traversal canonicalization
+	// /app/../internal resolves to /internal -> MUST be rejected
+	_, ok = TranslateIngress(createIng("web.example.com", "/app/../internal"), "toron", epMap)
+	if ok {
+		t.Errorf("expected traversal path '/app/../internal' to be rejected after canonicalization, got ok=true")
+	}
+
+	// /internal/../app resolves to /app -> MUST be accepted
+	routes, ok = TranslateIngress(createIng("web.example.com", "/internal/../app"), "toron", epMap)
+	if !ok || len(routes) == 0 {
+		t.Errorf("expected traversal path '/internal/../app' to resolve to '/app' and be accepted, got ok=%v", ok)
+	} else if routes[0].Prefix != "/app" {
+		t.Errorf("expected canonical prefix '/app', got %q", routes[0].Prefix)
+	}
+}
+
+

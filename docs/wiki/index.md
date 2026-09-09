@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-08
+updated: 2026-09-09
 
 depends_on:
   - REQ-001
@@ -16,11 +16,14 @@ depends_on:
   - REQ-035
   - REQ-036
   - REQ-086
+  - REQ-087
 
 derived_from:
   - PRD.md
   - ADR-001
   - ADR-022
+  - ADR-082
+  - SEC-26
 
 documents:
   - TORON-DOCUMENTATION-INDEX
@@ -31,7 +34,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.6 Release)
+# Toron Documentation Wiki (v1.5.7 Release)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -52,6 +55,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Static File Serving](./features/static-file-serving.md) – Hosting web apps, MIME resolution, and directory index handling.
 
 ### 🌐 Routing, Proxying & Resilience
+- [Layer 4 TCP & UDP Transport Proxies](./features/layer4-proxy.md) – Raw stream and datagram proxying with bounded concurrency, buffer recycling, and Slowloris idle deadline protection.
 - [REST-to-gRPC Transcoding Engine](./features/grpc-transcoding.md) – Direct JSON REST to binary Protobuf gRPC RPC transcoding.
 - [Service Mesh Sidecar Mode](./features/service-mesh-sidecar.md) – Lightweight pod-to-pod mTLS, bounded request body limits (HTTP 413), and weighted traffic splitting.
 - [Native Kubernetes Ingress Controller](./features/kubernetes-ingress.md) – Zero-dependency Kubernetes `networking.k8s.io/v1` Ingress Controller.
@@ -80,4 +84,4 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.6).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.7).

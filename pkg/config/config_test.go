@@ -548,3 +548,32 @@ func TestConfig_ValidateCORS(t *testing.T) {
 	}
 }
 
+func TestConfig_Layer4ProxySettings(t *testing.T) {
+	// Defaults when values are unset or non-positive
+	routeDefault := config.ProxyRouteConfig{}
+	if routeDefault.GetMaxConnections() != 10000 {
+		t.Errorf("expected default MaxConnections 10000, got %d", routeDefault.GetMaxConnections())
+	}
+	if routeDefault.GetIdleTimeout() != 60*time.Second {
+		t.Errorf("expected default IdleTimeout 60s, got %v", routeDefault.GetIdleTimeout())
+	}
+	if routeDefault.GetMaxWorkers() != 1024 {
+		t.Errorf("expected default MaxWorkers 1024, got %d", routeDefault.GetMaxWorkers())
+	}
+
+	// Custom configured values
+	routeCustom := config.ProxyRouteConfig{
+		MaxConnections: 500,
+		IdleTimeout:    15 * time.Second,
+		MaxWorkers:     128,
+	}
+	if routeCustom.GetMaxConnections() != 500 {
+		t.Errorf("expected custom MaxConnections 500, got %d", routeCustom.GetMaxConnections())
+	}
+	if routeCustom.GetIdleTimeout() != 15*time.Second {
+		t.Errorf("expected custom IdleTimeout 15s, got %v", routeCustom.GetIdleTimeout())
+	}
+	if routeCustom.GetMaxWorkers() != 128 {
+		t.Errorf("expected custom MaxWorkers 128, got %d", routeCustom.GetMaxWorkers())
+	}
+}

@@ -390,8 +390,13 @@ func main() {
 			} else if pr.IsTCP() {
 				port := pr.GetListenPort()
 				targets := pr.GetTargets()
-				log.Printf("[TORON] Configuring Layer 4 TCP Stream Proxy: listen_port %d -> targets %v", port, targets)
-				tcpProxy, err := proxy.NewTCPProxy(targets, 5*time.Second)
+				maxConns := pr.GetMaxConnections()
+				idleTimeout := pr.GetIdleTimeout()
+				log.Printf("[TORON] Configuring Layer 4 TCP Stream Proxy: listen_port %d -> targets %v [max_connections: %d, idle_timeout: %s]", port, targets, maxConns, idleTimeout)
+				tcpProxy, err := proxy.NewTCPProxy(targets, 5*time.Second,
+					proxy.WithTCPMaxConnections(maxConns),
+					proxy.WithTCPIdleTimeout(idleTimeout),
+				)
 				if err != nil {
 					log.Printf("[TORON] Failed to create TCP proxy for port %d: %v", port, err)
 					continue
@@ -407,8 +412,13 @@ func main() {
 			} else if pr.IsUDP() {
 				port := pr.GetListenPort()
 				targets := pr.GetTargets()
-				log.Printf("[TORON] Configuring Layer 4 UDP Datagram Proxy: listen_port %d -> targets %v", port, targets)
-				udpProxy, err := proxy.NewUDPProxy(targets, 5*time.Second)
+				maxWorkers := pr.GetMaxWorkers()
+				idleTimeout := pr.GetIdleTimeout()
+				log.Printf("[TORON] Configuring Layer 4 UDP Datagram Proxy: listen_port %d -> targets %v [max_workers: %d, idle_timeout: %s]", port, targets, maxWorkers, idleTimeout)
+				udpProxy, err := proxy.NewUDPProxy(targets, 5*time.Second,
+					proxy.WithUDPMaxWorkers(maxWorkers),
+					proxy.WithUDPIdleTimeout(idleTimeout),
+				)
 				if err != nil {
 					log.Printf("[TORON] Failed to create UDP proxy for port %d: %v", port, err)
 					continue

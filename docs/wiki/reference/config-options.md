@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-08
+updated: 2026-09-09
 
 depends_on:
   - REQ-007
@@ -13,6 +13,7 @@ depends_on:
   - REQ-035
   - REQ-036
   - REQ-086
+  - REQ-087
   - TASK-007
   - TASK-019
   - TASK-027
@@ -20,9 +21,13 @@ depends_on:
   - TASK-035
   - TASK-036
   - TASK-090
+  - TASK-093
+  - TASK-094
+  - TASK-095
 
 derived_from:
   - REQ-007
+  - SEC-26
 
 documents:
   - CONFIG-OPTIONS-REFERENCE
@@ -223,6 +228,9 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `spa` | `boolean` | Enable Single Page Application (SPA) HTML5 History fallback (default: `false`) |
 | `fallback` | `string` | Fallback document filename in `dir` (default: `"index.html"`, auto-enables SPA) |
 | `listen_port` | `integer` | Inbound listening port for Layer 4 `"tcp"` or `"udp"` proxies |
+| `max_connections` | `integer` | Maximum concurrent active TCP connections for Layer 4 `"tcp"` proxies (default: `10000`). Saturated connections are fast-rejected |
+| `idle_timeout` | `duration` | Inactivity timeout before closing idle Layer 4 TCP connections (Slowloris protection) or expiring idle UDP client sessions (default: `"60s"`) |
+| `max_workers` | `integer` | Maximum worker goroutines / queue capacity for Layer 4 `"udp"` datagram processing (default: `1024`). Excess datagrams during saturation are dropped fail-safe |
 | `tls` | `object` | Per-host TLS/mTLS settings (`cert_file`, `key_file`, `ca_file`, `client_auth`, `min_version`) |
 | `waf` | `object` | Route-level WAF overrides (`enabled`, `mode`, `allowed_ips`, `denied_ips`, `disabled_rules`) |
 | `auth` | `object` | Route-level authentication overrides (`type`, `jwt`, `api_key`, `basic`) |
@@ -237,4 +245,5 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 ## Related Pages
 
 - [Configuration Guide](../configuration.md)
+- [Layer 4 TCP & UDP Transport Proxies](../features/layer4-proxy.md)
 - [CLI Reference](./cli.md)

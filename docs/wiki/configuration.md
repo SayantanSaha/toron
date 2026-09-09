@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-08
+updated: 2026-09-09
 
 depends_on:
   - REQ-007
@@ -15,6 +15,7 @@ depends_on:
   - REQ-036
   - REQ-056
   - REQ-086
+  - REQ-087
   - TASK-007
   - TASK-019
   - TASK-027
@@ -23,6 +24,7 @@ depends_on:
   - TASK-036
   - TASK-056
   - TASK-090
+  - TASK-093
 
 derived_from:
   - REQ-007
@@ -31,6 +33,8 @@ derived_from:
   - ADR-002
   - ADR-022
   - ADR-051
+  - ADR-082
+  - SEC-26
 
 documents:
   - CONFIGURATION-GUIDE
@@ -389,15 +393,19 @@ routes:
         issuer: "toron-auth"
         audience: "api.toron.local"
 
-  # Layer 4 TCP Stream Proxy
+  # Layer 4 TCP Stream Proxy (Bounded Concurrency & Idle Deadlines)
   - type: "tcp"
     listen_port: 8090
     target: "127.0.0.1:9090"
+    max_connections: 5000       # Max active concurrent TCP connections (default: 10000)
+    idle_timeout: "60s"          # Stream inactivity teardown deadline (default: 60s)
 
-  # Layer 4 UDP Datagram Proxy
+  # Layer 4 UDP Datagram Proxy (Worker Pool, sync.Pool Buffers & Session Socket Reuse)
   - type: "udp"
     listen_port: 8091
     target: "127.0.0.1:9091"
+    max_workers: 1024           # Max worker goroutines / queue capacity (default: 1024)
+    idle_timeout: "60s"          # Client session idle eviction timeout (default: 60s)
 
   # Route-Level WAF Override & CIDR IP Access List
   - type: "upstream"
@@ -643,9 +651,30 @@ All log files are opened in append mode (`O_APPEND`), making them immediately sa
 
 ---
 
+### Layer 4 TCP & UDP Transport Proxy Configuration (`routes.yaml`)
+
+Toron provides raw Layer 4 socket forwarding (`type: "tcp"`) and datagram forwarding (`type: "udp"`). Both proxies feature resource bounds and idle deadline enforcement ([`SEC-26`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L375-L383)):
+
+#### Configuration Parameters
+
+| Option | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `type` | `string` | *(Required)* | Set to `"tcp"` for stream proxying or `"udp"` for datagram proxying. |
+| `listen_port` | `integer` | *(Required)* | Local port on which Toron listens for incoming connections or datagrams. |
+| `target` | `string` | `""` | Single upstream backend address (e.g. `"127.0.0.1:9090"`). |
+| `targets` | `list[string]` | `[]` | Upstream backend cluster addresses for round-robin dispatch. |
+| `max_connections` | `integer` | `10000` | Maximum concurrent active TCP connections. Saturated connections are rejected immediately upon `Accept()` without dialing upstream. |
+| `idle_timeout` | `duration` | `"60s"` | Inactivity duration before closing idle TCP streams (Slowloris protection) or expiring inactive UDP client sessions. |
+| `max_workers` | `integer` | `1024` | Maximum worker goroutines and task queue capacity for UDP datagram processing. Saturated packets drop fail-safe. |
+
+For deep architectural details, buffer recycling (`sync.Pool`), session socket reuse, and microbenchmark performance data, consult the [Layer 4 TCP & UDP Transport Proxies Feature Guide](./features/layer4-proxy.md).
+
+---
+
 ## Related Pages
 
 - [Documentation Index](./index.md)
+- [Layer 4 TCP & UDP Transport Proxies Feature Guide](./features/layer4-proxy.md)
 - [Static File Serving Feature Guide](./features/static-file-serving.md)
 - [Configuration Options Reference](./reference/config-options.md)
 - [CLI Reference](./reference/cli.md)

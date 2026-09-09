@@ -287,6 +287,9 @@ type ProxyRouteConfig struct {
 	SecurityHeaders     SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
 	WAF                 waf.WAFConfig         `yaml:"waf" json:"waf"`
 	TrustedProxies      []string              `yaml:"trusted_proxies" json:"trusted_proxies"`
+	MaxConnections      int                   `yaml:"max_connections,omitempty" json:"max_connections,omitempty"`
+	IdleTimeout         time.Duration         `yaml:"idle_timeout,omitempty" json:"idle_timeout,omitempty"`
+	MaxWorkers          int                   `yaml:"max_workers,omitempty" json:"max_workers,omitempty"`
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").
@@ -452,6 +455,30 @@ func (p *ProxyRouteConfig) GetSecurityLog(defaultPath string) string {
 		return strings.TrimSpace(p.SecurityLog)
 	}
 	return defaultPath
+}
+
+// GetMaxConnections returns the configured maximum concurrent TCP connections or default 10,000 if not set.
+func (p *ProxyRouteConfig) GetMaxConnections() int {
+	if p.MaxConnections > 0 {
+		return p.MaxConnections
+	}
+	return 10000
+}
+
+// GetIdleTimeout returns the configured idle timeout duration or default 60s if not set.
+func (p *ProxyRouteConfig) GetIdleTimeout() time.Duration {
+	if p.IdleTimeout > 0 {
+		return p.IdleTimeout
+	}
+	return 60 * time.Second
+}
+
+// GetMaxWorkers returns the configured maximum UDP workers or default 1,024 if not set.
+func (p *ProxyRouteConfig) GetMaxWorkers() int {
+	if p.MaxWorkers > 0 {
+		return p.MaxWorkers
+	}
+	return 1024
 }
 
 // LoggingConfig captures logging settings.

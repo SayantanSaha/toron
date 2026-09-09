@@ -44,7 +44,7 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
 | **P1** | **SEC-23** | K8s Ingress Controller Watch Stream Unconsumed Channel Deadlock | **High** | CWE-400, CWE-833 | **Resolved** | [`TASK-084`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-084.md)..[`086`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-086.md) | `TC-084`, `SR-083`, `CR-080` | `defc678` |
 | **P2** | **SEC-24** | Ingress Route Hijacking & Route Shadowing in K8s Ingress Controller | **Medium** | CWE-284, CWE-285 | **Resolved** | [`TASK-087`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-087.md)..[`089`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-089.md) | `TC-085`, `SR-084`, `CR-081` | `ec758e5` |
 | **P2** | **SEC-25** | Silent Request Body Truncation in Service Mesh Sidecar Proxy | **Medium** | CWE-436, CWE-400 | **Resolved** | [`TASK-090`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-090.md)..[`092`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-092.md) | `TC-086`, `SR-085`, `CR-082` | `aceddda` |
-| **P1** | **SEC-26** | Unbounded Goroutine & Socket Allocation in Layer 4 UDP/TCP Proxies | **High** | CWE-400 | **Open** | Pending | `SR-081` | Pending |
+| **P1** | **SEC-26** | Unbounded Goroutine & Socket Allocation in Layer 4 UDP/TCP Proxies | **High** | CWE-400 | **Resolved** | [`TASK-093`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-093.md)..[`096`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-096.md) | `TC-087`, `SR-086`, `CR-083` | `9ef4c92` |
 | **P2** | **SEC-27** | Missing Maximum Idle Deadlines on Upgraded Protocol Connections | **Medium** | CWE-400 | **Open** | Pending | `SR-081` | Pending |
 | **P2** | **SEC-28** | Unbounded Request Body Ingestion in REST-to-gRPC Transcoder | **Medium** | CWE-400, CWE-770 | **Open** | Pending | `SR-081` | Pending |
 | **P3** | **SEC-29** | Hop-by-Hop Header Leakage to Upstream in REST-to-gRPC Transcoder | **Low** | CWE-444, CWE-436 | **Open** | Pending | `SR-081` | Pending |
@@ -451,7 +451,7 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
   1. Resolve K8s Ingress Controller watch stream deadlock (`SEC-23`) - **COMPLETED** (`TASK-084`..`086`, `TC-084`, `SR-083`, `CR-080`).
   2. Enforce prefix scoping and route shadowing guards in K8s Ingress Controller (`SEC-24`) - **COMPLETED** (`TASK-087`..`089`, `TC-085`, `SR-084`, `CR-081`).
   3. Enforce 413 Payload Too Large on sidecar body overflow (`SEC-25`) - **COMPLETED** (`TASK-090`..`092`, `TC-086`, `SR-085`, `CR-082`).
-  4. Implement worker pools and connection limits in Layer 4 proxies (`SEC-26`).
+  4. Implement worker pools and connection limits in Layer 4 proxies (`SEC-26`) - **COMPLETED** (`TASK-093`..`096`, `TC-087`, `SR-086`, `CR-083`).
   5. Support idle deadlines on upgraded WebSocket connections (`SEC-27`).
   6. Bound request bodies in gRPC transcoder (`SEC-28`).
   7. Filter hop-by-hop headers in gRPC transcoder (`SEC-29`).
@@ -461,13 +461,14 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
 
 ## 5. Remediation Status & Verification Summary
 
-25 security vulnerabilities (`SEC-01` through `SEC-25`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
+26 security vulnerabilities (`SEC-01` through `SEC-26`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 - **`SEC-23`**: Verified in `TC-084` (`TASK-084`..`086`, `defc678`).
 - **`SEC-24`**: Verified in `TC-085` (`TASK-087`..`089`).
 - **`SEC-25`**: Verified in `TC-086` (`TASK-090`..`092`).
+- **`SEC-26`**: Verified in `TC-087` (`TASK-093`..`096`).
 
-5 remaining findings in extended subsystems (`SEC-26` through `SEC-30`) remain documented and scheduled for remediation.
+4 remaining findings in extended subsystems (`SEC-27` through `SEC-30`) remain documented and scheduled for remediation.
 
 

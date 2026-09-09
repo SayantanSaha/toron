@@ -48,7 +48,7 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
 | **P2** | **SEC-27** | Missing Maximum Idle Deadlines on Upgraded Protocol Connections | **Medium** | CWE-400 | **Resolved** | [`TASK-097`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-097.md)..[`100`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-100.md) | `TC-088`, `SR-087`, `CR-084` | `16a4df4` |
 | **P2** | **SEC-28** | Unbounded Request Body Ingestion in REST-to-gRPC Transcoder | **Medium** | CWE-400, CWE-770 | **Resolved** | [`TASK-101`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-101.md)..[`104`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-104.md) | `TC-089`, `SR-088`, `CR-085` | `b789f93` |
 | **P3** | **SEC-29** | Hop-by-Hop Header Leakage to Upstream in REST-to-gRPC Transcoder | **Low** | CWE-444, CWE-436 | **Resolved** | [`TASK-105`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-105.md)..[`107`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-107.md) | `TC-090`, `SR-089`, `CR-086` | `e1d86bc` |
-| **P2** | **SEC-30** | Subpath Routing Interception & 502 Denial in REST-to-gRPC Transcoder | **Medium** | CWE-284, CWE-400 | **Open** | Pending | `SR-081` | Pending |
+| **P2** | **SEC-30** | Subpath Routing Interception & 502 Denial in REST-to-gRPC Transcoder | **Medium** | CWE-284, CWE-400 | **Resolved** | [`TASK-108`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-108.md)..[`110`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-110.md) | `TC-091`, `SR-090`, `CR-087` | `6d72578` |
 
 ---
 
@@ -447,7 +447,7 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
   8. `TASK-080` (SEC-20): Case-insensitive `(?i)` WAF `TRAVERSAL-001` pattern hardening (`4203aba`).
   9. `TASK-081` (SEC-21): Request body preservation in sidecar proxy engine (`0bd0cc8`).
   10. `TASK-082` (SEC-22): Mandatory `exp` claim enforcement in JWT verification (`b48848e`).
-- **Phase 5 (Extended Subsystem Hardening - SEC-23..30 - IN PROGRESS)**:
+- **Phase 5 (Extended Subsystem Hardening - SEC-23..30 - COMPLETED)**:
   1. Resolve K8s Ingress Controller watch stream deadlock (`SEC-23`) - **COMPLETED** (`TASK-084`..`086`, `TC-084`, `SR-083`, `CR-080`).
   2. Enforce prefix scoping and route shadowing guards in K8s Ingress Controller (`SEC-24`) - **COMPLETED** (`TASK-087`..`089`, `TC-085`, `SR-084`, `CR-081`).
   3. Enforce 413 Payload Too Large on sidecar body overflow (`SEC-25`) - **COMPLETED** (`TASK-090`..`092`, `TC-086`, `SR-085`, `CR-082`).
@@ -455,13 +455,13 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
   5. Support idle deadlines on upgraded WebSocket connections (`SEC-27`) - **COMPLETED** (`TASK-097`..`100`, `TC-088`, `SR-087`, `CR-084`).
   6. Bound request bodies in gRPC transcoder (`SEC-28`) - **COMPLETED** (`TASK-101`..`104`, `TC-089`, `SR-088`, `CR-085`).
   7. Filter hop-by-hop headers in gRPC transcoder (`SEC-29`) - **COMPLETED** (`TASK-105`..`107`, `TC-090`, `SR-089`, `CR-086`).
-  8. Fix subpath dispatch in gRPC transcoder routing (`SEC-30`).
+  8. Fix subpath dispatch in gRPC transcoder routing (`SEC-30`) - **COMPLETED** (`TASK-108`..`110`, `TC-091`, `SR-090`, `CR-087`).
 
 ---
 
 ## 5. Remediation Status & Verification Summary
 
-29 security vulnerabilities (`SEC-01` through `SEC-29`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
+30 security vulnerabilities (`SEC-01` through `SEC-30`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 - **`SEC-23`**: Verified in `TC-084` (`TASK-084`..`086`, `defc678`).
@@ -471,7 +471,8 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
 - **`SEC-27`**: Verified in `TC-088` (`TASK-097`..`100`).
 - **`SEC-28`**: Verified in `TC-089` (`TASK-101`..`104`).
 - **`SEC-29`**: Verified in `TC-090` (`TASK-105`..`107`).
+- **`SEC-30`**: Verified in `TC-091` (`TASK-108`..`110`, `6d72578`).
 
-1 remaining finding in extended subsystems (`SEC-30`) remains documented and scheduled for remediation.
+All 30 security vulnerabilities across core and extended subsystems are 100% verified and resolved.
 
 

@@ -17,7 +17,6 @@ import (
 
 	"toron/pkg/config"
 	"toron/pkg/httpparser"
-	"toron/pkg/proxy"
 	"toron/pkg/router"
 )
 
@@ -76,20 +75,29 @@ func (e *Engine) registerRoutes() {
 			e.HandleTranscode(req, res, rRule)
 		}
 
-		cleanPrefix := rRule.HTTPPath
-		if idx := strings.Index(cleanPrefix, "/:"); idx != -1 {
-			cleanPrefix = cleanPrefix[:idx]
+		if strings.Contains(rRule.HTTPPath, "/:") {
+			cleanPrefix := rRule.HTTPPath
+			if idx := strings.Index(cleanPrefix, "/:"); idx != -1 {
+				cleanPrefix = cleanPrefix[:idx]
+			}
+			if cleanPrefix == "" {
+				cleanPrefix = "/"
+			}
+
+			log.Printf("[TRANSCODER] Registered REST-to-gRPC parameterized route: %s %s (prefix: %s) -> %s %s",
+				rRule.HTTPMethod, rRule.HTTPPath, cleanPrefix, rRule.UpstreamURL, rRule.GRPCMethod)
+
+			matcher := func(p string) bool {
+				return MatchPathPattern(rRule.HTTPPath, p)
+			}
+
+			e.router.HandlePrefixWithMatcher(rRule.HTTPMethod, "", cleanPrefix, nil, matcher, handler)
+		} else {
+			log.Printf("[TRANSCODER] Registered REST-to-gRPC exact route: %s %s -> %s %s",
+				rRule.HTTPMethod, rRule.HTTPPath, rRule.UpstreamURL, rRule.GRPCMethod)
+
+			e.router.Handle(rRule.HTTPMethod, rRule.HTTPPath, handler)
 		}
-
-		if cleanPrefix == "" {
-			cleanPrefix = "/"
-		}
-
-		log.Printf("[TRANSCODER] Registered REST-to-gRPC route: %s %s -> %s %s",
-			rRule.HTTPMethod, rRule.HTTPPath, rRule.UpstreamURL, rRule.GRPCMethod)
-
-		_ = e.router.RoutePrefix("upstream", "", cleanPrefix, nil, "", proxy.ProxyOptions{})
-		e.router.Handle(rRule.HTTPMethod, cleanPrefix, handler)
 	}
 }
 
@@ -320,4 +328,28 @@ func extractPathParams(pattern, path string) map[string]string {
 		}
 	}
 	return params
+}
+
+// MatchPathPattern checks if an incoming URL path matches a parameterized route pattern (e.g. /v1/users/:id).
+// Literal segments must match verbatim, and wildcard parameter segments (prefixed with ':') match any non-empty segment.
+func MatchPathPattern(pattern, path string) bool {
+	patternParts := strings.Split(strings.Trim(pattern, "/"), "/")
+	pathParts := strings.Split(strings.Trim(path, "/"), "/")
+
+	if len(patternParts) != len(pathParts) {
+		return false
+	}
+
+	for i, part := range patternParts {
+		if strings.HasPrefix(part, ":") {
+			if pathParts[i] == "" {
+				return false
+			}
+			continue
+		}
+		if part != pathParts[i] {
+			return false
+		}
+	}
+	return true
 }

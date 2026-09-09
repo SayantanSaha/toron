@@ -40,8 +40,11 @@ type routeEntry struct {
 }
 
 type prefixRoute struct {
+	routeType    string
+	method       string
 	host         string
 	prefix       string
+	matcher      func(path string) bool
 	headers      map[string]string
 	redirectHTTP *bool
 	accessLog    string
@@ -229,6 +232,7 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
+		routeType:    string(normType),
 		host:         strings.ToLower(strings.TrimSpace(host)),
 		prefix:       cleanPrefix,
 		headers:      headers,
@@ -238,6 +242,31 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 		handler:      handler,
 	})
 	return nil
+}
+
+// HandlePrefix registers an in-process handler for an incoming HTTP method and path prefix.
+func (r *Router) HandlePrefix(method, prefix string, handler HandlerFunc) {
+	r.HandlePrefixWithMatcher(method, "", prefix, nil, nil, handler)
+}
+
+// HandlePrefixWithMatcher registers an in-process prefix handler with method, host, header, and path matcher options.
+func (r *Router) HandlePrefixWithMatcher(method, host, prefix string, headers map[string]string, matcher func(path string) bool, handler HandlerFunc) {
+	cleanPrefix := "/" + strings.Trim(prefix, "/")
+	if cleanPrefix == "/" {
+		cleanPrefix = ""
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
+		routeType: "handler",
+		method:    strings.ToUpper(strings.TrimSpace(method)),
+		host:      strings.ToLower(strings.TrimSpace(host)),
+		prefix:    cleanPrefix,
+		matcher:   matcher,
+		headers:   headers,
+		handler:   handler,
+	})
 }
 
 // Proxy registers a URL prefix to reverse proxy incoming requests to an upstream target URL string.
@@ -485,11 +514,19 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	}
 
 	if targetHandler == nil {
-		// Check prefix routes (static file or upstream reverse proxy routes)
+		// Check prefix routes (static file, upstream reverse proxy, or prefix handler routes)
 		var fallbackPrefix *prefixRoute
+		var methodMismatch bool
 		for i := range r.prefixRoutes {
 			pr := &r.prefixRoutes[i]
 			if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
+				if pr.method != "" && !strings.EqualFold(pr.method, req.Method) {
+					methodMismatch = true
+					continue
+				}
+				if pr.matcher != nil && !pr.matcher(req.Path) {
+					continue
+				}
 				if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
 					targetHandler = pr.handler
 					break
@@ -503,7 +540,11 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 			targetHandler = fallbackPrefix.handler
 		}
 		if targetHandler == nil {
-			targetHandler = r.NotFound
+			if methodMismatch {
+				targetHandler = r.MethodNotAllowed
+			} else {
+				targetHandler = r.NotFound
+			}
 		}
 	}
 
@@ -588,6 +629,12 @@ func (r *Router) MatchPrefixRoute(req *httpparser.Request) (prefix string, acces
 	for i := range r.prefixRoutes {
 		pr := &r.prefixRoutes[i]
 		if pr.prefix == "" || strings.HasPrefix(reqPath, pr.prefix+"/") || reqPath == pr.prefix {
+			if pr.method != "" && !strings.EqualFold(pr.method, req.Method) {
+				continue
+			}
+			if pr.matcher != nil && !pr.matcher(reqPath) {
+				continue
+			}
 			if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
 				return pr.prefix, pr.accessLog, pr.securityLog, true
 			}
@@ -690,8 +737,12 @@ func (r *Router) GetPrefixRoutes() []RouteSnapshot {
 
 	snapshots := make([]RouteSnapshot, 0, len(r.prefixRoutes))
 	for _, pr := range r.prefixRoutes {
+		rType := pr.routeType
+		if rType == "" {
+			rType = "upstream"
+		}
 		snapshots = append(snapshots, RouteSnapshot{
-			Type:    "upstream",
+			Type:    rType,
 			Host:    pr.host,
 			Prefix:  pr.prefix,
 			Headers: pr.headers,

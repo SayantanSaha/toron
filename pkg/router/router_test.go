@@ -775,3 +775,49 @@ func TestRouter_PathCanonicalizationAndTraversalGuards(t *testing.T) {
 		t.Errorf("expected / handler to be called for /../../, got status %d", res3.StatusCode)
 	}
 }
+
+// TestRouter_HandlePrefix_MethodAndMatcher verifies that Router.HandlePrefix and Router.HandlePrefixWithMatcher
+// enforce HTTP methods, evaluate custom matchers, return 405 on method mismatch, and fall through cleanly (SEC-30).
+func TestRouter_HandlePrefix_MethodAndMatcher(t *testing.T) {
+	r := router.New()
+
+	// Register prefix handler with matcher
+	r.HandlePrefixWithMatcher("GET", "", "/v1/items", nil, func(p string) bool {
+		return strings.HasPrefix(p, "/v1/items/") && !strings.Contains(p, "forbidden")
+	}, func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("item matched")
+	})
+
+	// 1. Valid matching request
+	req1, _ := httpparser.NewRequest("GET", "/v1/items/item-123", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.StatusCode != http.StatusOK || res1.Body.String() != "item matched" {
+		t.Errorf("req1: want 200 item matched, got %d %q", res1.StatusCode, res1.Body.String())
+	}
+
+	// 2. Method mismatch on matching prefix -> 405 Method Not Allowed
+	req2, _ := httpparser.NewRequest("POST", "/v1/items/item-123", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("req2: want 405, got %d", res2.StatusCode)
+	}
+
+	// 3. Matcher returns false (contains forbidden) -> 404 Not Found
+	req3, _ := httpparser.NewRequest("GET", "/v1/items/forbidden-item", "HTTP/1.1")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+	if res3.StatusCode != http.StatusNotFound {
+		t.Errorf("req3: want 404, got %d", res3.StatusCode)
+	}
+
+	// 4. Unrelated path -> 404 Not Found
+	req4, _ := httpparser.NewRequest("GET", "/v1/other", "HTTP/1.1")
+	res4 := httpparser.NewResponse()
+	r.ServeHTTP(req4, res4)
+	if res4.StatusCode != http.StatusNotFound {
+		t.Errorf("req4: want 404, got %d", res4.StatusCode)
+	}
+}

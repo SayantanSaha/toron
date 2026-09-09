@@ -1011,3 +1011,377 @@ func TestHandleTranscode_HeaderSanitization_ConcurrencyRaceSafety(t *testing.T) 
 	wg.Wait()
 }
 
+// TC-091-01: Direct Parameterized Subpath Dispatch via router.ServeHTTP (SEC-30)
+func TestTranscoder_ParameterizedSubpathDispatch(t *testing.T) {
+	var grpcCalls int64
+	var requestedPath string
+	var requestedID string
+	var mu sync.Mutex
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&grpcCalls, 1)
+
+		mu.Lock()
+		requestedPath = r.URL.Path
+		mu.Unlock()
+
+		frameBytes, err := DecodeGRPCFrame(r.Body)
+		if err != nil {
+			http.Error(w, "Bad gRPC Frame", http.StatusBadRequest)
+			return
+		}
+
+		var reqData map[string]interface{}
+		_ = json.Unmarshal(frameBytes, &reqData)
+
+		mu.Lock()
+		if idVal, ok := reqData["id"].(string); ok {
+			requestedID = idVal
+		}
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+
+		resJSON, _ := json.Marshal(map[string]interface{}{
+			"id":     reqData["id"],
+			"status": "active",
+		})
+		_, _ = w.Write(EncodeGRPCFrame(resJSON))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/users/:id",
+				GRPCMethod:  "/user.UserService/GetUser",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	_, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	// Dispatch request directly through router.ServeHTTP (verifying SEC-30 remediation)
+	req, _ := httpparser.NewRequest("GET", "/v1/users/usr-777", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want status 200 OK (not 502 Bad Gateway), got %d: %s", res.StatusCode, res.Body.String())
+	}
+
+	mu.Lock()
+	path := requestedPath
+	id := requestedID
+	mu.Unlock()
+
+	if path != "/user.UserService/GetUser" {
+		t.Errorf("upstream path = %q, want /user.UserService/GetUser", path)
+	}
+	if id != "usr-777" {
+		t.Errorf("upstream payload id = %q, want usr-777", id)
+	}
+	if calls := atomic.LoadInt64(&grpcCalls); calls != 1 {
+		t.Errorf("grpcCalls = %d, want 1", calls)
+	}
+
+	var resData map[string]interface{}
+	if err := json.Unmarshal(res.Body.Bytes(), &resData); err != nil {
+		t.Fatalf("failed to decode response JSON: %v", err)
+	}
+	if resData["id"] != "usr-777" {
+		t.Errorf("response id = %v, want usr-777", resData["id"])
+	}
+}
+
+// TC-091-02: Multi-Level Route Segregation on Shared Prefix (SEC-30)
+func TestTranscoder_MultiLevelRouteSegregation(t *testing.T) {
+	var userCalls, orderCalls int64
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		frameBytes, _ := DecodeGRPCFrame(r.Body)
+		var reqData map[string]interface{}
+		_ = json.Unmarshal(frameBytes, &reqData)
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+
+		if r.URL.Path == "/user.UserService/GetUser" {
+			atomic.AddInt64(&userCalls, 1)
+			resJSON, _ := json.Marshal(map[string]interface{}{"user_id": reqData["id"], "type": "user"})
+			_, _ = w.Write(EncodeGRPCFrame(resJSON))
+			return
+		}
+
+		if r.URL.Path == "/order.OrderService/GetOrder" {
+			atomic.AddInt64(&orderCalls, 1)
+			resJSON, _ := json.Marshal(map[string]interface{}{"user_id": reqData["id"], "order_id": reqData["orderId"], "type": "order"})
+			_, _ = w.Write(EncodeGRPCFrame(resJSON))
+			return
+		}
+
+		http.Error(w, "Not Found", http.StatusNotFound)
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/users/:id",
+				GRPCMethod:  "/user.UserService/GetUser",
+				UpstreamURL: grpcServer.URL,
+			},
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/users/:id/orders/:orderId",
+				GRPCMethod:  "/order.OrderService/GetOrder",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	_, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	// 1. Dispatch Request A (single parameter)
+	reqA, _ := httpparser.NewRequest("GET", "/v1/users/usr-100", "HTTP/1.1")
+	resA := httpparser.NewResponse()
+	r.ServeHTTP(reqA, resA)
+
+	if resA.StatusCode != http.StatusOK {
+		t.Fatalf("resA: want 200, got %d: %s", resA.StatusCode, resA.Body.String())
+	}
+
+	// 2. Dispatch Request B (multi-level parameter)
+	reqB, _ := httpparser.NewRequest("GET", "/v1/users/usr-100/orders/ord-500", "HTTP/1.1")
+	resB := httpparser.NewResponse()
+	r.ServeHTTP(reqB, resB)
+
+	if resB.StatusCode != http.StatusOK {
+		t.Fatalf("resB: want 200, got %d: %s", resB.StatusCode, resB.Body.String())
+	}
+
+	if atomic.LoadInt64(&userCalls) != 1 {
+		t.Errorf("userCalls = %d, want 1", userCalls)
+	}
+	if atomic.LoadInt64(&orderCalls) != 1 {
+		t.Errorf("orderCalls = %d, want 1", orderCalls)
+	}
+}
+
+// TC-091-03: Method Gating on Parameterized Subpath (SEC-30)
+func TestTranscoder_WrongMethodOnParameterizedRoute(t *testing.T) {
+	var grpcCalls int64
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&grpcCalls, 1)
+		w.Header().Set("Content-Type", "application/grpc")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/users/:id",
+				GRPCMethod:  "/user.UserService/GetUser",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	_, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	// Issue POST to GET-only parameterized route
+	req, _ := httpparser.NewRequest("POST", "/v1/users/usr-777", "HTTP/1.1")
+	res := httpparser.NewResponse()
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("want 405 Method Not Allowed, got %d: %s", res.StatusCode, res.Body.String())
+	}
+
+	if calls := atomic.LoadInt64(&grpcCalls); calls != 0 {
+		t.Errorf("expected 0 upstream calls on 405, got %d", calls)
+	}
+}
+
+// TC-091-04: Segment Count and Pattern Mismatch Fall-Through (SEC-30)
+func TestTranscoder_SegmentCountMismatch_NotFound(t *testing.T) {
+	var grpcCalls int64
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&grpcCalls, 1)
+		w.Header().Set("Content-Type", "application/grpc")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/users/:id",
+				GRPCMethod:  "/user.UserService/GetUser",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	_, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	// Request 1: Missing parameter segment (/v1/users)
+	req1, _ := httpparser.NewRequest("GET", "/v1/users", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if res1.StatusCode != http.StatusNotFound {
+		t.Errorf("req1: want 404, got %d", res1.StatusCode)
+	}
+
+	// Request 2: Excess segments (/v1/users/usr-777/extra)
+	req2, _ := httpparser.NewRequest("GET", "/v1/users/usr-777/extra", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if res2.StatusCode != http.StatusNotFound {
+		t.Errorf("req2: want 404, got %d", res2.StatusCode)
+	}
+
+	if calls := atomic.LoadInt64(&grpcCalls); calls != 0 {
+		t.Errorf("expected 0 upstream calls on 404, got %d", calls)
+	}
+}
+
+// TC-091-05: Unit Test Coverage for MatchPathPattern (SEC-30)
+func TestTranscoder_MatchPathPattern(t *testing.T) {
+	tests := []struct {
+		pattern string
+		path    string
+		want    bool
+	}{
+		{"/v1/users/:id", "/v1/users/usr-123", true},
+		{"/v1/users/:id", "/v1/users/usr-123/", true},
+		{"/v1/users/:id", "/v1/users", false},
+		{"/v1/users/:id", "/v1/users/usr-123/extra", false},
+		{"/v1/users/:id", "/v1/items/usr-123", false},
+		{"/v1/orgs/:org/users/:user", "/v1/orgs/acme/users/alice", true},
+		{"/v1/orgs/:org/users/:user", "/v1/orgs/acme/users", false},
+		{"/v1/orgs/:org/users/:user", "/v1/orgs/acme/projects/alice", false},
+		{"/v1/items/:id/details", "/v1/items/itm-999/details", true},
+		{"/v1/items/:id/details", "/v1/items/itm-999/settings", false},
+		{"/v1/users/:id", "/v1/users//", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("%s_vs_%s", tt.pattern, tt.path), func(t *testing.T) {
+			got := MatchPathPattern(tt.pattern, tt.path)
+			if got != tt.want {
+				t.Errorf("MatchPathPattern(%q, %q) = %v, want %v", tt.pattern, tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
+// TC-091-06: Concurrency & Race Safety for Parameterized Subpaths (SEC-30)
+func TestTranscoder_ParameterizedSubpath_ConcurrencyRaceSafety(t *testing.T) {
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/users/:id",
+				GRPCMethod:  "/user.UserService/GetUser",
+				UpstreamURL: grpcServer.URL,
+			},
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/users/:id/orders/:orderId",
+				GRPCMethod:  "/order.OrderService/GetOrder",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	_, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	const totalGoroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(totalGoroutines)
+
+	for i := 0; i < totalGoroutines; i++ {
+		idx := i
+		go func() {
+			defer wg.Done()
+
+			res := httpparser.NewResponse()
+			switch idx % 3 {
+			case 0:
+				// Valid single-parameter request
+				req, _ := httpparser.NewRequest("GET", fmt.Sprintf("/v1/users/user-%d", idx), "HTTP/1.1")
+				r.ServeHTTP(req, res)
+				if res.StatusCode != http.StatusOK {
+					t.Errorf("goroutine %d: want 200, got %d", idx, res.StatusCode)
+				}
+			case 1:
+				// Valid multi-level parameter request
+				req, _ := httpparser.NewRequest("GET", fmt.Sprintf("/v1/users/user-%d/orders/order-%d", idx, idx), "HTTP/1.1")
+				r.ServeHTTP(req, res)
+				if res.StatusCode != http.StatusOK {
+					t.Errorf("goroutine %d: want 200, got %d", idx, res.StatusCode)
+				}
+			case 2:
+				// Wrong method request -> 405
+				req, _ := httpparser.NewRequest("POST", fmt.Sprintf("/v1/users/user-%d", idx), "HTTP/1.1")
+				r.ServeHTTP(req, res)
+				if res.StatusCode != http.StatusMethodNotAllowed {
+					t.Errorf("goroutine %d: want 405, got %d", idx, res.StatusCode)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+

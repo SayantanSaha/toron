@@ -10,13 +10,16 @@ depends_on:
   - REQ-049
   - REQ-089
   - REQ-090
+  - REQ-091
 
 derived_from:
   - ADR-044
   - ADR-084
   - ADR-085
+  - ADR-086
   - SEC-28
   - SEC-29
+  - SEC-30
 
 documents:
   - REST-TO-GRPC-TRANSCODING-GUIDE
@@ -36,6 +39,10 @@ Toron Edge Gateway features a native, zero-dependency **REST-to-gRPC Transcoding
 ## 🌟 Key Features
 
 * **Zero External Dependencies**: Implements JSON payload parsing, path parameter extraction, gRPC 5-byte wire framing, and status code mapping using Go stdlib without protobuf compiler dependencies.
+* **Direct Parameterized Subpath Routing ([`SEC-30`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L411-L419), CWE-284 / CWE-400)**:
+  * **Elimination of Empty Upstream Proxies**: Completely removed dummy upstream reverse proxy registration that previously caused parameterized REST requests to abort with `502 Bad Gateway: No upstream target available`.
+  * **Native In-Process Prefix Binding**: Parameterized endpoints (e.g. `GET /v1/users/:id`, `GET /v1/users/:id/orders/:orderId`) bind directly to `Router.HandlePrefixWithMatcher` with path pattern validation (`MatchPathPattern`), executing cleanly through `router.ServeHTTP`.
+  * **Multi-Level Route Segregation & Method Gating**: Multiple routes sharing common path prefixes are cleanly segregated without route shadowing; invalid methods return `405 Method Not Allowed`, and segment count mismatches return `404 Not Found`.
 * **Hop-by-Hop Header Sanitization & Strict RFC 7540 Compliance ([`SEC-29`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L403-L411), CWE-444 / CWE-436)**:
   * **Static Hop-by-Hop Header Stripping**: Strips standard RFC 7230 / RFC 7540 connection-specific headers (`Connection`, `Keep-Alive`, `Upgrade`, `Proxy-Connection`, `Transfer-Encoding`, `Proxy-Authenticate`, `Proxy-Authorization`, `Trailer`, `Trailers`, `Host`) before dispatching HTTP/2 gRPC requests.
   * **Dynamic Connection Token Parsing**: Dynamically parses comma-delimited tokens from the client `Connection` header and strips matching nominated headers per RFC 7230 §6.1 / RFC 9110 §7.6.1.

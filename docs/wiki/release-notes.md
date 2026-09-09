@@ -1,5 +1,42 @@
 # Release Notes
 
+## 2026-09-09 - Toron v1.5.11 Security Release (SEC-30: Direct Parameterized Subpath Routing and Empty Prefix Proxy Elimination in REST-to-gRPC Transcoder)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-30 (`pkg/transcoder`, `pkg/router`)**: Resolved Subpath Routing Interception and Denial of Service vulnerability [`SEC-30`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L411-L419) ([CWE-284](https://cwe.mitre.org/data/definitions/284.html), [CWE-400](https://cwe.mitre.org/data/definitions/400.html), [`SR-081 Finding 8`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-081.md#L185-L202), [`SR-090`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-090.md)) in the REST-to-gRPC Transcoding Engine and Edge Router.
+- **Router Method-Aware Prefix Routing & Path Matcher API (`pkg/router/router.go`)**: Extended [`Router`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go) with [`HandlePrefix`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go) and [`HandlePrefixWithMatcher`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go), allowing in-process Go handlers to be registered directly on path prefixes with HTTP method gating and custom path matchers ([`TASK-108`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-108.md)).
+- **Elimination of Empty Upstream Reverse Proxies (`pkg/transcoder/transcoder.go`)**: Completely removed dummy upstream reverse proxy registration with 0 targets (`RoutePrefix("upstream", ...)`) that previously caused all parameterized REST requests to abort with `502 Bad Gateway: No upstream target available` ([`TASK-109`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-109.md)).
+- **Direct Parameterized Dispatch & Pattern Matching (`pkg/transcoder/transcoder.go`)**: Implemented `MatchPathPattern` to validate literal segments and wildcard parameter tokens. Parameterized routes (`/v1/users/:id`, `/v1/users/:id/orders/:orderId`) dispatch directly through [`Router.ServeHTTP`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go) to `HandleTranscode` with `200 OK` responses ([`TASK-109`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-109.md)).
+- **Multi-Level Route Segregation & Method Gating**: Multiple routes sharing common path prefixes are cleanly segregated without route shadowing; invalid methods return `405 Method Not Allowed`, and segment count mismatches return `404 Not Found` without upstream leakage ([`TASK-108`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-108.md), [`TASK-109`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-109.md)).
+- **Zero External Dependencies**: Implemented strictly with the Go standard library (`strings`, `net/http`, `sync`, `net/url`).
+- **Automated Verification Suite (`pkg/transcoder/transcoder_test.go`, `pkg/router/router_test.go`)**: Validated direct parameterized subpath dispatch through `router.ServeHTTP` (fulfilling Missing Security Test 5 in `SR-081`), multi-level route segregation, 405 method mismatch, 404 segment mismatch, and concurrency under `go test -race` ([`TASK-110`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-110.md), [`TC-091`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-091.md)).
+
+### Added
+- **Router APIs (`pkg/router/router.go`)**: `HandlePrefix(method, prefix string, handler HandlerFunc)` and `HandlePrefixWithMatcher(method, host, prefix string, headers map[string]string, matcher func(path string) bool, handler HandlerFunc)`.
+- **Transcoder Helper (`pkg/transcoder/transcoder.go`)**: `MatchPathPattern(pattern, path string) bool`.
+- **Automated Tests (`pkg/router/router_test.go`, `pkg/transcoder/transcoder_test.go`)**:
+  - `TestRouter_HandlePrefix_MethodAndMatcher`: Router prefix handler and matcher dispatching.
+  - `TestTranscoder_ParameterizedSubpathDispatch` (TC-091-01): Verifies parameterized `GET /v1/users/usr-777` dispatches through `router.ServeHTTP` returning 200 OK.
+  - `TestTranscoder_MultiLevelRouteSegregation` (TC-091-02): Verifies shared prefix route segregation.
+  - `TestTranscoder_WrongMethodOnParameterizedRoute` (TC-091-03): Verifies 405 Method Not Allowed.
+  - `TestTranscoder_SegmentCountMismatch_NotFound` (TC-091-04): Verifies 404 Not Found.
+  - `TestTranscoder_MatchPathPattern` (TC-091-05): Unit test coverage for pattern matcher.
+  - `TestTranscoder_ParameterizedSubpath_ConcurrencyRaceSafety` (TC-091-06): 50 concurrent requests under `-race`.
+
+### Changed
+- **Transcoder Route Registration (`pkg/transcoder/transcoder.go`)**: Replaced dummy upstream proxy with direct `HandlePrefixWithMatcher` binding for parameterized routes and `Handle` for exact routes.
+
+### Related Tasks & Requirements
+- [`TASK-108`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-108.md): Router Method-Aware Prefix Routing & Path Matcher Support
+- [`TASK-109`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-109.md): Direct Parameterized Subpath Routing & Empty Upstream Proxy Elimination in Transcoder
+- [`TASK-110`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-110.md): Automated Verification Suite for Parameterized Transcoder Subpath Dispatch
+- [`REQ-091`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-091.md): Direct Parameterized Subpath Routing and Elimination of Empty Prefix Proxy in REST-to-gRPC Transcoder
+- [`ADR-086`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-086.md): Direct Parameterized Subpath Routing and Elimination of Empty Prefix Proxy in REST-to-gRPC Transcoder
+- [`TC-091`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-091.md): Test Suite for Parameterized Subpath Routing and Empty Prefix Proxy Elimination
+- [`SEC-30`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L411-L419): Subpath Routing Interception & 502 Denial in REST-to-gRPC Transcoder
+- [`SR-090`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-090.md): Security Review of SEC-30 Remediation
+- [`CR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-087.md): Code Review of Direct Parameterized Subpath Routing and Empty Prefix Proxy Elimination
+
 ## 2026-09-09 - Toron v1.5.10 Security Release (SEC-29: Hop-by-Hop Header Sanitization and Strict RFC 7540/9113 Protocol Compliance in REST-to-gRPC Transcoder)
 
 ### Milestone Summary

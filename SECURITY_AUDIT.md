@@ -47,7 +47,7 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
 | **P1** | **SEC-26** | Unbounded Goroutine & Socket Allocation in Layer 4 UDP/TCP Proxies | **High** | CWE-400 | **Resolved** | [`TASK-093`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-093.md)..[`096`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-096.md) | `TC-087`, `SR-086`, `CR-083` | `c53d655` |
 | **P2** | **SEC-27** | Missing Maximum Idle Deadlines on Upgraded Protocol Connections | **Medium** | CWE-400 | **Resolved** | [`TASK-097`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-097.md)..[`100`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-100.md) | `TC-088`, `SR-087`, `CR-084` | `16a4df4` |
 | **P2** | **SEC-28** | Unbounded Request Body Ingestion in REST-to-gRPC Transcoder | **Medium** | CWE-400, CWE-770 | **Resolved** | [`TASK-101`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-101.md)..[`104`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-104.md) | `TC-089`, `SR-088`, `CR-085` | `b789f93` |
-| **P3** | **SEC-29** | Hop-by-Hop Header Leakage to Upstream in REST-to-gRPC Transcoder | **Low** | CWE-444, CWE-436 | **Open** | Pending | `SR-081` | Pending |
+| **P3** | **SEC-29** | Hop-by-Hop Header Leakage to Upstream in REST-to-gRPC Transcoder | **Low** | CWE-444, CWE-436 | **Resolved** | [`TASK-105`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-105.md)..[`107`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-107.md) | `TC-090`, `SR-089`, `CR-086` | `e1d86bc` |
 | **P2** | **SEC-30** | Subpath Routing Interception & 502 Denial in REST-to-gRPC Transcoder | **Medium** | CWE-284, CWE-400 | **Open** | Pending | `SR-081` | Pending |
 
 ---
@@ -454,14 +454,14 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
   4. Implement worker pools and connection limits in Layer 4 proxies (`SEC-26`) - **COMPLETED** (`TASK-093`..`096`, `TC-087`, `SR-086`, `CR-083`).
   5. Support idle deadlines on upgraded WebSocket connections (`SEC-27`) - **COMPLETED** (`TASK-097`..`100`, `TC-088`, `SR-087`, `CR-084`).
   6. Bound request bodies in gRPC transcoder (`SEC-28`) - **COMPLETED** (`TASK-101`..`104`, `TC-089`, `SR-088`, `CR-085`).
-  7. Filter hop-by-hop headers in gRPC transcoder (`SEC-29`).
+  7. Filter hop-by-hop headers in gRPC transcoder (`SEC-29`) - **COMPLETED** (`TASK-105`..`107`, `TC-090`, `SR-089`, `CR-086`).
   8. Fix subpath dispatch in gRPC transcoder routing (`SEC-30`).
 
 ---
 
 ## 5. Remediation Status & Verification Summary
 
-28 security vulnerabilities (`SEC-01` through `SEC-28`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
+29 security vulnerabilities (`SEC-01` through `SEC-29`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 - **`SEC-23`**: Verified in `TC-084` (`TASK-084`..`086`, `defc678`).
@@ -470,7 +470,8 @@ A comprehensive post-remediation security audit ([`SR-081`](file:///Users/sneha/
 - **`SEC-26`**: Verified in `TC-087` (`TASK-093`..`096`).
 - **`SEC-27`**: Verified in `TC-088` (`TASK-097`..`100`).
 - **`SEC-28`**: Verified in `TC-089` (`TASK-101`..`104`).
+- **`SEC-29`**: Verified in `TC-090` (`TASK-105`..`107`).
 
-2 remaining findings in extended subsystems (`SEC-29` through `SEC-30`) remain documented and scheduled for remediation.
+1 remaining finding in extended subsystems (`SEC-30`) remains documented and scheduled for remediation.
 
 

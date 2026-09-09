@@ -9,11 +9,14 @@ updated: 2026-09-09
 depends_on:
   - REQ-049
   - REQ-089
+  - REQ-090
 
 derived_from:
   - ADR-044
   - ADR-084
+  - ADR-085
   - SEC-28
+  - SEC-29
 
 documents:
   - REST-TO-GRPC-TRANSCODING-GUIDE
@@ -33,6 +36,11 @@ Toron Edge Gateway features a native, zero-dependency **REST-to-gRPC Transcoding
 ## 🌟 Key Features
 
 * **Zero External Dependencies**: Implements JSON payload parsing, path parameter extraction, gRPC 5-byte wire framing, and status code mapping using Go stdlib without protobuf compiler dependencies.
+* **Hop-by-Hop Header Sanitization & Strict RFC 7540 Compliance ([`SEC-29`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L403-L411), CWE-444 / CWE-436)**:
+  * **Static Hop-by-Hop Header Stripping**: Strips standard RFC 7230 / RFC 7540 connection-specific headers (`Connection`, `Keep-Alive`, `Upgrade`, `Proxy-Connection`, `Transfer-Encoding`, `Proxy-Authenticate`, `Proxy-Authorization`, `Trailer`, `Trailers`, `Host`) before dispatching HTTP/2 gRPC requests.
+  * **Dynamic Connection Token Parsing**: Dynamically parses comma-delimited tokens from the client `Connection` header and strips matching nominated headers per RFC 7230 §6.1 / RFC 9110 §7.6.1.
+  * **Strict `TE: trailers` Invariant**: Discards client `TE` values (e.g. `gzip`, `deflate`) and strictly enforces single-valued `TE: trailers` per RFC 7540 §8.1.2.2 / RFC 9113 §8.2.2, preventing upstream gRPC backends from terminating streams with `RST_STREAM (PROTOCOL_ERROR 0x1)`.
+  * **Metadata Preservation**: Preserves application authentication, tracing, and custom metadata headers (`Authorization`, `X-Request-Id`, `Traceparent`, `User-Agent`) intact with full byte fidelity.
 * **Bounded Ingestion & 413 Rejection ([`SEC-28`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L393-L401), CWE-400 / CWE-770)**: Protects against memory exhaustion and OOM kills via configurable `max_body_bytes` (default: 4 MB / `4194304` bytes):
   * **Declared `Content-Length` Fast-Fail**: Requests declaring payload size $> \text{max\_body\_bytes}$ are rejected immediately with `HTTP 413 Payload Too Large` without socket reading or memory allocation.
   * **Bounded Stream Over-Read**: Chunked or undeclared streams are capped via `io.LimitReader` and rejected with `HTTP 413` if bytes exceed the ceiling, preventing `json.Unmarshal` heap explosion.

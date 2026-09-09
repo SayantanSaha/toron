@@ -591,3 +591,423 @@ func TestHandleTranscode_ConcurrencyRaceSafety(t *testing.T) {
 	wg.Wait()
 }
 
+// TC-090-01: Standard Hop-by-Hop Header Stripping (SEC-29)
+func TestHandleTranscode_StandardHopByHop_Stripped(t *testing.T) {
+	var receivedHeaders http.Header
+	var mu sync.Mutex
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedHeaders = r.Header.Clone()
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/test",
+				GRPCMethod:  "/test.TestService/TestMethod",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	hdr := make(httpparser.Header)
+	hdr.Set("Connection", "keep-alive")
+	hdr.Set("Keep-Alive", "timeout=10")
+	hdr.Set("Upgrade", "websocket")
+	hdr.Set("Proxy-Connection", "keep-alive")
+	hdr.Set("Transfer-Encoding", "chunked")
+	hdr.Set("Proxy-Authenticate", "Basic")
+	hdr.Set("Proxy-Authorization", "Basic dXNlcjpwYXNz")
+	hdr.Set("Trailer", "X-Custom-Trailer")
+
+	req := &httpparser.Request{
+		Method: "POST",
+		Path:   "/v1/test",
+		Header: hdr,
+		Body:   bytes.NewReader([]byte(`{}`)),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want status 200, got %d: %s", res.StatusCode, res.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	prohibited := []string{
+		"Connection",
+		"Keep-Alive",
+		"Upgrade",
+		"Proxy-Connection",
+		"Transfer-Encoding",
+		"Proxy-Authenticate",
+		"Proxy-Authorization",
+		"Trailer",
+		"Trailers",
+	}
+
+	for _, h := range prohibited {
+		if val := receivedHeaders.Get(h); val != "" {
+			t.Errorf("expected hop-by-hop header %q to be stripped, got %q", h, val)
+		}
+	}
+}
+
+// TC-090-02: Dynamic Connection Token Stripping (SEC-29)
+func TestHandleTranscode_DynamicConnectionTokens_Stripped(t *testing.T) {
+	var receivedHeaders http.Header
+	var mu sync.Mutex
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedHeaders = r.Header.Clone()
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/test",
+				GRPCMethod:  "/test.TestService/TestMethod",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	hdr := make(httpparser.Header)
+	hdr.Set("Connection", "X-Custom-Hop, X-Another-Hop, close")
+	hdr.Set("X-Custom-Hop", "secret-token")
+	hdr.Set("X-Another-Hop", "temporary-value")
+	hdr.Set("X-Valid-Header", "keep-me")
+
+	req := &httpparser.Request{
+		Method: "POST",
+		Path:   "/v1/test",
+		Header: hdr,
+		Body:   bytes.NewReader([]byte(`{}`)),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want status 200, got %d: %s", res.StatusCode, res.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if val := receivedHeaders.Get("X-Custom-Hop"); val != "" {
+		t.Errorf("expected dynamic hop-by-hop header X-Custom-Hop to be stripped, got %q", val)
+	}
+	if val := receivedHeaders.Get("X-Another-Hop"); val != "" {
+		t.Errorf("expected dynamic hop-by-hop header X-Another-Hop to be stripped, got %q", val)
+	}
+	if val := receivedHeaders.Get("Connection"); val != "" {
+		t.Errorf("expected Connection header to be stripped, got %q", val)
+	}
+	if val := receivedHeaders.Get("X-Valid-Header"); val != "keep-me" {
+		t.Errorf("expected X-Valid-Header to be preserved as 'keep-me', got %q", val)
+	}
+}
+
+// TC-090-03: Strict TE: trailers Invariant (SEC-29)
+func TestHandleTranscode_TE_StrictTrailersInvariant(t *testing.T) {
+	var receivedTE []string
+	var mu sync.Mutex
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedTE = r.Header["Te"]
+		if len(receivedTE) == 0 {
+			receivedTE = r.Header["TE"]
+		}
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/test",
+				GRPCMethod:  "/test.TestService/TestMethod",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	hdr := make(httpparser.Header)
+	hdr.Set("TE", "gzip, deflate")
+
+	req := &httpparser.Request{
+		Method: "POST",
+		Path:   "/v1/test",
+		Header: hdr,
+		Body:   bytes.NewReader([]byte(`{}`)),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want status 200, got %d: %s", res.StatusCode, res.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(receivedTE) != 1 || receivedTE[0] != "trailers" {
+		t.Errorf("expected TE header to be exactly [trailers], got %v", receivedTE)
+	}
+}
+
+// TC-090-04: Host Header Sanitization (SEC-29)
+func TestHandleTranscode_HostHeader_Stripped(t *testing.T) {
+	var receivedHostHeader string
+	var mu sync.Mutex
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedHostHeader = r.Header.Get("Host")
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/test",
+				GRPCMethod:  "/test.TestService/TestMethod",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	hdr := make(httpparser.Header)
+	hdr.Set("Host", "malicious.client.com")
+
+	req := &httpparser.Request{
+		Method: "POST",
+		Path:   "/v1/test",
+		Header: hdr,
+		Body:   bytes.NewReader([]byte(`{}`)),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want status 200, got %d: %s", res.StatusCode, res.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if receivedHostHeader == "malicious.client.com" {
+		t.Errorf("expected client Host header to be stripped from Header, got %q", receivedHostHeader)
+	}
+}
+
+// TC-090-05: Application Metadata Preservation (SEC-29)
+func TestHandleTranscode_ApplicationMetadata_Preserved(t *testing.T) {
+	var receivedHeaders http.Header
+	var mu sync.Mutex
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		receivedHeaders = r.Header.Clone()
+		mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/test",
+				GRPCMethod:  "/test.TestService/TestMethod",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	hdr := make(httpparser.Header)
+	hdr.Set("Authorization", "Bearer my-secret-jwt")
+	hdr.Set("X-Request-Id", "req-abcdef-12345")
+	hdr.Set("Traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01")
+	hdr.Set("User-Agent", "MyCustomClient/1.0")
+
+	req := &httpparser.Request{
+		Method: "POST",
+		Path:   "/v1/test",
+		Header: hdr,
+		Body:   bytes.NewReader([]byte(`{}`)),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("want status 200, got %d: %s", res.StatusCode, res.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	expected := map[string]string{
+		"Authorization": "Bearer my-secret-jwt",
+		"X-Request-Id":  "req-abcdef-12345",
+		"Traceparent":   "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		"User-Agent":    "MyCustomClient/1.0",
+	}
+
+	for k, expectedVal := range expected {
+		if got := receivedHeaders.Get(k); got != expectedVal {
+			t.Errorf("header %q = %q, want %q", k, got, expectedVal)
+		}
+	}
+}
+
+// TC-090-06: Concurrency & Race Safety Verification (SEC-29)
+func TestHandleTranscode_HeaderSanitization_ConcurrencyRaceSafety(t *testing.T) {
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify hop-by-hop headers are never received upstream
+		if r.Header.Get("Connection") != "" || r.Header.Get("Upgrade") != "" || r.Header.Get("X-Hop-Token") != "" {
+			http.Error(w, "Hop-by-hop header leaked", http.StatusBadRequest)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled: true,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/concurrent",
+				GRPCMethod:  "/test.TestService/Concurrent",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	const totalGoroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(totalGoroutines)
+
+	for i := 0; i < totalGoroutines; i++ {
+		idx := i
+		go func() {
+			defer wg.Done()
+
+			hdr := make(httpparser.Header)
+			if idx%2 == 0 {
+				hdr.Set("Connection", "X-Hop-Token, keep-alive")
+				hdr.Set("X-Hop-Token", fmt.Sprintf("val-%d", idx))
+				hdr.Set("Upgrade", "websocket")
+				hdr.Set("TE", "gzip")
+			}
+			hdr.Set("Authorization", fmt.Sprintf("Bearer token-%d", idx))
+			hdr.Set("X-Request-Id", fmt.Sprintf("req-%d", idx))
+
+			req := &httpparser.Request{
+				Method: "POST",
+				Path:   "/v1/concurrent",
+				Header: hdr,
+				Body:   bytes.NewReader([]byte(`{}`)),
+			}
+			res := httpparser.NewResponse()
+
+			engine.HandleTranscode(req, res, engine.rules[0])
+
+			if res.StatusCode != http.StatusOK {
+				t.Errorf("goroutine %d: want status 200, got %d", idx, res.StatusCode)
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+

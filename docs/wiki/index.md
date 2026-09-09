@@ -19,6 +19,7 @@ depends_on:
   - REQ-087
   - REQ-088
   - REQ-089
+  - REQ-090
 
 derived_from:
   - PRD.md
@@ -27,9 +28,11 @@ derived_from:
   - ADR-082
   - ADR-083
   - ADR-084
+  - ADR-085
   - SEC-26
   - SEC-27
   - SEC-28
+  - SEC-29
 
 documents:
   - TORON-DOCUMENTATION-INDEX
@@ -40,7 +43,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.9 Release)
+# Toron Documentation Wiki (v1.5.10 Release)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -62,7 +65,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 
 ### 🌐 Routing, Proxying & Resilience
 - [Layer 4 TCP & UDP Transport Proxies](./features/layer4-proxy.md) – Raw stream and datagram proxying with bounded concurrency, buffer recycling, and Slowloris idle deadline protection.
-- [REST-to-gRPC Transcoding Engine](./features/grpc-transcoding.md) – Direct JSON REST to binary Protobuf gRPC RPC transcoding.
+- [REST-to-gRPC Transcoding Engine](./features/grpc-transcoding.md) – Direct JSON REST to binary Protobuf gRPC RPC transcoding, bounded request limits (HTTP 413), and hop-by-hop header sanitization (RFC 7540).
 - [Service Mesh Sidecar Mode](./features/service-mesh-sidecar.md) – Lightweight pod-to-pod mTLS, bounded request body limits (HTTP 413), and weighted traffic splitting.
 - [Native Kubernetes Ingress Controller](./features/kubernetes-ingress.md) – Zero-dependency Kubernetes `networking.k8s.io/v1` Ingress Controller.
 - [OCI Container Auto-Discovery](./features/oci-container-auto-discovery.md) – Vendor-agnostic Docker & Podman Unix socket container auto-discovery.
@@ -90,4 +93,4 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.9).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.10).

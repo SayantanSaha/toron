@@ -1,5 +1,39 @@
 # Release Notes
 
+## 2026-09-09 - Toron v1.5.10 Security Release (SEC-29: Hop-by-Hop Header Sanitization and Strict RFC 7540/9113 Protocol Compliance in REST-to-gRPC Transcoder)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-29 (`pkg/transcoder`)**: Resolved protocol error Denial-of-Service and HTTP request smuggling vulnerability [`SEC-29`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L403-L411) ([CWE-444](https://cwe.mitre.org/data/definitions/444.html), [CWE-436](https://cwe.mitre.org/data/definitions/436.html), [`SR-081 Finding 7`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-081.md#L162-L171), [`SR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-089.md)) in the REST-to-gRPC Transcoding Engine, preventing hop-by-hop header leakage to upstream gRPC backends.
+- **Static Hop-by-Hop Header Sanitization (`pkg/transcoder/transcoder.go`)**: Strips all standard RFC 7230 §6.1 / RFC 7540 §8.1.2.2 / RFC 9113 §8.2.2 connection-specific headers (`Connection`, `Keep-Alive`, `Upgrade`, `Proxy-Connection`, `Transfer-Encoding`, `Proxy-Authenticate`, `Proxy-Authorization`, `Trailer`, `Trailers`, `Host`) before dispatching HTTP/2 gRPC requests ([`TASK-105`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-105.md)).
+- **Dynamic Connection Token Parsing (`pkg/transcoder/transcoder.go`)**: Dynamically parses comma-delimited tokens in client `Connection` headers and strips matching headers per RFC 7230 §6.1 / RFC 9110 §7.6.1 ([`TASK-105`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-105.md)).
+- **Strict `TE: trailers` Invariant Enforcement (`pkg/transcoder/transcoder.go`)**: Discards client `TE` values (e.g., `gzip`, `deflate`) and strictly enforces single-valued `TE: trailers` (RFC 7540 §8.1.2.2), preventing upstream gRPC backends from terminating streams with `RST_STREAM (PROTOCOL_ERROR 0x1)` ([`TASK-106`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-106.md)).
+- **Host Header Sanitization & Metadata Preservation (`pkg/transcoder/transcoder.go`)**: Strips client `Host` header to avoid host spoofing and upstream authority mismatch, while preserving legitimate application authentication and tracing metadata (`Authorization`, `X-Request-Id`, `Traceparent`, `User-Agent`) intact ([`TASK-106`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-106.md)).
+- **Zero External Dependencies**: Implemented strictly with the Go standard library (`strings`, `net/http`, `sync`).
+- **Automated Verification Suite (`pkg/transcoder/transcoder_test.go`)**: Validated standard hop-by-hop stripping, dynamic token stripping, TE trailers invariant, Host header stripping, metadata preservation, and concurrency under `go test -race` ([`TASK-107`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-107.md), [`TC-090`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-090.md)).
+
+### Added
+- **Automated Tests (`pkg/transcoder/transcoder_test.go`)**:
+  - `TestHandleTranscode_StandardHopByHop_Stripped`: Verifies stripping of standard hop-by-hop headers.
+  - `TestHandleTranscode_DynamicConnectionTokens_Stripped`: Verifies dynamic token extraction from Connection header and stripping.
+  - `TestHandleTranscode_TE_StrictTrailersInvariant`: Verifies single-valued `TE: trailers` enforcement.
+  - `TestHandleTranscode_HostHeader_Stripped`: Verifies client Host header removal.
+  - `TestHandleTranscode_ApplicationMetadata_Preserved`: Verifies preservation of authentication and tracing headers.
+  - `TestHandleTranscode_HeaderSanitization_ConcurrencyRaceSafety`: 50 concurrent requests under `-race`.
+
+### Changed
+- **REST-to-gRPC Header Forwarding (`pkg/transcoder/transcoder.go`)**: Filtered out all standard and dynamic hop-by-hop headers, enforced canonical `Content-Type: application/grpc` and `TE: trailers`.
+
+### Related Tasks & Requirements
+- [`TASK-105`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-105.md): Static & Dynamic Hop-by-Hop Header Sanitization in Transcoder
+- [`TASK-106`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-106.md): Strict TE: trailers Invariant & Metadata Preservation in Transcoder
+- [`TASK-107`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-107.md): Automated Verification Suite for Transcoder Protocol Header Compliance
+- [`REQ-090`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-090.md): Hop-by-Hop Header Sanitization and Strict Protocol Invariant Enforcement in REST-to-gRPC Transcoder
+- [`ADR-085`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-085.md): Hop-by-Hop Header Sanitization and Canonical gRPC Wire Compliance in Transcoder
+- [`TC-090`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-090.md): Test Suite for Transcoder Hop-by-Hop Header Sanitization and Protocol Compliance
+- [`SEC-29`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L403-L411): Hop-by-Hop Header Leakage to Upstream in REST-to-gRPC Transcoder
+- [`SR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-089.md): Security Review of SEC-29 Remediation
+- [`CR-086`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-086.md): Code Review of REST-to-gRPC Transcoder Hop-by-Hop Header Sanitization and Protocol Compliance
+
 ## 2026-09-09 - Toron v1.5.9 Security Release (SEC-28: Bounded Request Body Ingestion and 413 Payload Too Large Rejection in REST-to-gRPC Transcoder)
 
 ### Milestone Summary

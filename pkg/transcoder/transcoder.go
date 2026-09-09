@@ -93,6 +93,22 @@ func (e *Engine) registerRoutes() {
 	}
 }
 
+// transcoderHopByHopHeaders defines standard connection-specific headers that MUST NOT
+// be forwarded to upstream HTTP/2 gRPC services per RFC 7230 §6.1, RFC 7540 §8.1.2.2, and RFC 9113 §8.2.2.
+var transcoderHopByHopHeaders = map[string]bool{
+	"connection":          true,
+	"keep-alive":          true,
+	"proxy-authenticate":  true,
+	"proxy-authorization": true,
+	"te":                  true,
+	"trailer":             true,
+	"trailers":            true,
+	"transfer-encoding":   true,
+	"upgrade":             true,
+	"proxy-connection":    true,
+	"host":                true,
+}
+
 // HandleTranscode processes a REST request, translates parameters into a gRPC wire frame, forwards to gRPC backend, and formats JSON response.
 func (e *Engine) HandleTranscode(req *httpparser.Request, res *httpparser.Response, rule TranscodeRule) {
 	maxBody := e.maxBodyBytes
@@ -197,19 +213,35 @@ func (e *Engine) HandleTranscode(req *httpparser.Request, res *httpparser.Respon
 		return
 	}
 
-	grpcReq.Header.Set("Content-Type", "application/grpc")
-	grpcReq.Header.Set("TE", "trailers")
-
-	// Forward client headers
+	// Build custom hop-by-hop tokens from Connection header (RFC 7230 §6.1 / RFC 9110 §7.6.1)
+	customHopByHop := make(map[string]bool)
 	if req.Header != nil {
-		for k, vv := range req.Header {
-			if !strings.HasPrefix(strings.ToLower(k), "content-") {
-				for _, v := range vv {
-					grpcReq.Header.Add(k, v)
+		if connHdr := req.Header.Get("Connection"); connHdr != "" {
+			for _, tok := range strings.Split(connHdr, ",") {
+				tok = strings.ToLower(strings.TrimSpace(tok))
+				if tok != "" {
+					customHopByHop[tok] = true
 				}
 			}
 		}
 	}
+
+	// Forward client headers, stripping RFC 7230 / RFC 7540 hop-by-hop and content-* headers
+	if req.Header != nil {
+		for k, vv := range req.Header {
+			lowerKey := strings.ToLower(k)
+			if transcoderHopByHopHeaders[lowerKey] || customHopByHop[lowerKey] || strings.HasPrefix(lowerKey, "content-") {
+				continue
+			}
+			for _, v := range vv {
+				grpcReq.Header.Add(k, v)
+			}
+		}
+	}
+
+	// Canonical gRPC wire headers (RFC 7540 §8.1.2.2 strictly requires TE: trailers only)
+	grpcReq.Header.Set("Content-Type", "application/grpc")
+	grpcReq.Header.Set("TE", "trailers")
 
 	resp, err := e.httpClient.Do(grpcReq)
 	if err != nil {

@@ -665,3 +665,71 @@ server:
 		}
 	})
 }
+
+// TC-089-03: Configuration Schema, Default Fallback & Loader Validation (SEC-28)
+func TestTranscoderConfig_MaxBodyBytesSchemaAndValidation(t *testing.T) {
+	t.Run("Subtest 3A (Default and Fallback)", func(t *testing.T) {
+		// Zero value returns default 4MB
+		cfgZero := config.TranscoderConfig{MaxBodyBytes: 0}
+		if got := cfgZero.GetMaxBodyBytes(); got != 4*1024*1024 {
+			t.Errorf("expected default 4MB (4194304), got %d", got)
+		}
+
+		// Negative value returns default 4MB
+		cfgNeg := config.TranscoderConfig{MaxBodyBytes: -100}
+		if got := cfgNeg.GetMaxBodyBytes(); got != 4*1024*1024 {
+			t.Errorf("expected default 4MB (4194304) for negative, got %d", got)
+		}
+
+		// Custom positive value returns exact value
+		cfgCustom := config.TranscoderConfig{MaxBodyBytes: 8 * 1024 * 1024}
+		if got := cfgCustom.GetMaxBodyBytes(); got != 8*1024*1024 {
+			t.Errorf("expected 8MB (8388608), got %d", got)
+		}
+	})
+
+	t.Run("Subtest 3B (YAML and JSON Deserialization)", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		cfgPath := filepath.Join(tmpDir, "config.yaml")
+		yamlData := `
+transcoder:
+  enabled: true
+  max_body_bytes: 2097152
+`
+		if err := os.WriteFile(cfgPath, []byte(yamlData), 0644); err != nil {
+			t.Fatalf("failed to write config yaml: %v", err)
+		}
+
+		appCfg, err := config.LoadFromFiles(cfgPath, "")
+		if err != nil {
+			t.Fatalf("failed to load YAML config: %v", err)
+		}
+		if appCfg.Transcoder.MaxBodyBytes != 2097152 {
+			t.Errorf("expected YAML MaxBodyBytes 2097152, got %d", appCfg.Transcoder.MaxBodyBytes)
+		}
+
+		jsonData := `{"transcoder":{"enabled":true,"max_body_bytes":1048576}}`
+		var jsonCfg config.AppConfig
+		if err := json.Unmarshal([]byte(jsonData), &jsonCfg); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+		if jsonCfg.Transcoder.MaxBodyBytes != 1048576 {
+			t.Errorf("expected JSON MaxBodyBytes 1048576, got %d", jsonCfg.Transcoder.MaxBodyBytes)
+		}
+	})
+
+	t.Run("Subtest 3C (Negative Value Rejection in ValidateConfig)", func(t *testing.T) {
+		cfg := config.DefaultAppConfig()
+		cfg.Static.Enabled = false
+		cfg.Transcoder.MaxBodyBytes = -500
+
+		err := config.ValidateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected ValidateConfig error for negative transcoder.max_body_bytes, got nil")
+		}
+		if !strings.Contains(err.Error(), "transcoder.max_body_bytes must be non-negative") {
+			t.Errorf("expected error containing 'transcoder.max_body_bytes must be non-negative', got: %v", err)
+		}
+	})
+}
+

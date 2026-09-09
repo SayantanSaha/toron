@@ -18,6 +18,7 @@ depends_on:
   - REQ-086
   - REQ-087
   - REQ-088
+  - REQ-089
 
 derived_from:
   - PRD.md
@@ -25,8 +26,10 @@ derived_from:
   - ADR-022
   - ADR-082
   - ADR-083
+  - ADR-084
   - SEC-26
   - SEC-27
+  - SEC-28
 
 documents:
   - TORON-DOCUMENTATION-INDEX
@@ -37,7 +40,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.8 Release)
+# Toron Documentation Wiki (v1.5.9 Release)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -87,4 +90,4 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.8).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.9).

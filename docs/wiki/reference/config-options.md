@@ -189,6 +189,7 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `enabled` | `boolean` | `true` | Enable REST JSON to Protobuf gRPC transcoding |
+| `max_body_bytes` | `integer` | `4194304` (4MB) | Maximum permissible request body size in bytes before HTTP 413 rejection (SEC-28) |
 | `routes` | `list` | `[]` | Transcoding rules (`http_method`, `http_path`, `grpc_method`, `upstream_url`, `field_mappings`) |
 
 ## Section: `server.auth` / `routes[].auth`

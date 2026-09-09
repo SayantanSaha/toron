@@ -128,8 +128,17 @@ type SplitBackend struct {
 
 // TranscoderConfig captures REST JSON to gRPC Protobuf transcoding rules.
 type TranscoderConfig struct {
-	Enabled bool                  `yaml:"enabled" json:"enabled"`
-	Routes  []TranscoderRouteRule `yaml:"routes" json:"routes"`
+	Enabled      bool                  `yaml:"enabled" json:"enabled"`
+	MaxBodyBytes int64                 `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`
+	Routes       []TranscoderRouteRule `yaml:"routes" json:"routes"`
+}
+
+// GetMaxBodyBytes returns the configured maximum request body bytes, or defaults to 4MB (4194304 bytes) if <= 0.
+func (c TranscoderConfig) GetMaxBodyBytes() int64 {
+	if c.MaxBodyBytes > 0 {
+		return c.MaxBodyBytes
+	}
+	return 4 * 1024 * 1024 // 4 MB default matching DefaultMaxGRPCFrameSize
 }
 
 // TranscoderRouteRule captures a REST HTTP route to binary gRPC RPC mapping.
@@ -567,6 +576,9 @@ func DefaultAppConfig() *AppConfig {
 		},
 		Sidecar: SidecarConfig{
 			MaxBodyBytes: 10 * 1024 * 1024,
+		},
+		Transcoder: TranscoderConfig{
+			MaxBodyBytes: 4 * 1024 * 1024,
 		},
 		Logging: LoggingConfig{
 			Level:       "info",

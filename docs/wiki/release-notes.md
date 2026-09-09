@@ -1,5 +1,42 @@
 # Release Notes
 
+## 2026-09-09 - Toron v1.5.9 Security Release (SEC-28: Bounded Request Body Ingestion and 413 Payload Too Large Rejection in REST-to-gRPC Transcoder)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-28 (`pkg/transcoder`, `pkg/config`)**: Resolved Out-Of-Memory (OOM) Denial of Service vulnerability [`SEC-28`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L393-L401) ([CWE-400](https://cwe.mitre.org/data/definitions/400.html), [CWE-770](https://cwe.mitre.org/data/definitions/770.html), [`SR-081 Finding 6`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-081.md#L151-L160), [`SR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-088.md)) in the REST-to-gRPC Transcoding Engine, eliminating unbounded heap allocation from oversized request bodies.
+- **Configurable Transcoder Request Body Limit (`MaxBodyBytes`)**: Added `MaxBodyBytes int64` to [`TranscoderConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L130) (`yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`), defaulting to `4MB` (`4194304` bytes) via [`GetMaxBodyBytes()`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go) to match [`DefaultMaxGRPCFrameSize`](file:///Users/sneha/Developer/toron-research/toron/pkg/transcoder/framer.go#L11) and [`ServerConfig.MaxBodyBytes`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go) ([`TASK-101`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-101.md), [`REQ-089`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-089.md), [`ADR-084`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-084.md)).
+- **Declared `Content-Length` Fast-Fail Rejection (`pkg/transcoder/transcoder.go`)**: Implemented pre-read check on `req.ContentLength`. Incoming requests declaring payload size $> \text{maxBodyBytes}$ are rejected immediately with `HTTP 413 Payload Too Large` without buffer allocation or socket reading ([`TASK-102`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-102.md)).
+- **Bounded Stream Over-Read Protection (`pkg/transcoder/transcoder.go`)**: Replaced unbounded `io.ReadAll(req.Body)` with `io.LimitReader(req.Body, maxBody+1)`. Chunked or undeclared streams exceeding the limit are rejected with `HTTP 413` and skip `json.Unmarshal`, preventing heap memory explosion ([`TASK-103`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-103.md)).
+- **Upstream Backend Isolation**: Verified that under all 413 rejection pathways, zero calls are forwarded to the upstream gRPC backend.
+- **Full-Fidelity In-Limit Forwarding & Non-Mutating Bypass**: Legitimate payloads $\le \text{maxBodyBytes}$ and non-mutating `nil` body requests (`GET`, `DELETE`) pass through transparently.
+- **Zero External Dependencies**: Pure Go standard library implementation (`io`, `net/http`, `encoding/json`, `fmt`, `strconv`, `sync`).
+- **Automated Verification Suite (`pkg/transcoder/transcoder_test.go`, `pkg/config/config_test.go`)**: Validated declared Content-Length fast-fail, stream over-read rejection, default fallback, in-limit forwarding, and concurrency under `go test -race` ([`TASK-104`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-104.md), [`TC-089`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-089.md)).
+
+### Added
+- **Configuration Fields**: `MaxBodyBytes int64` in [`TranscoderConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L130) with `GetMaxBodyBytes()` helper method.
+- **Automated Tests (`pkg/transcoder/transcoder_test.go`, `pkg/config/config_test.go`)**:
+  - `TestTranscoderConfig_MaxBodyBytesSchemaAndValidation`: Schema defaults, fallback, YAML/JSON unmarshaling, negative value rejection.
+  - `TestHandleTranscode_DeclaredContentLength_FastFail`: Fast-fail 413 on declared oversized `Content-Length`.
+  - `TestHandleTranscode_StreamOverRead_Rejection`: Bounded stream over-read rejection with 413.
+  - `TestHandleTranscode_InLimit_Success`: In-limit payload parsed and forwarded with full fidelity.
+  - `TestHandleTranscode_NonMutatingNilBody_Bypass`: Safe handling of `req.Body == nil`.
+  - `TestHandleTranscode_ConcurrencyRaceSafety`: 50 concurrent requests under `-race`.
+
+### Changed
+- **REST Request Ingestion (`pkg/transcoder/transcoder.go`)**: Replaced raw `io.ReadAll` with two-tier fast-fail and `io.LimitReader` bounded reading with HTTP 413 rejection.
+
+### Related Tasks & Requirements
+- [`TASK-101`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-101.md): Configurable Transcoder Request Body Limit Schema
+- [`TASK-102`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-102.md): Fast-Fail Rejection on Declared Content-Length in Transcoder
+- [`TASK-103`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-103.md): Bounded Stream Over-Read Protection & 413 Rejection in Transcoder
+- [`TASK-104`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-104.md): Automated Verification Suite for REST-to-gRPC Transcoder Request Body Limits
+- [`REQ-089`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-089.md): Bounded Request Body Ingestion and 413 Payload Too Large Rejection in REST-to-gRPC Transcoder
+- [`ADR-084`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-084.md): Bounded Request Body Ingestion and 413 Rejection Architecture in REST-to-gRPC Transcoder
+- [`TC-089`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-089.md): Verification Suite for REST-to-gRPC Transcoder Request Body Limits
+- [`SEC-28`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L393-L401): Unbounded Request Body Ingestion in REST-to-gRPC Transcoder
+- [`SR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-088.md): Security Review of SEC-28 Remediation
+- [`CR-085`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-085.md): Code Review of REST-to-gRPC Transcoder Request Body Limiting and 413 Rejection
+
 ## 2026-09-09 - Toron v1.5.8 Security Release (SEC-27: Maximum Idle Deadline Enforcement on Upgraded Protocol and WebSocket Connections)
 
 ### Milestone Summary

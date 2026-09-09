@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,11 +23,12 @@ import (
 
 // Engine manages REST-to-gRPC transcoding routes and HTTP/2 proxy forwarding.
 type Engine struct {
-	mu         sync.RWMutex
-	cfg        config.TranscoderConfig
-	router     *router.Router
-	rules      []TranscodeRule
-	httpClient *http.Client
+	mu           sync.RWMutex
+	cfg          config.TranscoderConfig
+	maxBodyBytes int64
+	router       *router.Router
+	rules        []TranscodeRule
+	httpClient   *http.Client
 }
 
 // NewEngine constructs a REST-to-gRPC Transcoder Engine instance.
@@ -46,11 +48,17 @@ func NewEngine(cfg config.TranscoderConfig, r *router.Router) (*Engine, error) {
 		Timeout: 15 * time.Second,
 	}
 
+	maxBody := cfg.GetMaxBodyBytes()
+	if maxBody <= 0 {
+		maxBody = 4 * 1024 * 1024
+	}
+
 	e := &Engine{
-		cfg:        cfg,
-		router:     r,
-		rules:      rules,
-		httpClient: httpClient,
+		cfg:          cfg,
+		maxBodyBytes: maxBody,
+		router:       r,
+		rules:        rules,
+		httpClient:   httpClient,
 	}
 
 	e.registerRoutes()
@@ -87,12 +95,55 @@ func (e *Engine) registerRoutes() {
 
 // HandleTranscode processes a REST request, translates parameters into a gRPC wire frame, forwards to gRPC backend, and formats JSON response.
 func (e *Engine) HandleTranscode(req *httpparser.Request, res *httpparser.Response, rule TranscodeRule) {
+	maxBody := e.maxBodyBytes
+	if maxBody <= 0 {
+		maxBody = 4 * 1024 * 1024
+	}
+
 	payloadMap := make(map[string]interface{})
 
 	// 1. Parse JSON body if present
 	if req.Body != nil {
-		bodyBytes, err := io.ReadAll(req.Body)
-		if err == nil && len(bodyBytes) > 0 {
+		// Tier 1: Fast-fail on declared Content-Length
+		contentLength := req.ContentLength
+		if contentLength <= 0 && req.Header != nil {
+			if clStr := req.Header.Get("Content-Length"); clStr != "" {
+				if clVal, parseErr := strconv.ParseInt(strings.TrimSpace(clStr), 10, 64); parseErr == nil {
+					contentLength = clVal
+				}
+			}
+		}
+
+		if contentLength > maxBody && contentLength > 0 {
+			res.SetStatus(http.StatusRequestEntityTooLarge)
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(fmt.Sprintf(`{"error":"Payload Too Large: request Content-Length %d exceeds limit of %d bytes"}`, contentLength, maxBody))
+			if closer, ok := req.Body.(io.Closer); ok {
+				_ = closer.Close()
+			}
+			return
+		}
+
+		// Tier 2: Bounded stream read via LimitReader
+		bodyBytes, err := io.ReadAll(io.LimitReader(req.Body, maxBody+1))
+		if err != nil {
+			res.SetStatus(http.StatusBadRequest)
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(fmt.Sprintf(`{"error":"Bad Request: failed to read request body: %v"}`, err))
+			return
+		}
+
+		if int64(len(bodyBytes)) > maxBody {
+			res.SetStatus(http.StatusRequestEntityTooLarge)
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(fmt.Sprintf(`{"error":"Payload Too Large: request body exceeds limit of %d bytes"}`, maxBody))
+			if closer, ok := req.Body.(io.Closer); ok {
+				_ = closer.Close()
+			}
+			return
+		}
+
+		if len(bodyBytes) > 0 {
 			var bodyMap map[string]interface{}
 			if err := json.Unmarshal(bodyBytes, &bodyMap); err == nil {
 				for k, v := range bodyMap {

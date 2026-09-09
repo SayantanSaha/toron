@@ -166,6 +166,9 @@ func validateConfigDefaults(cfg *AppConfig) {
 	if cfg.Sidecar.MaxBodyBytes <= 0 {
 		cfg.Sidecar.MaxBodyBytes = 10 * 1024 * 1024
 	}
+	if cfg.Transcoder.MaxBodyBytes <= 0 {
+		cfg.Transcoder.MaxBodyBytes = 4 * 1024 * 1024
+	}
 }
 
 // ValidateConfig performs strict validation of the configuration structure for dry-run CLI test checks.
@@ -184,6 +187,10 @@ func ValidateConfig(cfg *AppConfig) error {
 
 	if cfg.Server.UpgradeIdleTimeout < 0 {
 		return fmt.Errorf("server.upgrade_idle_timeout must be non-negative, got %v", cfg.Server.UpgradeIdleTimeout)
+	}
+
+	if cfg.Transcoder.MaxBodyBytes < 0 {
+		return fmt.Errorf("transcoder.max_body_bytes must be non-negative, got %d", cfg.Transcoder.MaxBodyBytes)
 	}
 
 	if cfg.Server.HTTPRedirect.Enabled && cfg.Server.HTTPRedirect.Port <= 0 {

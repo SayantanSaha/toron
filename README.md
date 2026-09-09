@@ -652,12 +652,18 @@ sidecar:
 
 ### 29. REST-to-gRPC Transcoding Engine (`pkg/transcoder`)
 
-Toron features a zero-dependency REST-to-gRPC Transcoding Engine (`pkg/transcoder`). It translates incoming RESTful JSON HTTP calls (e.g. `GET /v1/users/123`) into binary Protobuf-encoded HTTP/2 gRPC requests (e.g. `POST /user.UserService/GetUser`), extracts path/query params into JSON payload maps, and converts returning binary gRPC frames and `grpc-status` headers into REST JSON HTTP responses.
+Toron features a zero-dependency REST-to-gRPC Transcoding Engine ([`pkg/transcoder`](file:///Users/sneha/Developer/toron-research/toron/pkg/transcoder)). It translates incoming RESTful JSON HTTP calls (e.g. `GET /v1/users/123`) into binary Protobuf-encoded HTTP/2 gRPC requests (e.g. `POST /user.UserService/GetUser`), extracts path/query params into JSON payload maps, and converts returning binary gRPC frames and `grpc-status` headers into REST JSON HTTP responses, hardened against Denial-of-Service and memory exhaustion ([`SEC-28`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L393-L401), CWE-400 / CWE-770):
+
+* **Configurable Request Body Limit**: Enforces a strict upper byte ceiling (`max_body_bytes`, default `4MB` / `4,194,304` bytes) via [`TranscoderConfig.MaxBodyBytes`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L130).
+* **Declared `Content-Length` Fast-Fail**: Requests declaring `Content-Length` exceeding `max_body_bytes` are rejected immediately with `HTTP 413 Payload Too Large` without reading the stream or allocating heap memory.
+* **Bounded Stream Over-Read**: Chunked or undeclared streams are bounded using `io.LimitReader(req.Body, maxBody+1)`. If the payload exceeds the limit, the server responds with `HTTP 413` and skips `json.Unmarshal`, eliminating heap explosion.
+* **Upstream Backend Isolation**: The upstream gRPC server receives 0 requests on oversized rejections.
 
 **Sample Configuration (`config.yaml`)**:
 ```yaml
 transcoder:
   enabled: true
+  max_body_bytes: 4194304     # 4 MB payload body ceiling (SEC-28)
   routes:
     - http_method: "GET"
       http_path: "/v1/users/:id"
@@ -819,6 +825,18 @@ server:
       enabled: true           # Enable structured JSON security audit logging
       output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
       format: "json"          # Output format (json)
+
+  # REST-to-gRPC Transcoding Engine Settings
+  transcoder:
+    enabled: true             # Enable REST-to-gRPC transcoding
+    max_body_bytes: 4194304   # 4 MB maximum request body payload limit (SEC-28)
+    routes:
+      - http_method: "GET"
+        http_path: "/v1/users/:id"
+        grpc_method: "/user.UserService/GetUser"
+        upstream_url: "http://localhost:9005"
+        field_mappings:
+          id: "userId"
 
 # Logging and Telemetry Output Settings
 logging:

@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 
 	"toron/pkg/config"
@@ -248,3 +251,343 @@ func TestHandleTranscode_OversizedUpstreamFrame(t *testing.T) {
 		t.Errorf("expected 502 Bad Gateway error message, got: %s", string(body))
 	}
 }
+
+// TC-089-01: Declared Content-Length Fast-Fail Rejection (SEC-28)
+func TestHandleTranscode_DeclaredContentLength_FastFail(t *testing.T) {
+	var upstreamCalls int32
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled:      true,
+		MaxBodyBytes: 1024, // 1 KB limit
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/users",
+				GRPCMethod:  "/user.UserService/CreateUser",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	// Payload declaring 2048 bytes (> 1024 maxBodyBytes)
+	req := &httpparser.Request{
+		Method:        "POST",
+		Path:          "/v1/users",
+		ContentLength: 2048,
+		Header:        httpparser.Header{"content-length": []string{"2048"}},
+		Body:          bytes.NewReader(make([]byte, 2048)),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("StatusCode = %d, want 413 (StatusRequestEntityTooLarge)", res.StatusCode)
+	}
+
+	if res.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", res.Header.Get("Content-Type"))
+	}
+
+	bodyBytes, _ := io.ReadAll(res.Body)
+	expectedMsg := "Payload Too Large: request Content-Length 2048 exceeds limit of 1024 bytes"
+	if !strings.Contains(string(bodyBytes), expectedMsg) {
+		t.Errorf("expected body to contain %q, got %q", expectedMsg, string(bodyBytes))
+	}
+
+	// Assert upstream gRPC received 0 calls
+	if calls := atomic.LoadInt32(&upstreamCalls); calls != 0 {
+		t.Errorf("expected upstream calls to be 0, got %d", calls)
+	}
+}
+
+// TC-089-02: Bounded Stream Over-Read Rejection (SEC-28)
+func TestHandleTranscode_StreamOverRead_Rejection(t *testing.T) {
+	var upstreamCalls int32
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled:      true,
+		MaxBodyBytes: 1024, // 1 KB limit
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/users",
+				GRPCMethod:  "/user.UserService/CreateUser",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	// Streaming request with undeclared ContentLength (0), but body delivers 1500 bytes
+	req := &httpparser.Request{
+		Method:        "POST",
+		Path:          "/v1/users",
+		ContentLength: 0,
+		Header:        make(httpparser.Header),
+		Body:          bytes.NewReader(make([]byte, 1500)),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusRequestEntityTooLarge {
+		t.Fatalf("StatusCode = %d, want 413 (StatusRequestEntityTooLarge)", res.StatusCode)
+	}
+
+	if res.Header.Get("Content-Type") != "application/json" {
+		t.Errorf("Content-Type = %q, want application/json", res.Header.Get("Content-Type"))
+	}
+
+	bodyBytes, _ := io.ReadAll(res.Body)
+	expectedMsg := "Payload Too Large: request body exceeds limit of 1024 bytes"
+	if !strings.Contains(string(bodyBytes), expectedMsg) {
+		t.Errorf("expected body to contain %q, got %q", expectedMsg, string(bodyBytes))
+	}
+
+	// Assert upstream gRPC received 0 calls
+	if calls := atomic.LoadInt32(&upstreamCalls); calls != 0 {
+		t.Errorf("expected upstream calls to be 0, got %d", calls)
+	}
+}
+
+// TC-089-04: Full-Fidelity In-Limit Payload Forwarding (SEC-28)
+func TestHandleTranscode_InLimit_Success(t *testing.T) {
+	var upstreamCalls int32
+	var receivedPayload map[string]interface{}
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+
+		frameBytes, err := DecodeGRPCFrame(r.Body)
+		if err != nil {
+			http.Error(w, "Bad gRPC Frame", http.StatusBadRequest)
+			return
+		}
+
+		_ = json.Unmarshal(frameBytes, &receivedPayload)
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+
+		resJSON, _ := json.Marshal(map[string]interface{}{
+			"id":     receivedPayload["id"],
+			"status": "created",
+		})
+		_, _ = w.Write(EncodeGRPCFrame(resJSON))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled:      true,
+		MaxBodyBytes: 4096, // 4 KB limit
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/users",
+				GRPCMethod:  "/user.UserService/CreateUser",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	validJSON := `{"id":"usr-42","name":"Valid User","role":"admin"}`
+	req := &httpparser.Request{
+		Method:        "POST",
+		Path:          "/v1/users",
+		ContentLength: int64(len(validJSON)),
+		Header:        httpparser.Header{"content-length": []string{fmt.Sprintf("%d", len(validJSON))}},
+		Body:          bytes.NewReader([]byte(validJSON)),
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want 200 OK", res.StatusCode)
+	}
+
+	if calls := atomic.LoadInt32(&upstreamCalls); calls != 1 {
+		t.Errorf("expected upstream calls to be 1, got %d", calls)
+	}
+
+	if receivedPayload["id"] != "usr-42" || receivedPayload["name"] != "Valid User" {
+		t.Errorf("upstream payload mismatch: got %v", receivedPayload)
+	}
+
+	resBytes, _ := io.ReadAll(res.Body)
+	var resMap map[string]interface{}
+	if err := json.Unmarshal(resBytes, &resMap); err != nil {
+		t.Fatalf("failed to parse response JSON: %v", err)
+	}
+	if resMap["status"] != "created" || resMap["id"] != "usr-42" {
+		t.Errorf("unexpected response map: %v", resMap)
+	}
+}
+
+// TC-089-05: Non-Mutating & Nil Body Request Bypass (SEC-28)
+func TestHandleTranscode_NonMutatingNilBody_Bypass(t *testing.T) {
+	var upstreamCalls int32
+
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalls, 1)
+
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+
+		resJSON, _ := json.Marshal(map[string]interface{}{
+			"id":     "usr-100",
+			"status": "found",
+		})
+		_, _ = w.Write(EncodeGRPCFrame(resJSON))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled:      true,
+		MaxBodyBytes: 1024,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "GET",
+				HTTPPath:    "/v1/users/:id",
+				GRPCMethod:  "/user.UserService/GetUser",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	req := &httpparser.Request{
+		Method: "GET",
+		Path:   "/v1/users/usr-100",
+		Header: make(httpparser.Header),
+		Body:   nil, // explicitly nil body
+	}
+	res := httpparser.NewResponse()
+
+	engine.HandleTranscode(req, res, engine.rules[0])
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("StatusCode = %d, want 200 OK", res.StatusCode)
+	}
+
+	if calls := atomic.LoadInt32(&upstreamCalls); calls != 1 {
+		t.Errorf("expected upstream calls to be 1, got %d", calls)
+	}
+}
+
+// TC-089-06: Concurrency & Race Safety Verification (SEC-28)
+func TestHandleTranscode_ConcurrencyRaceSafety(t *testing.T) {
+	grpcServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("grpc-status", "0")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(EncodeGRPCFrame([]byte(`{"status":"ok"}`)))
+	}))
+	defer grpcServer.Close()
+
+	cfg := config.TranscoderConfig{
+		Enabled:      true,
+		MaxBodyBytes: 1024,
+		Routes: []config.TranscoderRouteRule{
+			{
+				HTTPMethod:  "POST",
+				HTTPPath:    "/v1/items",
+				GRPCMethod:  "/item.ItemService/ProcessItem",
+				UpstreamURL: grpcServer.URL,
+			},
+		},
+	}
+
+	r := router.New()
+	engine, err := NewEngine(cfg, r)
+	if err != nil {
+		t.Fatalf("NewEngine failed: %v", err)
+	}
+
+	const totalGoroutines = 50
+	var wg sync.WaitGroup
+	wg.Add(totalGoroutines)
+
+	for i := 0; i < totalGoroutines; i++ {
+		idx := i
+		go func() {
+			defer wg.Done()
+
+			res := httpparser.NewResponse()
+			if idx%2 == 0 {
+				// Valid in-limit request
+				validJSON := fmt.Sprintf(`{"item_id":"item-%d","count":%d}`, idx, idx)
+				req := &httpparser.Request{
+					Method:        "POST",
+					Path:          "/v1/items",
+					ContentLength: int64(len(validJSON)),
+					Header:        httpparser.Header{"content-length": []string{fmt.Sprintf("%d", len(validJSON))}},
+					Body:          bytes.NewReader([]byte(validJSON)),
+				}
+				engine.HandleTranscode(req, res, engine.rules[0])
+				if res.StatusCode != http.StatusOK {
+					t.Errorf("goroutine %d: want 200, got %d", idx, res.StatusCode)
+				}
+			} else {
+				// Oversized request (2048 bytes > 1024)
+				req := &httpparser.Request{
+					Method:        "POST",
+					Path:          "/v1/items",
+					ContentLength: 2048,
+					Header:        httpparser.Header{"content-length": []string{"2048"}},
+					Body:          bytes.NewReader(make([]byte, 2048)),
+				}
+				engine.HandleTranscode(req, res, engine.rules[0])
+				if res.StatusCode != http.StatusRequestEntityTooLarge {
+					t.Errorf("goroutine %d: want 413, got %d", idx, res.StatusCode)
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+

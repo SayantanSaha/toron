@@ -51,6 +51,7 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `read_timeout` | `duration` | `"5s"` | Socket read deadline timeout |
 | `write_timeout` | `duration` | `"5s"` | Socket write deadline timeout |
 | `idle_timeout` | `duration` | `"30s"` | Socket idle keep-alive timeout |
+| `upgrade_idle_timeout` | `duration` | `"60s"` | Maximum inactivity deadline on upgraded protocol/WebSocket streams before termination (defaults to `idle_timeout` or `60s` if omitted or <= 0) |
 | `max_header_bytes` | `integer` | `8192` (8 KB) | Maximum HTTP header size |
 | `max_body_bytes` | `integer` | `4194304` (4 MB) | Maximum HTTP body payload size |
 

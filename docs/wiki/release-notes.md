@@ -1,5 +1,44 @@
 # Release Notes
 
+## 2026-09-09 - Toron v1.5.8 Security Release (SEC-27: Maximum Idle Deadline Enforcement on Upgraded Protocol and WebSocket Connections)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-27 (`pkg/server`, `pkg/config`)**: Resolved critical Slowloris resource exhaustion vulnerability [`SEC-27`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L384-L392) ([CWE-400: Uncontrolled Resource Consumption](https://cwe.mitre.org/data/definitions/400.html), [`SR-081 Finding 5`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-081.md#L142-L150), [`SR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-087.md)) in core HTTP/1.1 protocol upgrade handling and HTTP/2 Extended CONNECT streams, eliminating permanent socket and goroutine leaks.
+- **Configurable Upgraded Inactivity Deadline (`UpgradeIdleTimeout`)**: Added `UpgradeIdleTimeout time.Duration` to [`server.Config`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/config.go) and [`ServerConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go) (`yaml:"upgrade_idle_timeout,omitempty" json:"upgrade_idle_timeout,omitempty"`), defaulting to `60s` with a 3-tier fallback hierarchy ([`TASK-097`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-097.md), [`REQ-088`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-088.md), [`ADR-083`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-083.md)).
+- **Bidirectional Activity-Refreshed Deadline Relay (`pkg/server/server.go`)**: Replaced permanent deadline stripping (`SetDeadline(time.Time{})`) and unbounded `io.Copy` with an active deadline relay (`relayUpgradedStreams`). Every transferred chunk refreshes read and write deadlines; inactivity exceeding `UpgradeIdleTimeout` terminates both sockets deterministically via `sync.Once` and unblocks relay goroutines ([`TASK-098`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-098.md)).
+- **HTTP/2 Extended CONNECT Protection (`pkg/server/server.go`)**: Enforced `UpgradeIdleTimeout` on RFC 8441 extended CONNECT streams, with immediate socket teardown upon client request context cancellation (`r.Context().Done()` / `RST_STREAM`) ([`TASK-099`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-099.md)).
+- **Transport-Layer Heartbeat Transparency**: RFC 6455 WebSocket Ping/Pong control frames and application keep-alive messages continuously refresh the deadline, preserving legitimate persistent sessions indefinitely.
+- **TCP Half-Close Propagation**: Supported `CloseWrite()` upon reading `io.EOF`, allowing reverse responses to drain while maintaining deadline enforcement.
+- **Zero External Dependencies**: Implemented strictly with Go standard library packages (`net`, `sync`, `sync/atomic`, `time`, `io`, `log`, `errors`).
+- **Automated Verification Suite (`pkg/server/server_test.go`)**: Tested idle timeout socket teardown, heartbeat keep-alive survival, peer disconnect cleanup, HTTP/2 extended CONNECT, and high concurrency under `go test -race` ([`TASK-100`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-100.md), [`TC-088`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-088.md)).
+
+### Added
+- **Configuration Fields**: `UpgradeIdleTimeout time.Duration` in [`server.Config`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/config.go) and [`ServerConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go).
+- **Automated Tests (`pkg/server/server_test.go`, `pkg/config/config_test.go`)**:
+  - `TestConfig_UpgradeIdleTimeoutSchemaAndFallback`: Schema defaults, fallback, and validation.
+  - `TestServer_UpgradedConn_IdleTimeout`: Automatic socket teardown upon silence.
+  - `TestServer_UpgradedConn_HeartbeatKeepsAlive`: Periodic heartbeats/pings sustain connection.
+  - `TestServer_UpgradedConn_PeerDisconnect`: Immediate clean teardown on peer close.
+  - `TestServer_UpgradedConn_HalfClose`: Client `CloseWrite()` propagation with reverse stream draining.
+  - `TestServer_HTTP2_ExtendedCONNECT_IdleAndCancel`: HTTP/2 extended CONNECT idle and cancel teardown.
+  - `TestServer_UpgradedConn_ConcurrencyRaceSafety`: 40 concurrent streams tested under `-race`.
+
+### Changed
+- **HTTP/1.1 Protocol Switching (`pkg/server/server.go`)**: Replaced unbounded `io.Copy` with `relayUpgradedStreams`.
+- **HTTP/2 Extended CONNECT (`pkg/server/server.go`)**: Replaced unbounded `io.Copy` with `relayHTTP2UpgradedStream`.
+
+### Related Tasks & Requirements
+- [`TASK-097`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-097.md): Configurable Upgraded Inactivity Deadline Schema
+- [`TASK-098`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-098.md): Bidirectional Activity-Refreshed Deadline Relay for HTTP/1.1 Upgrades
+- [`TASK-099`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-099.md): Idle Deadline Enforcement for HTTP/2 Extended CONNECT Upgraded Streams
+- [`TASK-100`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-100.md): Automated Verification Test Suite for Upgraded Connection Idle Deadlines
+- [`REQ-088`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-088.md): Maximum Idle Deadline Enforcement on Upgraded Protocol and WebSocket Connections
+- [`ADR-083`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-083.md): Bidirectional Activity-Refreshed Deadlines for Upgraded Protocol Sockets
+- [`TC-088`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-088.md): Upgraded Connection Idle Deadline & Resource Reclamation Test Suite
+- [`SEC-27`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L384-L392): Missing Maximum Idle Deadlines on Upgraded Protocol Connections
+- [`SR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-087.md): Security Review of SEC-27 Remediation
+- [`CR-084`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-084.md): Code Review of Upgraded Protocol Connection Idle Deadline Enforcement
+
 ## 2026-09-09 - Toron v1.5.7 Security Release (SEC-26: Bounded Concurrency, Socket Reuse, and Idle Deadline Enforcement in Layer 4 TCP and UDP Proxies)
 
 ### Milestone Summary

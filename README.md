@@ -35,6 +35,7 @@ server:
   read_timeout: 5s            # Max time to read request headers and body
   write_timeout: 5s           # Max time to write response
   idle_timeout: 30s           # Keep-alive socket idle timeout
+  upgrade_idle_timeout: 60s   # Upgraded WebSocket/tunnel idle teardown deadline (SEC-27)
   max_header_bytes: 8192      # 8 KB header limit
   max_body_bytes: 4194304     # 4 MB payload body limit
 ```
@@ -99,7 +100,12 @@ server:
 
 ### 5. WebSocket Protocol Upgrade & Bi-Directional Tunneling
 
-Supports WebSocket upgrades over HTTP/1.1 (RFC 6455 `101 Switching Protocols`) and HTTP/2 Extended CONNECT protocol (RFC 8441 `:protocol = websocket`) with full bi-directional stream proxying.
+Supports WebSocket upgrades over HTTP/1.1 (RFC 6455 `101 Switching Protocols`) and HTTP/2 Extended CONNECT protocol (RFC 8441 `:protocol = websocket`) with full bi-directional stream proxying, hardened with strict inactivity deadlines against denial-of-service ([`SEC-27`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L384-L392), CWE-400):
+
+* **Bidirectional Activity-Refreshed Deadlines**: Eliminates indefinite blocking relays by applying `upgrade_idle_timeout` (default `60s`, configurable via `server.upgrade_idle_timeout`). Every chunk/frame transferred in either direction continually refreshes socket read and write deadlines.
+* **Slowloris & Silent Drop Immunity**: Abandoned or silent connections are terminated cleanly via `sync.Once` double-socket shutdown upon timeout expiration, releasing file descriptors and unblocking both relay goroutines.
+* **Transparent Heartbeat Support**: Legitimate long-lived sessions running RFC 6455 Ping/Pong frames or application-layer heartbeats automatically reset the inactivity deadline without extra configuration.
+* **HTTP/2 Extended CONNECT Safety**: Streams monitor `upgrade_idle_timeout` and stream context cancellation (`r.Context().Done()`), promptly tearing down upstream sockets if a client aborts or resets the stream.
 
 **Sample Configuration (`routes.yaml`)**:
 ```yaml
@@ -706,6 +712,7 @@ server:
   read_timeout: 5s            # Maximum time to read request headers/body
   write_timeout: 5s           # Maximum time to write response
   idle_timeout: 30s           # Keep-alive socket idle duration
+  upgrade_idle_timeout: 60s   # Inactivity deadline for upgraded WebSocket/tunnel connections
   max_header_bytes: 8192      # 8 KB maximum header size limit
   max_body_bytes: 4194304     # 4 MB maximum request body size limit
 

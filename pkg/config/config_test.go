@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"toron/pkg/config"
+	"toron/pkg/server"
 )
 
 func TestConfig_DefaultValues(t *testing.T) {
@@ -576,4 +578,90 @@ func TestConfig_Layer4ProxySettings(t *testing.T) {
 	if routeCustom.GetMaxWorkers() != 128 {
 		t.Errorf("expected custom MaxWorkers 128, got %d", routeCustom.GetMaxWorkers())
 	}
+}
+
+func TestConfig_UpgradeIdleTimeoutSchemaAndFallback(t *testing.T) {
+	t.Run("Subtest 1A (Default Invariants)", func(t *testing.T) {
+		srvDef := server.DefaultConfig()
+		if srvDef.UpgradeIdleTimeout != 60*time.Second {
+			t.Errorf("expected server.DefaultConfig().UpgradeIdleTimeout 60s, got %v", srvDef.UpgradeIdleTimeout)
+		}
+
+		appDef := config.DefaultAppConfig()
+		if appDef.Server.UpgradeIdleTimeout != 60*time.Second {
+			t.Errorf("expected DefaultAppConfig().Server.UpgradeIdleTimeout 60s, got %v", appDef.Server.UpgradeIdleTimeout)
+		}
+	})
+
+	t.Run("Subtest 1B (YAML & JSON Deserialization)", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		yamlPath := filepath.Join(tmpDir, "config.yaml")
+		yamlContent := `
+server:
+  upgrade_idle_timeout: 45s
+`
+		if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
+			t.Fatalf("failed to write test yaml: %v", err)
+		}
+
+		loadedCfg, err := config.LoadFromFile(yamlPath)
+		if err != nil {
+			t.Fatalf("failed to load yaml: %v", err)
+		}
+		if loadedCfg.Server.UpgradeIdleTimeout != 45*time.Second {
+			t.Errorf("expected YAML UpgradeIdleTimeout 45s, got %v", loadedCfg.Server.UpgradeIdleTimeout)
+		}
+
+		jsonPayload := []byte(`{"server": {"upgrade_idle_timeout": 30000000000}}`)
+		var jsonCfg config.AppConfig
+		if err := json.Unmarshal(jsonPayload, &jsonCfg); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+		if jsonCfg.Server.UpgradeIdleTimeout != 30*time.Second {
+			t.Errorf("expected JSON UpgradeIdleTimeout 30s, got %v", jsonCfg.Server.UpgradeIdleTimeout)
+		}
+	})
+
+	t.Run("Subtest 1C (Hierarchical Fallback Resolution)", func(t *testing.T) {
+		// Tier 1: Explicit UpgradeIdleTimeout > 0
+		cfgTier1 := config.DefaultAppConfig()
+		cfgTier1.Server.UpgradeIdleTimeout = 15 * time.Second
+		cfgTier1.Server.IdleTimeout = 30 * time.Second
+		srvCfg1 := cfgTier1.ToServerConfig()
+		if srvCfg1.UpgradeIdleTimeout != 15*time.Second {
+			t.Errorf("Tier 1: expected 15s, got %v", srvCfg1.UpgradeIdleTimeout)
+		}
+
+		// Tier 2: UpgradeIdleTimeout <= 0, IdleTimeout > 0
+		cfgTier2 := config.DefaultAppConfig()
+		cfgTier2.Server.UpgradeIdleTimeout = 0
+		cfgTier2.Server.IdleTimeout = 25 * time.Second
+		srvCfg2 := cfgTier2.ToServerConfig()
+		if srvCfg2.UpgradeIdleTimeout != 25*time.Second {
+			t.Errorf("Tier 2: expected 25s, got %v", srvCfg2.UpgradeIdleTimeout)
+		}
+
+		// Tier 3: Both <= 0 -> 60s fallback
+		cfgTier3 := config.DefaultAppConfig()
+		cfgTier3.Server.UpgradeIdleTimeout = 0
+		cfgTier3.Server.IdleTimeout = 0
+		srvCfg3 := cfgTier3.ToServerConfig()
+		if srvCfg3.UpgradeIdleTimeout != 60*time.Second {
+			t.Errorf("Tier 3: expected 60s, got %v", srvCfg3.UpgradeIdleTimeout)
+		}
+	})
+
+	t.Run("Subtest 1D (Negative Value Rejection)", func(t *testing.T) {
+		cfg := config.DefaultAppConfig()
+		cfg.Static.Enabled = false
+		cfg.Server.UpgradeIdleTimeout = -5 * time.Second
+
+		err := config.ValidateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected ValidateConfig to return error for negative upgrade_idle_timeout, got nil")
+		}
+		if !strings.Contains(err.Error(), "server.upgrade_idle_timeout must be non-negative") {
+			t.Errorf("expected error containing 'server.upgrade_idle_timeout must be non-negative', got: %v", err)
+		}
+	})
 }

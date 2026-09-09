@@ -9,6 +9,7 @@ type Config struct {
 	ReadTimeout               time.Duration
 	WriteTimeout              time.Duration
 	IdleTimeout               time.Duration
+	UpgradeIdleTimeout        time.Duration
 	MaxHeaderBytes            int
 	MaxBodyBytes              int64
 	HTTP2Enabled              bool
@@ -37,6 +38,7 @@ func DefaultConfig() Config {
 		ReadTimeout:               5 * time.Second,
 		WriteTimeout:              5 * time.Second,
 		IdleTimeout:               30 * time.Second,
+		UpgradeIdleTimeout:        60 * time.Second,
 		MaxHeaderBytes:            8 * 1024,        // 8 KB
 		MaxBodyBytes:              4 * 1024 * 1024, // 4 MB
 		HTTP2Enabled:              true,

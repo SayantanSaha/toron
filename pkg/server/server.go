@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -270,25 +272,26 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		if res.UpgradedConn != nil || res.StatusCode == http.StatusSwitchingProtocols {
-			_ = conn.SetDeadline(time.Time{})
-			if res.UpgradedConn != nil {
-				_ = res.UpgradedConn.SetDeadline(time.Time{})
+			if s.config.WriteTimeout > 0 {
+				_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
 			}
 
 			if err := res.Serialize(conn); err != nil {
 				if res.UpgradedConn != nil {
-					res.UpgradedConn.Close()
+					_ = res.UpgradedConn.Close()
 				}
 				return fmt.Errorf("server: failed to write upgrade response: %w", err)
 			}
 
 			if res.UpgradedConn != nil {
-				go func() {
-					_, _ = io.Copy(res.UpgradedConn, conn)
-					_ = res.UpgradedConn.Close()
-				}()
-				_, _ = io.Copy(conn, res.UpgradedConn)
-				_ = conn.Close()
+				idleTimeout := s.config.UpgradeIdleTimeout
+				if idleTimeout <= 0 {
+					idleTimeout = s.config.IdleTimeout
+				}
+				if idleTimeout <= 0 {
+					idleTimeout = 60 * time.Second
+				}
+				s.relayUpgradedStreams(conn, res.UpgradedConn, idleTimeout)
 				return nil
 			}
 		}
@@ -363,15 +366,14 @@ func (s *Server) http2AdapterHandler() http.Handler {
 		w.WriteHeader(statusCode)
 
 		if res.UpgradedConn != nil {
-			if flusher, ok := w.(http.Flusher); ok {
-				flusher.Flush()
+			idleTimeout := s.config.UpgradeIdleTimeout
+			if idleTimeout <= 0 {
+				idleTimeout = s.config.IdleTimeout
 			}
-			go func() {
-				_, _ = io.Copy(res.UpgradedConn, r.Body)
-				_ = res.UpgradedConn.Close()
-			}()
-			_, _ = io.Copy(w, res.UpgradedConn)
-			_ = res.UpgradedConn.Close()
+			if idleTimeout <= 0 {
+				idleTimeout = 60 * time.Second
+			}
+			s.relayHTTP2UpgradedStream(w, r, res.UpgradedConn, idleTimeout)
 			return
 		}
 
@@ -548,4 +550,242 @@ func (s *Server) isRecognizedHost(host string) bool {
 	}
 
 	return false
+}
+
+// relayUpgradedStreams bidirectionally pipes data between clientConn and upstreamConn while refreshing
+// read and write deadlines per transferred chunk, enforcing inactivity timeouts and propagating TCP half-close.
+func (s *Server) relayUpgradedStreams(clientConn, upstreamConn net.Conn, idleTimeout time.Duration) {
+	if idleTimeout <= 0 {
+		if s != nil {
+			idleTimeout = s.config.UpgradeIdleTimeout
+			if idleTimeout <= 0 {
+				idleTimeout = s.config.IdleTimeout
+			}
+		}
+	}
+	if idleTimeout <= 0 {
+		idleTimeout = 60 * time.Second
+	}
+
+	relayStreams(clientConn, upstreamConn, idleTimeout)
+}
+
+// relayStreams executes bidirectional stream piping between conn1 and conn2 with idle deadline refreshes.
+func relayStreams(conn1, conn2 net.Conn, idleTimeout time.Duration) {
+	if idleTimeout <= 0 {
+		idleTimeout = 60 * time.Second
+	}
+
+	_ = conn1.SetDeadline(time.Now().Add(idleTimeout))
+	_ = conn2.SetDeadline(time.Now().Add(idleTimeout))
+
+	var closeOnce sync.Once
+	closeBoth := func() {
+		closeOnce.Do(func() {
+			_ = conn1.Close()
+			_ = conn2.Close()
+		})
+	}
+	defer closeBoth()
+
+	var logOnce sync.Once
+	logTimeout := func() {
+		logOnce.Do(func() {
+			log.Printf("[Server] Upgraded connection idle timeout reached (%s), terminating stream between %s and %s",
+				idleTimeout, conn1.RemoteAddr(), conn2.RemoteAddr())
+		})
+	}
+
+	var halfClosed atomic.Bool
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	copyDirection := func(src, dst net.Conn) {
+		defer wg.Done()
+		buf := make([]byte, 32*1024)
+
+		for {
+			_ = src.SetReadDeadline(time.Now().Add(idleTimeout))
+			n, readErr := src.Read(buf)
+			if n > 0 {
+				_ = dst.SetWriteDeadline(time.Now().Add(idleTimeout))
+				if _, writeErr := dst.Write(buf[:n]); writeErr != nil {
+					var netErr net.Error
+					if errors.As(writeErr, &netErr) && netErr.Timeout() {
+						logTimeout()
+					}
+					closeBoth()
+					return
+				}
+			}
+
+			if readErr != nil {
+				if errors.Is(readErr, io.EOF) {
+					if halfClosed.CompareAndSwap(false, true) {
+						if tc, ok := dst.(interface{ CloseWrite() error }); ok {
+							if err := tc.CloseWrite(); err == nil {
+								return
+							}
+						}
+					}
+					closeBoth()
+				} else {
+					var netErr net.Error
+					if errors.As(readErr, &netErr) && netErr.Timeout() {
+						logTimeout()
+					}
+					closeBoth()
+				}
+				return
+			}
+		}
+	}
+
+	go copyDirection(conn1, conn2)
+	go copyDirection(conn2, conn1)
+
+	wg.Wait()
+}
+
+// relayHTTP2UpgradedStream forwards full-duplex traffic between an HTTP/2 extended CONNECT stream (r.Body and w)
+// and the upstream net.Conn, enforcing inactivity timeouts and responding immediately to request context cancellation.
+func (s *Server) relayHTTP2UpgradedStream(w http.ResponseWriter, r *http.Request, upstreamConn net.Conn, idleTimeout time.Duration) {
+	if idleTimeout <= 0 {
+		if s != nil {
+			idleTimeout = s.config.UpgradeIdleTimeout
+			if idleTimeout <= 0 {
+				idleTimeout = s.config.IdleTimeout
+			}
+		}
+	}
+	if idleTimeout <= 0 {
+		idleTimeout = 60 * time.Second
+	}
+
+	var flusher http.Flusher
+	if f, ok := w.(http.Flusher); ok {
+		flusher = f
+		flusher.Flush()
+	}
+
+	_ = upstreamConn.SetDeadline(time.Now().Add(idleTimeout))
+
+	var lastActivity atomic.Int64
+	lastActivity.Store(time.Now().UnixNano())
+
+	var closeOnce sync.Once
+	closeConn := func() {
+		closeOnce.Do(func() {
+			_ = upstreamConn.Close()
+			if r.Body != nil {
+				_ = r.Body.Close()
+			}
+		})
+	}
+	defer closeConn()
+
+	var logOnce sync.Once
+	logTimeout := func() {
+		logOnce.Do(func() {
+			log.Printf("[Server] HTTP/2 extended CONNECT upgraded stream idle timeout reached (%s), terminating stream for %s",
+				idleTimeout, r.RemoteAddr)
+		})
+	}
+
+	var wg sync.WaitGroup
+	done := make(chan struct{})
+	var doneOnce sync.Once
+	stopDone := func() {
+		doneOnce.Do(func() {
+			close(done)
+		})
+	}
+	defer func() {
+		stopDone()
+		closeConn()
+		wg.Wait()
+	}()
+
+	tickInterval := idleTimeout / 4
+	if tickInterval < 10*time.Millisecond {
+		tickInterval = 10 * time.Millisecond
+	}
+	if tickInterval > 500*time.Millisecond {
+		tickInterval = 500 * time.Millisecond
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		ticker := time.NewTicker(tickInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-done:
+				return
+			case <-r.Context().Done():
+				closeConn()
+				return
+			case <-ticker.C:
+				last := lastActivity.Load()
+				if time.Since(time.Unix(0, last)) >= idleTimeout {
+					logTimeout()
+					closeConn()
+					return
+				}
+			}
+		}
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer closeConn()
+
+		buf := make([]byte, 32*1024)
+		for {
+			n, err := r.Body.Read(buf)
+			if n > 0 {
+				lastActivity.Store(time.Now().UnixNano())
+				_ = upstreamConn.SetWriteDeadline(time.Now().Add(idleTimeout))
+				if _, werr := upstreamConn.Write(buf[:n]); werr != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	func() {
+		defer closeConn()
+
+		buf := make([]byte, 32*1024)
+		for {
+			_ = upstreamConn.SetReadDeadline(time.Now().Add(idleTimeout))
+			n, err := upstreamConn.Read(buf)
+			if n > 0 {
+				lastActivity.Store(time.Now().UnixNano())
+				if _, werr := w.Write(buf[:n]); werr != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+			}
+			if err != nil {
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
+					logTimeout()
+				}
+				return
+			}
+		}
+	}()
+
+	stopDone()
+	closeConn()
+	wg.Wait()
 }

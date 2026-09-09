@@ -212,28 +212,29 @@ type HTTPRedirectConfig struct {
 
 // ServerConfig captures network and security settings.
 type ServerConfig struct {
-	Host            string                `yaml:"host" json:"host"`
-	Port            int                   `yaml:"port" json:"port"`
-	WorkerPoolSize  int                   `yaml:"worker_pool_size" json:"worker_pool_size"`
-	ReadTimeout     time.Duration         `yaml:"read_timeout" json:"read_timeout"`
-	WriteTimeout    time.Duration         `yaml:"write_timeout" json:"write_timeout"`
-	IdleTimeout     time.Duration         `yaml:"idle_timeout" json:"idle_timeout"`
-	MaxHeaderBytes  int                   `yaml:"max_header_bytes" json:"max_header_bytes"`
-	MaxBodyBytes    int64                 `yaml:"max_body_bytes" json:"max_body_bytes"`
-	HTTP2           HTTP2Config           `yaml:"http2" json:"http2"`
-	HTTP3           HTTP3Config           `yaml:"http3" json:"http3"`
-	HTTPRedirect    HTTPRedirectConfig    `yaml:"http_redirect" json:"http_redirect"`
-	TLS             TLSConfig             `yaml:"tls" json:"tls"`
-	ACME            ACMEConfig            `yaml:"acme" json:"acme"`
-	Compression     CompressionConfig     `yaml:"compression" json:"compression"`
-	Cache           CacheConfig           `yaml:"cache" json:"cache"`
-	Auth            AuthConfig            `yaml:"auth" json:"auth"`
-	CORS            CORSConfig            `yaml:"cors" json:"cors"`
-	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
-	WAF             waf.WAFConfig         `yaml:"waf" json:"waf"`
-	AdminAuth       AdminAuthConfig       `yaml:"admin_auth" json:"admin_auth"`
-	AdminSubnets    []string              `yaml:"admin_subnets" json:"admin_subnets"`
-	TrustedProxies  []string              `yaml:"trusted_proxies" json:"trusted_proxies"`
+	Host               string                `yaml:"host" json:"host"`
+	Port               int                   `yaml:"port" json:"port"`
+	WorkerPoolSize     int                   `yaml:"worker_pool_size" json:"worker_pool_size"`
+	ReadTimeout        time.Duration         `yaml:"read_timeout" json:"read_timeout"`
+	WriteTimeout       time.Duration         `yaml:"write_timeout" json:"write_timeout"`
+	IdleTimeout        time.Duration         `yaml:"idle_timeout" json:"idle_timeout"`
+	UpgradeIdleTimeout time.Duration         `yaml:"upgrade_idle_timeout,omitempty" json:"upgrade_idle_timeout,omitempty"`
+	MaxHeaderBytes     int                   `yaml:"max_header_bytes" json:"max_header_bytes"`
+	MaxBodyBytes       int64                 `yaml:"max_body_bytes" json:"max_body_bytes"`
+	HTTP2              HTTP2Config           `yaml:"http2" json:"http2"`
+	HTTP3              HTTP3Config           `yaml:"http3" json:"http3"`
+	HTTPRedirect       HTTPRedirectConfig    `yaml:"http_redirect" json:"http_redirect"`
+	TLS                TLSConfig             `yaml:"tls" json:"tls"`
+	ACME               ACMEConfig            `yaml:"acme" json:"acme"`
+	Compression        CompressionConfig     `yaml:"compression" json:"compression"`
+	Cache              CacheConfig           `yaml:"cache" json:"cache"`
+	Auth               AuthConfig            `yaml:"auth" json:"auth"`
+	CORS               CORSConfig            `yaml:"cors" json:"cors"`
+	SecurityHeaders    SecurityHeadersConfig `yaml:"security_headers" json:"security_headers"`
+	WAF                waf.WAFConfig         `yaml:"waf" json:"waf"`
+	AdminAuth          AdminAuthConfig       `yaml:"admin_auth" json:"admin_auth"`
+	AdminSubnets       []string              `yaml:"admin_subnets" json:"admin_subnets"`
+	TrustedProxies     []string              `yaml:"trusted_proxies" json:"trusted_proxies"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -494,14 +495,15 @@ type LoggingConfig struct {
 func DefaultAppConfig() *AppConfig {
 	return &AppConfig{
 		Server: ServerConfig{
-			Host:           "0.0.0.0",
-			Port:           8080,
-			WorkerPoolSize: 128,
-			ReadTimeout:    5 * time.Second,
-			WriteTimeout:   5 * time.Second,
-			IdleTimeout:    30 * time.Second,
-			MaxHeaderBytes: 8 * 1024,        // 8 KB
-			MaxBodyBytes:   4 * 1024 * 1024, // 4 MB
+			Host:               "0.0.0.0",
+			Port:               8080,
+			WorkerPoolSize:     128,
+			ReadTimeout:        5 * time.Second,
+			WriteTimeout:       5 * time.Second,
+			IdleTimeout:        30 * time.Second,
+			UpgradeIdleTimeout: 60 * time.Second,
+			MaxHeaderBytes:     8 * 1024,        // 8 KB
+			MaxBodyBytes:       4 * 1024 * 1024, // 4 MB
 			HTTP2: HTTP2Config{
 				Enabled:              true,
 				MaxConcurrentStreams: 250,
@@ -583,12 +585,21 @@ func (c *AppConfig) ToServerConfig() server.Config {
 		addr = ":" + string(itoa(c.Server.Port))
 	}
 
+	upgradeIdleTimeout := c.Server.UpgradeIdleTimeout
+	if upgradeIdleTimeout <= 0 {
+		upgradeIdleTimeout = c.Server.IdleTimeout
+	}
+	if upgradeIdleTimeout <= 0 {
+		upgradeIdleTimeout = 60 * time.Second
+	}
+
 	return server.Config{
 		Addr:                      addr,
 		WorkerPoolSize:            c.Server.WorkerPoolSize,
 		ReadTimeout:               c.Server.ReadTimeout,
 		WriteTimeout:              c.Server.WriteTimeout,
 		IdleTimeout:               c.Server.IdleTimeout,
+		UpgradeIdleTimeout:        upgradeIdleTimeout,
 		MaxHeaderBytes:            c.Server.MaxHeaderBytes,
 		MaxBodyBytes:              c.Server.MaxBodyBytes,
 		HTTP2Enabled:              c.Server.HTTP2.Enabled,

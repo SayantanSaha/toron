@@ -4,11 +4,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -697,4 +701,767 @@ func TestHTTP2AdapterHandler_MaxBodyBytes(t *testing.T) {
 			t.Errorf("expected 413 error body, got %q", rec.Body.String())
 		}
 	})
+}
+
+// TC-088-02: HTTP/1.1 Upgraded Connection Idle Timeout Teardown
+func TestServer_UpgradedConn_IdleTimeout(t *testing.T) {
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen upstream: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	var backendClosed atomic.Bool
+	go func() {
+		backendConn, err := upstreamLn.Accept()
+		if err != nil {
+			return
+		}
+		defer backendConn.Close()
+		defer backendClosed.Store(true)
+
+		buf := make([]byte, 1024)
+		for {
+			n, err := backendConn.Read(buf)
+			if err != nil {
+				break
+			}
+			resp := append([]byte("echo: "), buf[:n]...)
+			if _, err := backendConn.Write(resp); err != nil {
+				break
+			}
+		}
+	}()
+
+	r := router.New()
+	r.GET("/ws-idle", func(req *httpparser.Request, res *httpparser.Response) {
+		upstreamConn, err := net.Dial("tcp", upstreamLn.Addr().String())
+		if err != nil {
+			res.SetStatus(http.StatusBadGateway)
+			return
+		}
+		res.SetStatus(http.StatusSwitchingProtocols)
+		res.Header.Set("Upgrade", "websocket")
+		res.Header.Set("Connection", "Upgrade")
+		res.UpgradedConn = upstreamConn
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.UpgradeIdleTimeout = 150 * time.Millisecond
+	cfg.ReadTimeout = 2 * time.Second
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	baselineGoroutines := runtime.NumGoroutine()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial server: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /ws-idle HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write upgrade request: %v", err)
+	}
+
+	respBuf := make([]byte, 512)
+	n, err := conn.Read(respBuf)
+	if err != nil {
+		t.Fatalf("failed to read upgrade response: %v", err)
+	}
+	if !bytes.Contains(respBuf[:n], []byte("101 Switching Protocols")) {
+		t.Fatalf("expected 101 Switching Protocols, got:\n%s", string(respBuf[:n]))
+	}
+
+	if _, err := conn.Write([]byte("hello-handshake")); err != nil {
+		t.Fatalf("failed to write initial payload: %v", err)
+	}
+	echoBuf := make([]byte, 512)
+	n, err = conn.Read(echoBuf)
+	if err != nil {
+		t.Fatalf("failed to read echo: %v", err)
+	}
+	if !strings.Contains(string(echoBuf[:n]), "echo: hello-handshake") {
+		t.Fatalf("expected 'echo: hello-handshake', got %q", string(echoBuf[:n]))
+	}
+
+	idleStart := time.Now()
+	_ = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	readBuf := make([]byte, 512)
+	_, readErr := conn.Read(readBuf)
+	deltaT := time.Since(idleStart)
+
+	if readErr == nil {
+		t.Fatal("expected connection read to fail with EOF or timeout after idle period, got nil")
+	}
+
+	if deltaT < 130*time.Millisecond || deltaT > 600*time.Millisecond {
+		t.Errorf("expected teardown duration ~150ms, got %v", deltaT)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+	if !backendClosed.Load() {
+		t.Errorf("expected upstream backend socket to be closed")
+	}
+
+	currentGoroutines := runtime.NumGoroutine()
+	if currentGoroutines > baselineGoroutines+5 {
+		t.Errorf("potential goroutine leak: baseline %d, current %d", baselineGoroutines, currentGoroutines)
+	}
+}
+
+// TC-088-03: HTTP/1.1 Heartbeat / Active Stream Preservation
+func TestServer_UpgradedConn_HeartbeatKeepsAlive(t *testing.T) {
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen upstream: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	go func() {
+		for {
+			conn, err := upstreamLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(c net.Conn) {
+				defer c.Close()
+				buf := make([]byte, 1024)
+				for {
+					n, err := c.Read(buf)
+					if err != nil {
+						return
+					}
+					resp := append([]byte("echo: "), buf[:n]...)
+					if _, err := c.Write(resp); err != nil {
+						return
+					}
+				}
+			}(conn)
+		}
+	}()
+
+	r := router.New()
+	r.GET("/ws-heartbeat", func(req *httpparser.Request, res *httpparser.Response) {
+		upstreamConn, err := net.Dial("tcp", upstreamLn.Addr().String())
+		if err != nil {
+			res.SetStatus(http.StatusBadGateway)
+			return
+		}
+		res.SetStatus(http.StatusSwitchingProtocols)
+		res.Header.Set("Upgrade", "websocket")
+		res.Header.Set("Connection", "Upgrade")
+		res.UpgradedConn = upstreamConn
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.UpgradeIdleTimeout = 150 * time.Millisecond
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /ws-heartbeat HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write upgrade: %v", err)
+	}
+
+	respBuf := make([]byte, 512)
+	n, err := conn.Read(respBuf)
+	if err != nil || !bytes.Contains(respBuf[:n], []byte("101 Switching Protocols")) {
+		t.Fatalf("failed to establish upgrade: %v, resp: %s", err, string(respBuf[:n]))
+	}
+
+	// Send heartbeats every 50ms for 400ms (> 2.6x UpgradeIdleTimeout)
+	for i := 1; i <= 8; i++ {
+		pingMsg := fmt.Sprintf("ping-%d", i)
+		if _, err := conn.Write([]byte(pingMsg)); err != nil {
+			t.Fatalf("failed to send ping %d: %v", i, err)
+		}
+
+		_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		echoBuf := make([]byte, 256)
+		n, err := conn.Read(echoBuf)
+		if err != nil {
+			t.Fatalf("failed to read echo for ping %d: %v", i, err)
+		}
+		expected := fmt.Sprintf("echo: ping-%d", i)
+		if !strings.Contains(string(echoBuf[:n]), expected) {
+			t.Fatalf("expected %q, got %q", expected, string(echoBuf[:n]))
+		}
+
+		if i < 8 {
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+
+	// Cease heartbeats; connection must terminate after idle timeout (~150ms)
+	ceaseTime := time.Now()
+	_ = conn.SetReadDeadline(time.Now().Add(800 * time.Millisecond))
+	buf := make([]byte, 256)
+	_, readErr := conn.Read(buf)
+	elapsed := time.Since(ceaseTime)
+
+	if readErr == nil {
+		t.Fatal("expected connection to close after heartbeats ceased, but read succeeded")
+	}
+	if elapsed < 100*time.Millisecond || elapsed > 400*time.Millisecond {
+		t.Errorf("expected idle timeout ~150ms after heartbeats ceased, got %v", elapsed)
+	}
+}
+
+// TC-088-04: HTTP/1.1 Peer Disconnect Teardown
+func TestServer_UpgradedConn_PeerDisconnect(t *testing.T) {
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen upstream: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	upstreamAcceptedCh := make(chan net.Conn, 5)
+
+	go func() {
+		for {
+			c, err := upstreamLn.Accept()
+			if err != nil {
+				return
+			}
+			upstreamAcceptedCh <- c
+		}
+	}()
+
+	r := router.New()
+	r.GET("/ws-disconnect", func(req *httpparser.Request, res *httpparser.Response) {
+		upstreamConn, err := net.Dial("tcp", upstreamLn.Addr().String())
+		if err != nil {
+			res.SetStatus(http.StatusBadGateway)
+			return
+		}
+		res.SetStatus(http.StatusSwitchingProtocols)
+		res.Header.Set("Upgrade", "websocket")
+		res.Header.Set("Connection", "Upgrade")
+		res.UpgradedConn = upstreamConn
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.UpgradeIdleTimeout = 5 * time.Second // Generous timeout to verify peer close triggers teardown
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	t.Run("Subtest 4A: Client Disconnection Triggers Immediate Upstream Closure", func(t *testing.T) {
+		clientConn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+
+		reqStr := "GET /ws-disconnect HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+		_, _ = clientConn.Write([]byte(reqStr))
+
+		respBuf := make([]byte, 512)
+		_, _ = clientConn.Read(respBuf)
+
+		backendConn := <-upstreamAcceptedCh
+		defer backendConn.Close()
+
+		closeStart := time.Now()
+		_ = clientConn.Close()
+
+		_ = backendConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buf := make([]byte, 256)
+		_, readErr := backendConn.Read(buf)
+		elapsed := time.Since(closeStart)
+
+		if readErr == nil {
+			t.Fatal("expected upstream to observe socket closure, got nil error")
+		}
+		if elapsed > 300*time.Millisecond {
+			t.Errorf("expected closure within 100-300ms, took %v", elapsed)
+		}
+	})
+
+	t.Run("Subtest 4B: Upstream Disconnection Triggers Immediate Client Closure", func(t *testing.T) {
+		clientConn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer clientConn.Close()
+
+		reqStr := "GET /ws-disconnect HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+		_, _ = clientConn.Write([]byte(reqStr))
+
+		respBuf := make([]byte, 512)
+		_, _ = clientConn.Read(respBuf)
+
+		backendConn := <-upstreamAcceptedCh
+
+		closeStart := time.Now()
+		_ = backendConn.Close()
+
+		_ = clientConn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		buf := make([]byte, 256)
+		_, readErr := clientConn.Read(buf)
+		elapsed := time.Since(closeStart)
+
+		if readErr == nil {
+			t.Fatal("expected client to observe socket closure, got nil error")
+		}
+		if elapsed > 300*time.Millisecond {
+			t.Errorf("expected closure within 100-300ms, took %v", elapsed)
+		}
+	})
+}
+
+// TC-088-05: HTTP/1.1 Half-Close Propagation
+func TestServer_UpgradedConn_HalfClose(t *testing.T) {
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen upstream: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	go func() {
+		conn, err := upstreamLn.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		buf := make([]byte, 1024)
+		n, err := conn.Read(buf)
+		if err != nil {
+			return
+		}
+		if string(buf[:n]) != "query-payload" {
+			return
+		}
+
+		// Subsequent read should return EOF due to half-close
+		_, err = conn.Read(buf)
+		if !errors.Is(err, io.EOF) {
+			return
+		}
+
+		// Pause 60ms to simulate response processing
+		time.Sleep(60 * time.Millisecond)
+
+		// Transmit final response data
+		_, _ = conn.Write([]byte("final-response-data"))
+	}()
+
+	r := router.New()
+	r.GET("/ws-halfclose", func(req *httpparser.Request, res *httpparser.Response) {
+		upstreamConn, err := net.Dial("tcp", upstreamLn.Addr().String())
+		if err != nil {
+			res.SetStatus(http.StatusBadGateway)
+			return
+		}
+		res.SetStatus(http.StatusSwitchingProtocols)
+		res.Header.Set("Upgrade", "websocket")
+		res.Header.Set("Connection", "Upgrade")
+		res.UpgradedConn = upstreamConn
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.UpgradeIdleTimeout = 300 * time.Millisecond
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /ws-halfclose HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write upgrade: %v", err)
+	}
+
+	respBuf := make([]byte, 512)
+	n, err := conn.Read(respBuf)
+	if err != nil || !bytes.Contains(respBuf[:n], []byte("101 Switching Protocols")) {
+		t.Fatalf("upgrade failed: %v", err)
+	}
+
+	// Client writes query-payload
+	if _, err := conn.Write([]byte("query-payload")); err != nil {
+		t.Fatalf("failed to write query payload: %v", err)
+	}
+
+	// Client invokes CloseWrite()
+	tcpConn, ok := conn.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("connection is not *net.TCPConn")
+	}
+	if err := tcpConn.CloseWrite(); err != nil {
+		t.Fatalf("CloseWrite failed: %v", err)
+	}
+
+	// Client continues reading with 1-second deadline
+	_ = conn.SetReadDeadline(time.Now().Add(1 * time.Second))
+	dataBuf := make([]byte, 512)
+	n, err = conn.Read(dataBuf)
+	if err != nil {
+		t.Fatalf("client failed to read final response data: %v", err)
+	}
+	if string(dataBuf[:n]) != "final-response-data" {
+		t.Fatalf("expected 'final-response-data', got %q", string(dataBuf[:n]))
+	}
+
+	// Subsequent read should yield EOF
+	_, err = conn.Read(dataBuf)
+	if !errors.Is(err, io.EOF) {
+		t.Errorf("expected io.EOF after final response data, got: %v", err)
+	}
+}
+
+// TC-088-06: HTTP/2 Extended CONNECT Idle Teardown & Context Cancellation
+func TestServer_HTTP2_ExtendedCONNECT_IdleAndCancel(t *testing.T) {
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen upstream: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	go func() {
+		for {
+			c, err := upstreamLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 1024)
+				for {
+					n, err := conn.Read(buf)
+					if err != nil {
+						return
+					}
+					_, _ = conn.Write(buf[:n])
+				}
+			}(c)
+		}
+	}()
+
+	r := router.New()
+	r.Handle("CONNECT", "/ws-h2", func(req *httpparser.Request, res *httpparser.Response) {
+		upstreamConn, err := net.Dial("tcp", upstreamLn.Addr().String())
+		if err != nil {
+			res.SetStatus(http.StatusBadGateway)
+			return
+		}
+		res.SetStatus(http.StatusOK)
+		res.UpgradedConn = upstreamConn
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.UpgradeIdleTimeout = 150 * time.Millisecond
+	cfg.HTTP2Enabled = true
+	srv := server.New(cfg, r)
+
+	t.Run("Subtest 6A: HTTP/2 Inactivity Timeout", func(t *testing.T) {
+		idlePipeReader, idlePipeWriter := io.Pipe()
+		defer idlePipeWriter.Close()
+
+		req := httptest.NewRequest("CONNECT", "/ws-h2", idlePipeReader)
+		req.Header.Set(":protocol", "websocket")
+		rec := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		start := time.Now()
+		go func() {
+			srv.HTTP2AdapterHandler().ServeHTTP(rec, req)
+			close(done)
+		}()
+
+		select {
+		case <-done:
+			duration := time.Since(start)
+			if duration < 120*time.Millisecond || duration > 400*time.Millisecond {
+				t.Errorf("expected stream termination in 150ms ± 50ms, took %v", duration)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatal("HTTP/2 stream did not terminate within timeout window")
+		}
+	})
+
+	t.Run("Subtest 6B: HTTP/2 Context Cancellation Immediate Teardown", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		pipeReader, pipeWriter := io.Pipe()
+		defer pipeWriter.Close()
+
+		req := httptest.NewRequest("CONNECT", "/ws-h2", pipeReader).WithContext(ctx)
+		req.Header.Set(":protocol", "websocket")
+		rec := httptest.NewRecorder()
+
+		done := make(chan struct{})
+		start := time.Now()
+		go func() {
+			srv.HTTP2AdapterHandler().ServeHTTP(rec, req)
+			close(done)
+		}()
+
+		// Immediately cancel context
+		cancel()
+
+		select {
+		case <-done:
+			duration := time.Since(start)
+			if duration > 100*time.Millisecond {
+				t.Errorf("expected teardown <= 100ms, took %v", duration)
+			}
+		case <-time.After(1 * time.Second):
+			t.Fatal("HTTP/2 stream did not terminate upon context cancellation")
+		}
+	})
+}
+
+// TC-088-07: Concurrency & Race Safety
+func TestServer_UpgradedConn_ConcurrencyRaceSafety(t *testing.T) {
+	upstreamLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen upstream: %v", err)
+	}
+	defer upstreamLn.Close()
+
+	go func() {
+		for {
+			c, err := upstreamLn.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				buf := make([]byte, 2048)
+				for {
+					n, err := conn.Read(buf)
+					if err != nil {
+						return
+					}
+					_, _ = conn.Write(buf[:n])
+				}
+			}(c)
+		}
+	}()
+
+	r := router.New()
+	r.GET("/ws-race", func(req *httpparser.Request, res *httpparser.Response) {
+		upstreamConn, err := net.Dial("tcp", upstreamLn.Addr().String())
+		if err != nil {
+			res.SetStatus(http.StatusBadGateway)
+			return
+		}
+		res.SetStatus(http.StatusSwitchingProtocols)
+		res.Header.Set("Upgrade", "websocket")
+		res.Header.Set("Connection", "Upgrade")
+		res.UpgradedConn = upstreamConn
+	})
+	r.Handle("CONNECT", "/ws-race-h2", func(req *httpparser.Request, res *httpparser.Response) {
+		upstreamConn, err := net.Dial("tcp", upstreamLn.Addr().String())
+		if err != nil {
+			res.SetStatus(http.StatusBadGateway)
+			return
+		}
+		res.SetStatus(http.StatusOK)
+		res.UpgradedConn = upstreamConn
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.UpgradeIdleTimeout = 100 * time.Millisecond
+	cfg.WorkerPoolSize = 64
+	cfg.HTTP2Enabled = true
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	var wg sync.WaitGroup
+
+	// Group 1: 10 goroutines with active heartbeats
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			reqStr := "GET /ws-race HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+			_, _ = conn.Write([]byte(reqStr))
+			resp := make([]byte, 256)
+			_, _ = conn.Read(resp)
+
+			for p := 0; p < 8; p++ {
+				_, _ = conn.Write([]byte(fmt.Sprintf("race-ping-%d-%d", id, p)))
+				buf := make([]byte, 64)
+				_ = conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+				_, _ = conn.Read(buf)
+				time.Sleep(30 * time.Millisecond)
+			}
+		}(i)
+	}
+
+	// Group 2: 10 goroutines completely silent (expect idle timeout)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			reqStr := "GET /ws-race HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+			_, _ = conn.Write([]byte(reqStr))
+			resp := make([]byte, 256)
+			_, _ = conn.Read(resp)
+
+			_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+			buf := make([]byte, 64)
+			_, _ = conn.Read(buf)
+		}()
+	}
+
+	// Group 3: 10 goroutines abruptly closing or half-closing
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+
+			reqStr := "GET /ws-race HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
+			_, _ = conn.Write([]byte(reqStr))
+			resp := make([]byte, 256)
+			_, _ = conn.Read(resp)
+
+			_, _ = conn.Write([]byte("quick-data"))
+			if id%2 == 0 {
+				if tcp, ok := conn.(*net.TCPConn); ok {
+					_ = tcp.CloseWrite()
+				}
+			} else {
+				_ = conn.Close()
+			}
+		}(i)
+	}
+
+	// 10 HTTP/2 extended CONNECT streams with random context cancellations
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			ctx, cancel := context.WithCancel(context.Background())
+			pr, pw := io.Pipe()
+			defer pw.Close()
+
+			req := httptest.NewRequest("CONNECT", "/ws-race-h2", pr).WithContext(ctx)
+			req.Header.Set(":protocol", "websocket")
+			rec := httptest.NewRecorder()
+
+			go func() {
+				time.Sleep(time.Duration(10+id*5) * time.Millisecond)
+				cancel()
+			}()
+
+			srv.HTTP2AdapterHandler().ServeHTTP(rec, req)
+		}(i)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// All goroutines completed cleanly
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent test timed out after 5s")
+	}
 }

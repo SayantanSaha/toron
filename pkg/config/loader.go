@@ -182,6 +182,10 @@ func ValidateConfig(cfg *AppConfig) error {
 		return fmt.Errorf("server.worker_pool_size must be greater than 0, got %d", cfg.Server.WorkerPoolSize)
 	}
 
+	if cfg.Server.UpgradeIdleTimeout < 0 {
+		return fmt.Errorf("server.upgrade_idle_timeout must be non-negative, got %v", cfg.Server.UpgradeIdleTimeout)
+	}
+
 	if cfg.Server.HTTPRedirect.Enabled && cfg.Server.HTTPRedirect.Port <= 0 {
 		cfg.Server.HTTPRedirect.Port = 80
 	}

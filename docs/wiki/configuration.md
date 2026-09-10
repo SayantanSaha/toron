@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-09
+updated: 2026-09-10
 
 depends_on:
   - REQ-007
@@ -16,6 +16,7 @@ depends_on:
   - REQ-056
   - REQ-086
   - REQ-087
+  - REQ-092
   - TASK-007
   - TASK-019
   - TASK-027
@@ -25,16 +26,22 @@ depends_on:
   - TASK-056
   - TASK-090
   - TASK-093
+  - TASK-111
+  - TASK-112
+  - TASK-113
 
 derived_from:
   - REQ-007
   - REQ-027
   - REQ-056
+  - REQ-092
   - ADR-002
   - ADR-022
   - ADR-051
   - ADR-082
+  - ADR-087
   - SEC-26
+  - SEC-31
 
 documents:
   - CONFIGURATION-GUIDE
@@ -184,6 +191,16 @@ server:
       enabled: true
       output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")
       format: "json"
+
+  # Trusted Proxy CIDR Ranges (Gating X-Forwarded-For & X-Real-IP evaluation)
+  trusted_proxies:
+    - "127.0.0.1/32"
+    - "10.0.0.0/8"
+
+  # Administrative Management API Subnet Gate (/internal/api/*)
+  admin_subnets:
+    - "10.50.0.0/16"
+    - "127.0.0.1/32"
 
 # Vendor-Agnostic OCI Container Auto-Discovery Engine
 discovery:
@@ -429,6 +446,13 @@ routes:
       mode: "enforce"
       disabled_rules:
         - "SQLI-001"
+
+  # Route-Level Trusted Proxies Override (Gating Forwarded Headers)
+  - type: "upstream"
+    prefix: "/services/partner-api"
+    target: "http://localhost:9003"
+    trusted_proxies:
+      - "198.51.100.10/32"
 ```
 
 ### Static Routes & Single Page Application (SPA) Fallback
@@ -668,6 +692,74 @@ Toron provides raw Layer 4 socket forwarding (`type: "tcp"`) and datagram forwar
 | `max_workers` | `integer` | `1024` | Maximum worker goroutines and task queue capacity for UDP datagram processing. Saturated packets drop fail-safe. |
 
 For deep architectural details, buffer recycling (`sync.Pool`), session socket reuse, and microbenchmark performance data, consult the [Layer 4 TCP & UDP Transport Proxies Feature Guide](./features/layer4-proxy.md).
+
+---
+
+### Trusted Proxies & Ingress Anti-Spoofing Architecture (`trusted_proxies`)
+
+Toron enforces strict client IP validation and anti-spoofing guarantees across all supported transport protocols—HTTP/1.1, HTTP/2 multiplexed streams, and HTTP/3 QUIC datagrams ([`SEC-31`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L428-L436), [`REQ-092`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-092.md), [`ADR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-087.md)).
+
+#### Core Principles
+
+1. **Physical Remote Address Binding (`req.RemoteAddr`)**:
+   - In native HTTP/1.1 connections, the socket peer address is bound upon connection acceptance (`server.go:handleConn`).
+   - In HTTP/2 and HTTP/3 protocol adapters (`server.go:http2AdapterHandler` and `server.go:ListenAndServeH3`), incoming `http.Request.RemoteAddr` is bound into `httpparser.Request.RemoteAddr`.
+   - The request model provides panic-safe parsing helpers `RemoteHost()` (extracting IP without port) and `RemoteIP()` (parsing `net.IP` with IPv4/IPv6 bracket stripping and `RawConn` fallback).
+
+2. **Rejection of Untrusted Forwarded Headers**:
+   - Client-supplied `X-Forwarded-For` and `X-Real-IP` headers are **discarded by default** across all security-critical subsystems.
+   - Forwarded headers are ONLY evaluated if the client's physical socket IP explicitly matches a configured `trusted_proxies` CIDR block (such as an upstream load balancer, CDN edge, or internal reverse proxy).
+
+3. **Perimeter Hardening Behavior**:
+
+   | Perimeter Module | Untrusted Connection Behavior | Verified Trusted Proxy Behavior |
+   | :--- | :--- | :--- |
+   | **WAF IP ACL** | Inspects physical remote IP. Injected `X-Forwarded-For` / `X-Real-IP` headers cannot bypass blacklists or allowlists. Unresolvable client IPs fail secure when an allowlist is active. | Evaluates client IP from forwarded headers after verifying peer IP against `trusted_proxies`. |
+   | **Internal Management API** (`/internal/api/*`) | Validates physical IP against `admin_subnets`. Injected headers are rejected with `403 Forbidden` (`{"error":"403 Forbidden","message":"Access denied by administrative subnet policy"}`). | Evaluates forwarded IP against `admin_subnets`. |
+   | **Token Bucket Rate Limiting** | Anchors token bucket key strictly to `"ip:" + socketHost`. Header rotation attacks cannot evade rate limiting. | Evaluates client IP / API key from forwarded headers into individual buckets. |
+   | **Reverse Proxy** | Strips untrusted incoming `X-Forwarded-For` and `X-Real-IP` headers; sets upstream headers strictly to verified physical `peerIP`. | Preserves `X-Real-IP` and safely appends `peerIP` to existing `X-Forwarded-For`. Sets `X-Forwarded-Proto: https` for HTTP/2 and HTTP/3. |
+   | **Structured Access Logging** | Logs physical remote IP in access logs, preventing audit trail poisoning. | Logs verified client IP identity. |
+
+4. **Preserved Mobile Roaming Affinity (Non-Goal Invariant)**:
+   - Sticky session load balancing (`pkg/proxy/sticky.go`) pursuant to [`REQ-030`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-030.md) is intentionally decoupled from access control. It evaluates client identifiers to maintain stable backend routing during mobile cellular tower handovers and carrier CGNAT reassignments without regression.
+
+#### Configuration Options
+
+| Option | Location | Type | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `server.trusted_proxies` | `config.yaml` | `list[string]` | `[]` | Global list of trusted proxy CIDR subnets (e.g. `["10.0.0.0/8", "192.168.1.0/24"]`). |
+| `server.admin_subnets` | `config.yaml` | `list[string]` | `[]` | Allowed CIDR subnets permitted to access `/internal/api/*` endpoints (e.g. `["10.50.0.0/16", "127.0.0.1/32"]`). |
+| `routes[].trusted_proxies` | `routes.yaml` | `list[string]` | `[]` | Route-specific trusted proxy CIDR subnets overriding global proxy trust for that route. |
+
+#### Configuration Example
+
+```yaml
+# config.yaml
+server:
+  host: "0.0.0.0"
+  port: 443
+
+  # Trust cloud load balancers and internal proxy tiers
+  trusted_proxies:
+    - "10.0.0.0/8"
+    - "172.16.0.0/12"
+    - "127.0.0.1/32"
+
+  # Restrict internal management dashboard APIs to corporate VPN CIDR
+  admin_subnets:
+    - "10.50.0.0/16"
+```
+
+```yaml
+# routes.yaml
+routes:
+  # Public API route trusting edge CDN proxies only
+  - type: "upstream"
+    prefix: "/api"
+    target: "http://api-backend:8080"
+    trusted_proxies:
+      - "198.51.100.0/24"
+```
 
 ---
 

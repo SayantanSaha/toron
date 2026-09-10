@@ -284,20 +284,12 @@ func ExtractClientKey(req *httpparser.Request) string {
 }
 
 func extractClientKeyInternal(req *httpparser.Request, trustedProxies []*net.IPNet) string {
-	var socketIP net.IP
-	var socketHost string
-	if req.RawConn != nil {
-		if remoteAddr := req.RawConn.RemoteAddr(); remoteAddr != nil {
-			raw := remoteAddr.String()
-			if host, _, err := net.SplitHostPort(raw); err == nil {
-				socketHost = host
-				socketIP = net.ParseIP(host)
-			} else {
-				socketHost = raw
-				socketIP = net.ParseIP(raw)
-			}
-		}
+	if req == nil {
+		return "ip:anonymous"
 	}
+
+	socketHost := req.RemoteHost()
+	socketIP := req.RemoteIP()
 
 	// Check if peer is in trusted proxies
 	peerIsTrusted := false
@@ -310,8 +302,8 @@ func extractClientKeyInternal(req *httpparser.Request, trustedProxies []*net.IPN
 		}
 	}
 
-	// If connection is from a trusted proxy or if synthetic request (no socket), honor forwarded/client headers
-	if peerIsTrusted || req.RawConn == nil {
+	// If connection is from a verified trusted proxy, honor forwarded/client headers
+	if peerIsTrusted {
 		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			return "ip:" + strings.TrimSpace(parts[0])
@@ -322,14 +314,17 @@ func extractClientKeyInternal(req *httpparser.Request, trustedProxies []*net.IPN
 		if auth := req.Header.Get("Authorization"); auth != "" {
 			return "auth:" + strings.TrimSpace(auth)
 		}
+		if socketHost != "" {
+			return "ip:" + socketHost
+		}
 	}
 
-	// If physical socket is present and untrusted, anchor strictly to socket IP
+	// If physical connection is present and untrusted, anchor strictly to physical IP
 	if socketHost != "" {
 		return "ip:" + socketHost
 	}
 
-	// Fallbacks for headless/synthetic testing requests
+	// Fallbacks for headless/synthetic testing requests where physical address is absent
 	if apiKey := req.Header.Get("X-API-Key"); apiKey != "" {
 		return "key:" + strings.TrimSpace(apiKey)
 	}

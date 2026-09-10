@@ -238,6 +238,9 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		req.RawConn = conn
+		if conn != nil && conn.RemoteAddr() != nil {
+			req.RemoteAddr = conn.RemoteAddr().String()
+		}
 		firstRequest = false
 
 		// Process request through router

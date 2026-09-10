@@ -4,15 +4,24 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-09-04
-updated: 2026-09-04
+updated: 2026-09-10
 
 depends_on:
   - REQ-027
+  - REQ-092
   - TASK-027
+  - TASK-111
+  - TASK-112
+  - TASK-113
+  - ADR-022
+  - ADR-087
 
 derived_from:
   - REQ-027
+  - REQ-092
   - ADR-022
+  - ADR-087
+  - SEC-31
 
 documents:
   - HTTP3-GUIDE
@@ -41,6 +50,7 @@ Toron integrates the `quic-go/http3` engine directly into the core server, allow
 3. **Automatic `Alt-Svc` Advertisement**: Injects `Alt-Svc: h3=":<port>"; ma=2592000` headers on HTTP/1.1 and HTTP/2 responses so compliant browsers and HTTP clients automatically upgrade subsequent requests to HTTP/3 QUIC.
 4. **Graceful UDP Socket Shutdown**: `Server.Shutdown(ctx)` coordinates socket teardown via `s.h3Server.Close()`, draining active streams cleanly without connection aborts or socket leaks.
 5. **Full Middleware & Router Parity**: Requests arriving over HTTP/3 QUIC pass through the unified router and middleware pipeline with identical security policies, rate limits, and proxy rules.
+6. **Physical RemoteAddr Binding & Anti-Spoofing**: Ingress HTTP/3 requests arriving over QUIC datagrams bind the physical UDP peer network address (`r.RemoteAddr`) into `httpparser.Request.RemoteAddr`, guaranteeing that unauthenticated external clients cannot spoof client IPs to bypass WAF IP ACLs, administrative subnet policies, rate limiters, or upstream proxy audit trails ([`SEC-31`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L428-L436), [`REQ-092`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-092.md), [`ADR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-087.md)).
 
 ---
 

@@ -1,5 +1,53 @@
 # Release Notes
 
+## 2026-09-10 - Toron v1.5.12 Security Release (SEC-31: Physical RemoteAddr Binding & Ingress Anti-Spoofing across HTTP/1.1, HTTP/2, and HTTP/3)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-31 (`pkg/httpparser`, `pkg/server`, `pkg/waf`, `pkg/router`, `pkg/proxy`, `pkg/logging`)**: Successfully resolved unauthenticated client IP spoofing and perimeter security bypass vulnerability [`SEC-31`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L428-L436) ([CWE-290](https://cwe.mitre.org/data/definitions/290.html), [CWE-345](https://cwe.mitre.org/data/definitions/345.html), [CWE-693](https://cwe.mitre.org/data/definitions/693.html), [`SR-091 Finding 1`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md#L78-L99), [`SR-092`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-092.md)).
+- **Physical `RemoteAddr` Binding in HTTP/2 and HTTP/3 Protocol Adapters**: Extended [`httpparser.Request`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/request.go) with an immutable `RemoteAddr string` field and panic-safe extraction helpers `RemoteHost()` and `RemoteIP()`. HTTP/2 streams (`http2AdapterHandler`) and HTTP/3 QUIC datagrams (`ListenAndServeH3`) bind `r.RemoteAddr` at ingress, and native HTTP/1.1 connections bind `conn.RemoteAddr().String()` in `handleConn`, establishing full protocol parity across all transports ([`TASK-111`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-111.md), [`REQ-092`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-092.md), [`ADR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-087.md)).
+- **Perimeter Hardening & Trusted Proxy Gating (`pkg/waf`, `pkg/server`, `pkg/router`, `pkg/proxy`, `pkg/logging`)**: Client-supplied `X-Forwarded-For` and `X-Real-IP` headers are rejected and stripped unless the physical peer IP is verified against configured `trusted_proxies` CIDR blocks:
+  - **WAF IP ACL**: Evaluates physical peer IP first; untrusted headers cannot bypass blacklists or allowlists; fails secure on unresolvable IPs.
+  - **Internal Management API**: Rejects untrusted HTTP/2 and HTTP/3 subnet spoofing with `403 Forbidden` (`{"error":"403 Forbidden","message":"Access denied by administrative subnet policy"}`).
+  - **Token Bucket Rate Limiting**: Neutralized header rotation DoS attacks by removing insecure `req.RawConn == nil` fallbacks; untrusted connections are contained within a single `ip:<remoteHost>` bucket.
+  - **Reverse Proxy**: Strips spoofed `X-Forwarded-For` and `X-Real-IP` headers from untrusted connections, replacing them with verified physical `peerIP`; safely appends `peerIP` for verified `trusted_proxies`.
+  - **Structured Access Logging**: Records true physical client IP, preventing audit trail falsification.
+- **Preserved Mobile Roaming Session Affinity (`pkg/proxy/sticky.go`)**: Maintained zero changes (0 diffs) in `sticky.go`, preserving application-level session persistence across cellular IP handovers and carrier CGNAT transitions pursuant to [`REQ-030`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-030.md).
+- **Zero External Dependencies**: Implemented strictly using standard library packages (`net`, `net/http`, `strings`, `sync`).
+- **Comprehensive Automated Verification Suite (`TC-092`)**: Validated physical address binding, multi-protocol parity, WAF anti-spoofing, internal API subnet gates, rate limiter single-bucket containment, reverse proxy sanitization, HTTP/3 QUIC datagram parity, mobile roaming affinity, and concurrency under `go test -race` ([`TASK-113`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-113.md), [`TC-092`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-092.md)).
+
+### Added
+- **Request Model Fields & Helpers (`pkg/httpparser/request.go`)**:
+  - Added `RemoteAddr string` to [`httpparser.Request`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/request.go).
+  - Added `RemoteHost() string` with safe port splitting and `RawConn` fallback.
+  - Added `RemoteIP() net.IP` supporting IPv4, bracketed/unbracketed IPv6, and nil safety.
+- **Automated Verification Suite (`pkg/server/server_anti_spoofing_test.go`, `pkg/httpparser/request_test.go`, `pkg/waf/ip_acl_test.go`, `pkg/router/rate_limiter_test.go`, `pkg/proxy/proxy_test.go`, `pkg/proxy/sticky_test.go`, `pkg/logging/manager_test.go`)**:
+  - `TestRequest_RemoteHostAndIP_Parsing`: Table-driven tests for IPv4, IPv6, port splitting, bracket stripping, whitespace, and fallbacks.
+  - `TestRequest_NewRequestFromStd_RemoteAddr`: Standard request conversion remote address preservation.
+  - `TestServer_Ingress_RemoteAddrPopulation_H1` & `TestServer_Ingress_RemoteAddrPopulation_H2`: Transport ingress remote address binding.
+  - `TestServer_H2_WAF_SpoofingRejected` & `TestWAF_IPACL_AntiSpoofing`: WAF blacklist/allowlist anti-spoofing rejection and fail-secure verification.
+  - `TestServer_H2_InternalAPI_SubnetEnforcement`: Internal API administrative subnet spoofing rejection and fail-closed default.
+  - `TestServer_H2_RateLimiter_AntiSpoofing` & `TestServer_H2_RateLimiter_Integration`: Rate limiter header rotation containment.
+  - `TestServer_H2_ReverseProxy_HeaderSanitization` & `TestServer_H2_ReverseProxy_TrustedProxyAppended`: Reverse proxy header stripping and trusted proxy appending.
+  - `TestServer_H3_RemoteAddrBinding`: HTTP/3 QUIC datagram peer address binding.
+  - `TestLogging_ExtractClientIP_PhysicalBinding`: Structured logging client IP physical binding.
+  - `TestSticky_PreserveMobileRoamingAffinity`: Sticky session mobile roaming regression test (REQ-030).
+  - `TestServer_AntiSpoofing_ConcurrentRaceClean`: 100 concurrent workers dispatching 5,000 requests under `-race`.
+
+### Changed
+- **Ingress Protocol Adapters (`pkg/server/server.go`, `pkg/httpparser/request.go`)**: Bound physical socket addresses in `handleConn`, `http2AdapterHandler`, and `ListenAndServeH3`.
+- **Perimeter Security Modules (`pkg/waf`, `pkg/server`, `pkg/router`, `pkg/proxy`, `pkg/logging`)**: Prioritized physical connection metadata and enforced `trusted_proxies` verification before accepting client-supplied IP headers.
+
+### Related Tasks & Requirements
+- [`TASK-111`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-111.md): RemoteAddr Binding & Extraction Helpers in httpparser.Request and Ingress Protocol Adapters
+- [`TASK-112`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-112.md): Security Perimeter Hardening & Trusted Proxy Gating across WAF, Internal API, Rate Limiter, Reverse Proxy, and Logging
+- [`TASK-113`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-113.md): Comprehensive Automated Verification Suite for Anti-Spoofing & Protocol Parity (TC-092)
+- [`REQ-092`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-092.md): Unauthenticated Client IP Spoofing and Security Bypass via Missing Physical RemoteAddr Binding in HTTP/2 and HTTP/3 Adapters
+- [`ADR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-087.md): Physical RemoteAddr Binding and Ingress Anti-Spoofing across HTTP/1.1, HTTP/2, and HTTP/3
+- [`TC-092`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-092.md): Test Suite for Physical RemoteAddr Binding and Ingress Anti-Spoofing
+- [`SEC-31`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L428-L436): Unauthenticated Client IP Spoofing & Security Bypass via Missing Physical RemoteAddr Binding in HTTP/2 and HTTP/3 Adapters
+- [`SR-092`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-092.md): Security Review and Vulnerability Assessment of SEC-31 Remediation
+- [`CR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-088.md): Code Review of Physical RemoteAddr Binding & Ingress Anti-Spoofing across HTTP/1.1, HTTP/2, and HTTP/3
+
 ## 2026-09-09 - Toron v1.5.11 Security Release (SEC-30: Direct Parameterized Subpath Routing and Empty Prefix Proxy Elimination in REST-to-gRPC Transcoder)
 
 ### Milestone Summary

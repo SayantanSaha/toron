@@ -50,39 +50,43 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 				metrics.DefaultRegistry.RecordWAFInspectionDuration(time.Since(start).Seconds())
 			}()
 
+			var tp []string
+			if engine != nil {
+				tp = engine.Config().TrustedProxies
+			}
+
 			clientIP := ""
-			if ip := ExtractClientIP(req); ip != nil {
+			if ip := ExtractClientIP(req, tp); ip != nil {
 				clientIP = ip.String()
 			}
 
 			// 0. Fast-Path CIDR IP Access Control Check
 			if acl := engine.IPAccessList(); acl != nil && acl.HasRules() {
-				if ip := ExtractClientIP(req); ip != nil {
-					allowed, reason := acl.CheckIP(ip)
-					if !allowed {
-						metrics.DefaultRegistry.RecordWAFBlocked("ip_acl", req.Path)
-						if logger := engine.AuditLogger(); logger != nil {
-							logger.LogEvent(SecurityEvent{
-								Event:        "ip_acl_block",
-								ClientIP:     clientIP,
-								Method:       req.Method,
-								Path:         req.Path,
-								Category:     "ip_acl",
-								AnomalyScore: 0,
-								Action:       "blocked",
-								Location:     "remote_addr",
-							})
-						}
-
-						if res.Body == nil {
-							res.Body = bytes.NewBuffer(nil)
-						}
-						res.Body.Reset()
-						res.Header.Set("Content-Type", "application/json")
-						res.SetStatus(403)
-						_, _ = res.WriteString(`{"error":"Forbidden","message":"` + reason + `"}`)
-						return
+				ip := ExtractClientIP(req, tp)
+				allowed, reason := acl.CheckIP(ip)
+				if !allowed {
+					metrics.DefaultRegistry.RecordWAFBlocked("ip_acl", req.Path)
+					if logger := engine.AuditLogger(); logger != nil {
+						logger.LogEvent(SecurityEvent{
+							Event:        "ip_acl_block",
+							ClientIP:     clientIP,
+							Method:       req.Method,
+							Path:         req.Path,
+							Category:     "ip_acl",
+							AnomalyScore: 0,
+							Action:       "blocked",
+							Location:     "remote_addr",
+						})
 					}
+
+					if res.Body == nil {
+						res.Body = bytes.NewBuffer(nil)
+					}
+					res.Body.Reset()
+					res.Header.Set("Content-Type", "application/json")
+					res.SetStatus(403)
+					_, _ = res.WriteString(`{"error":"Forbidden","message":"` + reason + `"}`)
+					return
 				}
 			}
 

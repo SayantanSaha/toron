@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-09
+updated: 2026-09-10
 
 depends_on:
   - REQ-007
@@ -14,6 +14,7 @@ depends_on:
   - REQ-036
   - REQ-086
   - REQ-087
+  - REQ-092
   - TASK-007
   - TASK-019
   - TASK-027
@@ -24,10 +25,15 @@ depends_on:
   - TASK-093
   - TASK-094
   - TASK-095
+  - TASK-111
+  - TASK-112
+  - TASK-113
 
 derived_from:
   - REQ-007
+  - REQ-092
   - SEC-26
+  - SEC-31
 
 documents:
   - CONFIG-OPTIONS-REFERENCE
@@ -54,6 +60,8 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `upgrade_idle_timeout` | `duration` | `"60s"` | Maximum inactivity deadline on upgraded protocol/WebSocket streams before termination (defaults to `idle_timeout` or `60s` if omitted or <= 0) |
 | `max_header_bytes` | `integer` | `8192` (8 KB) | Maximum HTTP header size |
 | `max_body_bytes` | `integer` | `4194304` (4 MB) | Maximum HTTP body payload size |
+| `trusted_proxies` | `list` | `[]` | List of trusted proxy CIDR subnets gating `X-Forwarded-For` and `X-Real-IP` evaluation |
+| `admin_subnets` | `list` | `[]` | Allowed CIDR subnets permitted to access `/internal/api/*` administrative endpoints |
 
 ## Section: `server.http2`
 
@@ -144,6 +152,7 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `denied_ips` | `list` | `[]` | Fast-path CIDR IP denylist |
 | `disabled_rules` | `list` | `[]` | List of rule IDs to bypass (e.g. `["SQLI-001"]`) |
 | `custom_rules` | `list` | `[]` | User-defined regex threat rules (`id`, `category`, `pattern`, `score`, `locations`) |
+| `trusted_proxies` | `list` | `[]` | Trusted proxy CIDR subnets allowed to pass forwarded client IPs for WAF evaluation |
 | `audit_log.enabled` | `boolean` | `true` | Enable structured JSON security audit logger |
 | `audit_log.output` | `string` | `"stdout"` | Audit destination (`"stdout"`, `"stderr"`, or file path) |
 | `audit_log.format` | `string` | `"json"` | Audit output format |
@@ -236,6 +245,7 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `tls` | `object` | Per-host TLS/mTLS settings (`cert_file`, `key_file`, `ca_file`, `client_auth`, `min_version`) |
 | `waf` | `object` | Route-level WAF overrides (`enabled`, `mode`, `allowed_ips`, `denied_ips`, `disabled_rules`) |
 | `auth` | `object` | Route-level authentication overrides (`type`, `jwt`, `api_key`, `basic`) |
+| `trusted_proxies` | `list` | Route-level trusted proxy CIDR subnets gating forwarded headers for this route |
 
 ## Section: `logging`
 

@@ -499,14 +499,8 @@ func ExtractClientIP(req *httpparser.Request) string {
 	if req == nil {
 		return ""
 	}
-	if req.RawConn != nil {
-		if remoteAddr := req.RawConn.RemoteAddr(); remoteAddr != nil {
-			raw := remoteAddr.String()
-			if host, _, err := net.SplitHostPort(raw); err == nil {
-				return host
-			}
-			return raw
-		}
+	if host := req.RemoteHost(); host != "" {
+		return host
 	}
 	if req.Header != nil {
 		if xff := req.Header.Get("X-Forwarded-For"); xff != "" {

@@ -210,6 +210,9 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 
 	if opts.WAF != nil {
 		if wafCfg, ok := opts.WAF.(waf.WAFConfig); ok && (wafCfg.Enabled || len(wafCfg.AllowedIPs) > 0 || len(wafCfg.DeniedIPs) > 0 || len(wafCfg.DisabledRules) > 0 || wafCfg.Mode != "") {
+			if len(opts.TrustedProxies) > 0 && len(wafCfg.TrustedProxies) == 0 {
+				wafCfg.TrustedProxies = opts.TrustedProxies
+			}
 			if strings.TrimSpace(opts.SecurityLog) != "" {
 				secLog := strings.ToLower(strings.TrimSpace(opts.SecurityLog))
 				if secLog == "off" || secLog == "none" {

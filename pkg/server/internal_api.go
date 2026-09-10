@@ -64,6 +64,7 @@ type InternalAPIConfig struct {
 	AdminPassword          string             `json:"admin_password"`
 	AdminUsers             map[string]string  `json:"admin_users"`
 	AdminSubnets           []string           `json:"admin_subnets"`
+	TrustedProxies         []string           `json:"trusted_proxies"`
 	AllowedProxyTestPaths  []string           `json:"allowed_proxy_test_paths"`
 }
 
@@ -184,6 +185,28 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		}
 	}
 
+	// Parse configured trusted proxies
+	var parsedTrustedProxies []*net.IPNet
+	for _, tp := range cfg.TrustedProxies {
+		tp = strings.TrimSpace(tp)
+		if tp == "" {
+			continue
+		}
+		if !strings.Contains(tp, "/") {
+			if ip := net.ParseIP(tp); ip != nil {
+				if ip.To4() != nil {
+					tp = tp + "/32"
+				} else {
+					tp = tp + "/128"
+				}
+			}
+		}
+		_, ipNet, err := net.ParseCIDR(tp)
+		if err == nil && ipNet != nil {
+			parsedTrustedProxies = append(parsedTrustedProxies, ipNet)
+		}
+	}
+
 	authRequired := cfg.AdminAuthEnabled || cfg.AdminToken != "" || len(cfg.AdminAPIKeys) > 0 || cfg.AdminUsername != "" || len(cfg.AdminUsers) > 0
 
 	// Security middleware guard wrapping all internal API routes
@@ -192,27 +215,31 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			// Subnet check
 			if len(parsedSubnets) > 0 {
 				var clientIP net.IP
-				if req.RawConn != nil {
-					if remoteAddr := req.RawConn.RemoteAddr(); remoteAddr != nil {
-						host, _, err := net.SplitHostPort(remoteAddr.String())
-						if err == nil {
-							clientIP = net.ParseIP(host)
-						} else {
-							clientIP = net.ParseIP(remoteAddr.String())
+				physicalIP := req.RemoteIP()
+				if physicalIP != nil {
+					peerIsTrusted := false
+					for _, tpNet := range parsedTrustedProxies {
+						if tpNet.Contains(physicalIP) {
+							peerIsTrusted = true
+							break
 						}
 					}
-				}
-				if clientIP == nil && req.Header != nil {
-					if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
-						parts := strings.Split(xff, ",")
-						raw := strings.TrimSpace(parts[0])
-						if host, _, err := net.SplitHostPort(raw); err == nil {
-							clientIP = net.ParseIP(host)
-						} else {
-							clientIP = net.ParseIP(raw)
+					if peerIsTrusted && req.Header != nil {
+						if xff := req.Header.Get("X-Forwarded-For"); xff != "" {
+							parts := strings.Split(xff, ",")
+							raw := strings.TrimSpace(parts[0])
+							if host, _, err := net.SplitHostPort(raw); err == nil {
+								clientIP = net.ParseIP(host)
+							} else {
+								clientIP = net.ParseIP(raw)
+							}
 						}
 					}
+					if clientIP == nil {
+						clientIP = physicalIP
+					}
 				}
+
 				allowed := false
 				if clientIP != nil {
 					for _, subnet := range parsedSubnets {

@@ -815,38 +815,55 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	// Derive client peer IP and trust status
 	peerIP := ""
 	isTrusted := false
-	if req.RawConn != nil && req.RawConn.RemoteAddr() != nil {
-		peerIP, isTrusted = isPeerTrusted(req.RawConn.RemoteAddr(), p.trustedProxies)
+	if host := req.RemoteHost(); host != "" {
+		peerIP = host
+		if ip := req.RemoteIP(); ip != nil {
+			peerIP = ip.String()
+			for _, cidr := range p.trustedProxies {
+				if cidr.Contains(ip) {
+					isTrusted = true
+					break
+				}
+			}
+		}
 	}
 
 	// Inject X-Forwarded-* headers with verified connection state integrity (ADR-066 / CWE-345)
 	outReq.Header.Set("X-Forwarded-Host", req.Header.Get("Host"))
 
-	// Derive protocol from physical connection
+	// Derive protocol from physical connection or HTTP/2 & HTTP/3 indicators
 	isTLS := isTLSConnection(req.RawConn)
 	proto := "http"
-	if isTLS {
+	if isTLS || strings.EqualFold(req.Proto, "https") || req.Proto == "HTTP/2.0" || req.Proto == "HTTP/3.0" || strings.HasPrefix(req.Proto, "HTTP/2") || strings.HasPrefix(req.Proto, "HTTP/3") {
 		proto = "https"
 	}
 
 	clientProto := req.Header.Get("X-Forwarded-Proto")
 	if isTrusted && clientProto != "" {
 		proto = clientProto
-	} else if req.RawConn == nil {
-		// Mock testing fallback when RawConn is absent
+	} else if req.RawConn == nil && req.RemoteAddr == "" {
+		// Mock testing fallback when both RawConn and RemoteAddr are absent
 		if clientProto != "" {
 			proto = clientProto
-		} else if strings.EqualFold(req.Proto, "https") || req.Proto == "HTTP/2.0" || req.Proto == "HTTP/3.0" {
-			proto = "https"
 		}
 	}
 	outReq.Header.Set("X-Forwarded-Proto", proto)
 
 	if peerIP != "" {
-		existingXFF := req.Header.Get("X-Forwarded-For")
-		if isTrusted && existingXFF != "" {
-			outReq.Header.Set("X-Forwarded-For", existingXFF+", "+peerIP)
+		if isTrusted {
+			existingXFF := req.Header.Get("X-Forwarded-For")
+			if existingXFF != "" {
+				outReq.Header.Set("X-Forwarded-For", existingXFF+", "+peerIP)
+			} else {
+				outReq.Header.Set("X-Forwarded-For", peerIP)
+			}
+			if xri := req.Header.Get("X-Real-IP"); xri != "" {
+				outReq.Header.Set("X-Real-IP", xri)
+			} else {
+				outReq.Header.Set("X-Real-IP", peerIP)
+			}
 		} else {
+			// Untrusted peer: discard client-supplied XFF and X-Real-IP; strictly set to verified peerIP
 			outReq.Header.Set("X-Forwarded-For", peerIP)
 			outReq.Header.Set("X-Real-IP", peerIP)
 		}

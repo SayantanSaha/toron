@@ -67,6 +67,7 @@ type WAFConfig struct {
 	Excluded           []string           `json:"excluded" yaml:"excluded"`
 	CustomRules        []CustomRuleConfig `json:"custom_rules" yaml:"custom_rules"`
 	AuditLog           AuditLogConfig     `json:"audit_log" yaml:"audit_log"`
+	TrustedProxies     []string           `json:"trusted_proxies" yaml:"trusted_proxies"`
 }
 
 // DefaultConfig returns safe default WAF settings.

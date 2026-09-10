@@ -117,3 +117,113 @@ func TestIPAccessList_ExtractClientIP(t *testing.T) {
 		t.Errorf("expected client IP 198.51.100.7, got %v", ip2)
 	}
 }
+
+func TestWAF_IPACL_AntiSpoofing(t *testing.T) {
+	// Subtest 3A: Blacklist Evasion Attempt via Spoofed X-Forwarded-For
+	t.Run("Blacklist evasion via X-Forwarded-For rejected", func(t *testing.T) {
+		acl, err := NewIPAccessList(nil, []string{"198.51.100.99/32"})
+		if err != nil {
+			t.Fatalf("failed to create ACL: %v", err)
+		}
+
+		req, _ := httpparser.NewRequest("GET", "/secure/data", "HTTP/2.0")
+		req.RemoteAddr = "198.51.100.99:50000"
+		req.Header.Set("X-Forwarded-For", "203.0.113.1")
+
+		clientIP := ExtractClientIP(req)
+		if clientIP == nil || clientIP.String() != "198.51.100.99" {
+			t.Fatalf("expected physical IP 198.51.100.99, got %v", clientIP)
+		}
+
+		allowed, reason := acl.CheckIP(clientIP)
+		if allowed {
+			t.Fatalf("SECURITY VIOLATION: untrusted client bypassed IP blacklist using X-Forwarded-For!")
+		}
+		if reason == "" {
+			t.Errorf("expected non-empty rejection reason")
+		}
+	})
+
+	// Subtest 3B: Blacklist Evasion Attempt via Spoofed X-Real-IP
+	t.Run("Blacklist evasion via X-Real-IP rejected", func(t *testing.T) {
+		acl, err := NewIPAccessList(nil, []string{"198.51.100.99/32"})
+		if err != nil {
+			t.Fatalf("failed to create ACL: %v", err)
+		}
+
+		req, _ := httpparser.NewRequest("GET", "/secure/data", "HTTP/2.0")
+		req.RemoteAddr = "198.51.100.99:50000"
+		req.Header.Set("X-Real-IP", "203.0.113.1")
+
+		clientIP := ExtractClientIP(req)
+		if clientIP == nil || clientIP.String() != "198.51.100.99" {
+			t.Fatalf("expected physical IP 198.51.100.99, got %v", clientIP)
+		}
+
+		allowed, _ := acl.CheckIP(clientIP)
+		if allowed {
+			t.Fatalf("SECURITY VIOLATION: untrusted client bypassed IP blacklist using X-Real-IP!")
+		}
+	})
+
+	// Subtest 3C: Allowlist Bypass Attempt
+	t.Run("Allowlist bypass attempt rejected", func(t *testing.T) {
+		acl, err := NewIPAccessList([]string{"10.0.0.0/8"}, nil)
+		if err != nil {
+			t.Fatalf("failed to create ACL: %v", err)
+		}
+
+		req, _ := httpparser.NewRequest("GET", "/secure/data", "HTTP/2.0")
+		req.RemoteAddr = "203.0.113.50:45000"
+		req.Header.Set("X-Forwarded-For", "10.1.2.3")
+
+		clientIP := ExtractClientIP(req)
+		if clientIP == nil || clientIP.String() != "203.0.113.50" {
+			t.Fatalf("expected physical IP 203.0.113.50, got %v", clientIP)
+		}
+
+		allowed, _ := acl.CheckIP(clientIP)
+		if allowed {
+			t.Fatalf("SECURITY VIOLATION: unauthorized client bypassed allowlist using spoofed XFF!")
+		}
+	})
+
+	// Subtest 3D: Trusted Proxy Delegation
+	t.Run("Trusted proxy delegation evaluates forwarded header", func(t *testing.T) {
+		acl, err := NewIPAccessList(nil, []string{"198.51.100.99/32"})
+		if err != nil {
+			t.Fatalf("failed to create ACL: %v", err)
+		}
+
+		trustedProxies := []string{"172.16.0.0/16"}
+		req, _ := httpparser.NewRequest("GET", "/secure/data", "HTTP/2.0")
+		req.RemoteAddr = "172.16.1.1:40000"
+		req.Header.Set("X-Forwarded-For", "198.51.100.99")
+
+		clientIP := ExtractClientIP(req, trustedProxies)
+		if clientIP == nil || clientIP.String() != "198.51.100.99" {
+			t.Fatalf("expected forwarded client IP 198.51.100.99, got %v", clientIP)
+		}
+
+		allowed, _ := acl.CheckIP(clientIP)
+		if allowed {
+			t.Fatalf("expected blacklisted client behind trusted proxy to be blocked, but was allowed")
+		}
+	})
+
+	// Subtest 3E: Fail-secure on nil IP when allowlist is enforced
+	t.Run("Fail-secure denial when IP is nil and allowlist is active", func(t *testing.T) {
+		acl, err := NewIPAccessList([]string{"10.0.0.0/8"}, nil)
+		if err != nil {
+			t.Fatalf("failed to create ACL: %v", err)
+		}
+
+		allowed, reason := acl.CheckIP(nil)
+		if allowed {
+			t.Fatalf("expected nil IP to be denied when allowlist is active, but was allowed")
+		}
+		if reason == "" {
+			t.Errorf("expected rejection reason for nil IP on allowlist")
+		}
+	})
+}

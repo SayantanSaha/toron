@@ -258,3 +258,117 @@ func TestRateLimiter_TrustedProxy_HonorsXFF(t *testing.T) {
 		t.Fatalf("expected 200 OK for client B1 from trusted proxy, got %d", resB1.StatusCode)
 	}
 }
+
+func TestServer_H2_RateLimiter_AntiSpoofing(t *testing.T) {
+	// Subtest 5A: Header Rotation Attack via X-Forwarded-For over HTTP/2
+	t.Run("XFF header rotation does not evade rate limits on untrusted HTTP/2 connection", func(t *testing.T) {
+		mw, err := router.NewRateLimitMiddleware("5/sec")
+		if err != nil {
+			t.Fatalf("failed to create middleware: %v", err)
+		}
+
+		handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString("ok")
+		})
+
+		// Single attacker on physical connection req.RemoteAddr = "198.51.100.88:51000", RawConn == nil (HTTP/2)
+		// 10 rapid requests rotating X-Forwarded-For
+		statusCodes := make([]int, 10)
+		for i := 0; i < 10; i++ {
+			req, _ := httpparser.NewRequest("GET", "/api/v1/search", "HTTP/2.0")
+			req.RemoteAddr = "198.51.100.88:51000"
+			req.Header.Set("X-Forwarded-For", fmt.Sprintf("10.0.0.%d", i+1))
+			res := httpparser.NewResponse()
+			handler(req, res)
+			statusCodes[i] = res.StatusCode
+		}
+
+		// First 5 should succeed (burst = 5)
+		for i := 0; i < 5; i++ {
+			if statusCodes[i] != http.StatusOK {
+				t.Fatalf("expected request %d to be 200 OK, got %d", i+1, statusCodes[i])
+			}
+		}
+		// Requests 6 to 10 must be 429 Too Many Requests
+		for i := 5; i < 10; i++ {
+			if statusCodes[i] != http.StatusTooManyRequests {
+				t.Fatalf("SECURITY VIOLATION: request %d with forged XFF bypassed rate limit! Got %d, want 429", i+1, statusCodes[i])
+			}
+		}
+	})
+
+	// Subtest 5B: Header Rotation Attack via X-API-Key over HTTP/2
+	t.Run("X-API-Key rotation does not evade rate limits on untrusted HTTP/2 connection", func(t *testing.T) {
+		mw, err := router.NewRateLimitMiddleware("5/sec")
+		if err != nil {
+			t.Fatalf("failed to create middleware: %v", err)
+		}
+
+		handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString("ok")
+		})
+
+		// Single attacker on 198.51.100.88:51000 rotating X-API-Key
+		statusCodes := make([]int, 10)
+		for i := 0; i < 10; i++ {
+			req, _ := httpparser.NewRequest("GET", "/api/v1/search", "HTTP/2.0")
+			req.RemoteAddr = "198.51.100.88:51000"
+			req.Header.Set("X-API-Key", fmt.Sprintf("user_%d", i+1))
+			res := httpparser.NewResponse()
+			handler(req, res)
+			statusCodes[i] = res.StatusCode
+		}
+
+		for i := 0; i < 5; i++ {
+			if statusCodes[i] != http.StatusOK {
+				t.Fatalf("expected request %d to be 200 OK, got %d", i+1, statusCodes[i])
+			}
+		}
+		for i := 5; i < 10; i++ {
+			if statusCodes[i] != http.StatusTooManyRequests {
+				t.Fatalf("SECURITY VIOLATION: request %d with rotating API key bypassed rate limit! Got %d, want 429", i+1, statusCodes[i])
+			}
+		}
+	})
+
+	// Subtest 5C: Trusted Proxy Multi-Client Isolation
+	t.Run("Trusted proxy client isolation", func(t *testing.T) {
+		mw, err := router.NewRateLimitMiddleware("5/sec", router.RateLimiterOptions{
+			TrustedProxies: []string{"172.20.0.0/16"},
+		})
+		if err != nil {
+			t.Fatalf("failed to create middleware: %v", err)
+		}
+
+		handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString("ok")
+		})
+
+		// Client 1 sends 5 requests with X-Forwarded-For: 203.0.113.1
+		for i := 0; i < 5; i++ {
+			req, _ := httpparser.NewRequest("GET", "/api/v1/search", "HTTP/2.0")
+			req.RemoteAddr = "172.20.0.1:40000"
+			req.Header.Set("X-Forwarded-For", "203.0.113.1")
+			res := httpparser.NewResponse()
+			handler(req, res)
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("expected client 1 req %d to succeed, got %d", i+1, res.StatusCode)
+			}
+		}
+
+		// Client 2 sends 5 requests with X-Forwarded-For: 203.0.113.2 through the same trusted proxy
+		for i := 0; i < 5; i++ {
+			req, _ := httpparser.NewRequest("GET", "/api/v1/search", "HTTP/2.0")
+			req.RemoteAddr = "172.20.0.1:40000"
+			req.Header.Set("X-Forwarded-For", "203.0.113.2")
+			res := httpparser.NewResponse()
+			handler(req, res)
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("expected client 2 req %d to succeed in isolated bucket, got %d", i+1, res.StatusCode)
+			}
+		}
+	})
+}

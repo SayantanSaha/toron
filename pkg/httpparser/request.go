@@ -66,6 +66,7 @@ type Request struct {
 	Body          io.Reader
 	ContentLength int64
 	RawConn       net.Conn
+	RemoteAddr    string // Physical client network address ("IP:port") assigned at transport ingress
 }
 
 // IsWebSocketUpgrade returns true if the request contains WebSocket upgrade headers (HTTP/1.1) or RFC 8441 Extended CONNECT pseudo-headers (HTTP/2).
@@ -119,8 +120,48 @@ func (r *Request) Query() url.Values {
 	return nil
 }
 
+// RemoteHost returns the host/IP portion of the physical connection address.
+// It inspects RemoteAddr first, falling back to RawConn.RemoteAddr() if RemoteAddr is unset.
+// Port numbers and IPv6 surrounding brackets are stripped safely.
+// Returns an empty string if no valid host is present or if the receiver is nil.
+func (r *Request) RemoteHost() string {
+	if r == nil {
+		return ""
+	}
+	addr := strings.TrimSpace(r.RemoteAddr)
+	if addr == "" && r.RawConn != nil && r.RawConn.RemoteAddr() != nil {
+		addr = strings.TrimSpace(r.RawConn.RemoteAddr().String())
+	}
+	if addr == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(addr)
+	if err == nil {
+		return strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	}
+	// Fallback for bare IPs or malformed addresses
+	if strings.HasPrefix(addr, "[") && strings.HasSuffix(addr, "]") {
+		addr = addr[1 : len(addr)-1]
+	}
+	return addr
+}
+
+// RemoteIP parses and returns the physical client net.IP from RemoteHost().
+// Supports both IPv4 and IPv6 representations. Returns nil if the host is empty or unparseable.
+func (r *Request) RemoteIP() net.IP {
+	if r == nil {
+		return nil
+	}
+	host := r.RemoteHost()
+	if host == "" {
+		return nil
+	}
+	host = strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+	return net.ParseIP(host)
+}
+
 // NewRequestFromStd converts a Go standard library http.Request into an httpparser.Request,
-// preserving URL, QueryParams, Headers, and pseudo-headers.
+// preserving URL, QueryParams, Headers, pseudo-headers, and physical RemoteAddr.
 func NewRequestFromStd(r *http.Request) *Request {
 	if r == nil {
 		return nil
@@ -147,6 +188,7 @@ func NewRequestFromStd(r *http.Request) *Request {
 		Header:      make(Header),
 		QueryParams: queryParams,
 		Body:        bytes.NewReader(nil),
+		RemoteAddr:  r.RemoteAddr,
 	}
 	for k, vv := range r.Header {
 		for _, v := range vv {
@@ -161,4 +203,3 @@ func NewRequestFromStd(r *http.Request) *Request {
 	}
 	return req
 }
-

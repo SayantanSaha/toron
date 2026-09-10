@@ -332,6 +332,44 @@ func TestExtractClientIP(t *testing.T) {
 	}
 }
 
+func TestLogging_ExtractClientIP_PhysicalBinding(t *testing.T) {
+	// Subtest 8A: HTTP/2 Request with Spoofed Headers
+	t.Run("HTTP/2 physical remote address prioritized over spoofed headers", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/test", "HTTP/2.0")
+		req.RemoteAddr = "198.51.100.55:49152"
+		req.Header.Set("X-Forwarded-For", "10.0.0.99")
+		req.Header.Set("X-Real-IP", "10.0.0.99")
+
+		if ip := ExtractClientIP(req); ip != "198.51.100.55" {
+			t.Fatalf("expected physical IP '198.51.100.55', got %q", ip)
+		}
+	})
+
+	// Subtest 8B: HTTP/1.1 Request with RawConn
+	t.Run("HTTP/1.1 physical connection prioritized over spoofed headers", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+		req.RemoteAddr = "198.51.100.66:49153"
+		req.RawConn = &mockConn{remoteAddr: &mockAddr{addr: "198.51.100.66:49153"}}
+		req.Header.Set("X-Forwarded-For", "1.2.3.4")
+
+		if ip := ExtractClientIP(req); ip != "198.51.100.66" {
+			t.Fatalf("expected physical IP '198.51.100.66', got %q", ip)
+		}
+	})
+
+	// Subtest 8C: Synthetic Request Fallback
+	t.Run("Synthetic request without physical network metadata falls back safely", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+		req.RemoteAddr = ""
+		req.RawConn = nil
+		req.Header.Set("X-Forwarded-For", "203.0.113.1")
+
+		if ip := ExtractClientIP(req); ip != "203.0.113.1" {
+			t.Fatalf("expected fallback IP '203.0.113.1', got %q", ip)
+		}
+	})
+}
+
 func TestSanitizeLogField(t *testing.T) {
 	tests := []struct {
 		name     string

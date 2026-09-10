@@ -963,7 +963,7 @@ func TestReverseProxy_ConnectionIntegrityAndTrustedProxies(t *testing.T) {
 		req, _ := httpparser.NewRequest("GET", "/api/secure", "HTTP/1.1")
 		req.RawConn = &mockProxyConn{remoteAddr: "198.51.100.50:49152"}
 		req.Header.Set("X-Forwarded-Proto", "https") // Spoofed!
-		req.Header.Set("X-Forwarded-For", "1.1.1.1")  // Spoofed!
+		req.Header.Set("X-Forwarded-For", "1.1.1.1") // Spoofed!
 
 		res := httpparser.NewResponse()
 		px.ServeHTTP(req, res)
@@ -1091,5 +1091,105 @@ func TestReverseProxy_HTTPParameterPollutionMitigation(t *testing.T) {
 	})
 }
 
+func TestServer_H2_ReverseProxy_HeaderSanitization(t *testing.T) {
+	var capturedHeaders http.Header
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstreamServer.Close()
 
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets: []string{upstreamServer.URL},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
 
+	// Subtest 6A: Untrusted HTTP/2 Client Header Sanitization
+	t.Run("Untrusted HTTP/2 client forged headers are stripped", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/2.0")
+		req.RemoteAddr = "198.51.100.70:52000"
+		req.Header.Set("X-Forwarded-For", "1.1.1.1, 8.8.8.8")
+		req.Header.Set("X-Real-IP", "1.1.1.1")
+		req.Header.Set("X-Forwarded-Proto", "http")
+
+		res := httpparser.NewResponse()
+		px.ServeHTTPWithPrefix(req, res, "/api")
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+
+		if xff := capturedHeaders.Get("X-Forwarded-For"); xff != "198.51.100.70" {
+			t.Errorf("SECURITY VIOLATION: upstream received unsanitized XFF %q, want '198.51.100.70'", xff)
+		}
+		if xri := capturedHeaders.Get("X-Real-IP"); xri != "198.51.100.70" {
+			t.Errorf("SECURITY VIOLATION: upstream received unsanitized X-Real-IP %q, want '198.51.100.70'", xri)
+		}
+		if proto := capturedHeaders.Get("X-Forwarded-Proto"); proto != "https" {
+			t.Errorf("expected X-Forwarded-Proto 'https' for HTTP/2, got %q", proto)
+		}
+	})
+
+	// Subtest 6C: Untrusted IPv6 Client Sanitization
+	t.Run("Untrusted IPv6 client brackets stripped and forged headers discarded", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/2.0")
+		req.RemoteAddr = "[2001:db8::beef]:60000"
+		req.Header.Set("X-Forwarded-For", "10.0.0.1")
+
+		res := httpparser.NewResponse()
+		px.ServeHTTPWithPrefix(req, res, "/api")
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+
+		if xff := capturedHeaders.Get("X-Forwarded-For"); xff != "2001:db8::beef" {
+			t.Errorf("expected X-Forwarded-For '2001:db8::beef', got %q", xff)
+		}
+		if xri := capturedHeaders.Get("X-Real-IP"); xri != "2001:db8::beef" {
+			t.Errorf("expected X-Real-IP '2001:db8::beef', got %q", xri)
+		}
+	})
+}
+
+func TestServer_H2_ReverseProxy_TrustedProxyAppended(t *testing.T) {
+	var capturedHeaders http.Header
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstreamServer.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:        []string{upstreamServer.URL},
+		TrustedProxies: []string{"10.0.0.0/8"},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	// Subtest 6B: Trusted Proxy Ingress Header Appending
+	t.Run("Trusted proxy appends physical IP and preserves client X-Real-IP", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/2.0")
+		req.RemoteAddr = "10.0.1.5:43000"
+		req.Header.Set("X-Forwarded-For", "203.0.113.99")
+		req.Header.Set("X-Real-IP", "203.0.113.99")
+
+		res := httpparser.NewResponse()
+		px.ServeHTTPWithPrefix(req, res, "/api")
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+
+		expectedXFF := "203.0.113.99, 10.0.1.5"
+		if xff := capturedHeaders.Get("X-Forwarded-For"); xff != expectedXFF {
+			t.Errorf("expected X-Forwarded-For %q, got %q", expectedXFF, xff)
+		}
+		if xri := capturedHeaders.Get("X-Real-IP"); xri != "203.0.113.99" {
+			t.Errorf("expected X-Real-IP '203.0.113.99', got %q", xri)
+		}
+	})
+}

@@ -82,39 +82,48 @@ func TranslateIngress(ing Ingress, targetIngressClass string, endpointsMap map[s
 			epKey := fmt.Sprintf("%s/%s", ing.Metadata.Namespace, svcName)
 			ep, epFound := endpointsMap[epKey]
 
-			var targetIPs []string
-			var targetPort int = svcPort
+			type targetEndpoint struct {
+				ip   string
+				port int
+			}
+			var targets []targetEndpoint
 
 			if epFound && ep != nil {
 				for _, subset := range ep.Subsets {
+					p := svcPort
+					if len(subset.Ports) > 0 && subset.Ports[0].Port > 0 {
+						p = subset.Ports[0].Port
+					} else if p == 0 {
+						p = 80
+					}
 					for _, addr := range subset.Addresses {
 						if addr.IP != "" {
-							targetIPs = append(targetIPs, addr.IP)
+							targets = append(targets, targetEndpoint{ip: addr.IP, port: p})
 						}
-					}
-					if targetPort == 0 && len(subset.Ports) > 0 {
-						targetPort = subset.Ports[0].Port
 					}
 				}
 			}
 
-			if targetPort == 0 {
-				targetPort = 80
-			}
-
-			if len(targetIPs) == 0 {
+			if len(targets) == 0 {
+				p := svcPort
+				if p == 0 {
+					p = 80
+				}
 				// Fallback to K8s service cluster domain DNS / IP
-				targetIPs = []string{fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ing.Metadata.Namespace)}
+				targets = append(targets, targetEndpoint{
+					ip:   fmt.Sprintf("%s.%s.svc.cluster.local", svcName, ing.Metadata.Namespace),
+					port: p,
+				})
 			}
 
-			for idx, ip := range targetIPs {
+			for idx, tgt := range targets {
 				r := &discovery.DiscoveredRoute{
 					ContainerID:   fmt.Sprintf("k8s-%s-%s-%s-%d", ing.Metadata.Namespace, ing.Metadata.Name, svcName, idx),
 					ContainerName: fmt.Sprintf("%s/%s", ing.Metadata.Namespace, svcName),
 					Host:          host,
 					Prefix:        prefix,
-					TargetIP:      ip,
-					TargetPort:    targetPort,
+					TargetIP:      tgt.ip,
+					TargetPort:    tgt.port,
 					Weight:        1,
 				}
 				routes = append(routes, r)

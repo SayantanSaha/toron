@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"toron/pkg/httpparser"
 	"toron/pkg/logging"
@@ -819,5 +821,370 @@ func TestRouter_HandlePrefix_MethodAndMatcher(t *testing.T) {
 	r.ServeHTTP(req4, res4)
 	if res4.StatusCode != http.StatusNotFound {
 		t.Errorf("req4: want 404, got %d", res4.StatusCode)
+	}
+}
+
+func TestRouter_ReplacePrefixRoutesBySource(t *testing.T) {
+	backend1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-1 payload"))
+	}))
+	defer backend1.Close()
+
+	backend2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-2 payload"))
+	}))
+	defer backend2.Close()
+
+	tempDir := t.TempDir()
+	staticFile := filepath.Join(tempDir, "index.html")
+	if err := os.WriteFile(staticFile, []byte("static page content"), 0644); err != nil {
+		t.Fatalf("failed to write test static file: %v", err)
+	}
+
+	r := router.New()
+
+	// Scenario 1.1: Source Isolation
+	// Register Route 1 (src: "config") and Route 2 (src: "k8s-ingress")
+	err := r.RoutePrefix(router.RouteTypeStatic, "", "/static", nil, tempDir, proxy.ProxyOptions{})
+	if err != nil {
+		t.Fatalf("RoutePrefix static failed: %v", err)
+	}
+	err = r.RoutePrefixWithSource("k8s-ingress", router.RouteTypeUpstream, "", "/v1", nil, "", proxy.ProxyOptions{
+		Targets: []string{backend1.URL},
+	})
+	if err != nil {
+		t.Fatalf("RoutePrefixWithSource k8s-ingress failed: %v", err)
+	}
+
+	// Replace "k8s-ingress" routes with new /v2 spec
+	newSpecs := []router.PrefixRouteSpec{
+		{
+			TargetType: router.RouteTypeUpstream,
+			Prefix:     "/v2",
+			Opts: proxy.ProxyOptions{
+				Targets: []string{backend2.URL},
+			},
+		},
+	}
+	err = r.ReplacePrefixRoutesBySource("k8s-ingress", newSpecs)
+	if err != nil {
+		t.Fatalf("ReplacePrefixRoutesBySource failed: %v", err)
+	}
+
+	snaps := r.GetPrefixRoutes()
+	if len(snaps) != 2 {
+		t.Fatalf("expected 2 routes in snapshot, got %d", len(snaps))
+	}
+	if snaps[0].Source != "config" || snaps[0].Prefix != "/static" {
+		t.Errorf("snaps[0] = %+v, want source=config prefix=/static", snaps[0])
+	}
+	if snaps[1].Source != "k8s-ingress" || snaps[1].Prefix != "/v2" {
+		t.Errorf("snaps[1] = %+v, want source=k8s-ingress prefix=/v2", snaps[1])
+	}
+
+	// Dispatch request to /static/index.html -> 200 OK
+	reqStatic, _ := httpparser.NewRequest("GET", "/static/index.html", "HTTP/1.1")
+	resStatic := httpparser.NewResponse()
+	r.ServeHTTP(reqStatic, resStatic)
+	if resStatic.StatusCode != http.StatusOK || !strings.Contains(resStatic.Body.String(), "static page content") {
+		t.Errorf("static route unexpected response: %d %q", resStatic.StatusCode, resStatic.Body.String())
+	}
+
+	// Dispatch request to evicted /v1/test -> 404 Not Found
+	reqV1, _ := httpparser.NewRequest("GET", "/v1/test", "HTTP/1.1")
+	resV1 := httpparser.NewResponse()
+	r.ServeHTTP(reqV1, resV1)
+	if resV1.StatusCode != http.StatusNotFound {
+		t.Errorf("evicted /v1 route: want 404, got %d", resV1.StatusCode)
+	}
+
+	// Dispatch request to new /v2/test -> 200 OK (backend2)
+	reqV2, _ := httpparser.NewRequest("GET", "/v2/test", "HTTP/1.1")
+	resV2 := httpparser.NewResponse()
+	r.ServeHTTP(reqV2, resV2)
+	if resV2.StatusCode != http.StatusOK || !strings.Contains(resV2.Body.String(), "backend-2 payload") {
+		t.Errorf("new /v2 route: want 200 backend-2 payload, got %d %q", resV2.StatusCode, resV2.Body.String())
+	}
+
+	// Scenario 1.2: Empty Pruning
+	// Currently routes are: Route 1 (config, /static), Route 2 (k8s-ingress, /v2)
+	// Add another k8s-ingress route
+	_ = r.RoutePrefixWithSource("k8s-ingress", router.RouteTypeUpstream, "", "/v3", nil, "", proxy.ProxyOptions{
+		Targets: []string{backend1.URL},
+	})
+	if len(r.GetPrefixRoutes()) != 3 {
+		t.Fatalf("expected 3 routes before empty pruning, got %d", len(r.GetPrefixRoutes()))
+	}
+
+	err = r.ReplacePrefixRoutesBySource("k8s-ingress", []router.PrefixRouteSpec{})
+	if err != nil {
+		t.Fatalf("ReplacePrefixRoutesBySource with empty slice failed: %v", err)
+	}
+	snapsAfterPrune := r.GetPrefixRoutes()
+	if len(snapsAfterPrune) != 1 {
+		t.Fatalf("expected exactly 1 route after empty pruning, got %d", len(snapsAfterPrune))
+	}
+	if snapsAfterPrune[0].Source != "config" || snapsAfterPrune[0].Prefix != "/static" {
+		t.Errorf("remaining route = %+v, want source=config prefix=/static", snapsAfterPrune[0])
+	}
+
+	// Scenario 1.3: All-or-Nothing Rollback on Invalid Route Type
+	// Re-add a valid k8s-ingress route
+	_ = r.RoutePrefixWithSource("k8s-ingress", router.RouteTypeUpstream, "", "/api", nil, "", proxy.ProxyOptions{
+		Targets: []string{backend1.URL},
+	})
+	snapsBeforeFail := r.GetPrefixRoutes()
+
+	invalidTypeSpecs := []router.PrefixRouteSpec{
+		{
+			TargetType: router.RouteTypeUpstream,
+			Prefix:     "/valid-v1",
+			Opts:       proxy.ProxyOptions{Targets: []string{backend1.URL}},
+		},
+		{
+			TargetType: router.RouteType("bogus"),
+			Prefix:     "/invalid-v2",
+		},
+	}
+	err = r.ReplacePrefixRoutesBySource("k8s-ingress", invalidTypeSpecs)
+	if err == nil {
+		t.Fatal("expected error on bogus route type, got nil")
+	}
+	snapsAfterFail := r.GetPrefixRoutes()
+	if len(snapsAfterFail) != len(snapsBeforeFail) {
+		t.Fatalf("table size changed on error: before=%d, after=%d", len(snapsBeforeFail), len(snapsAfterFail))
+	}
+	for i := range snapsBeforeFail {
+		if snapsBeforeFail[i].Source != snapsAfterFail[i].Source ||
+			snapsBeforeFail[i].Type != snapsAfterFail[i].Type ||
+			snapsBeforeFail[i].Host != snapsAfterFail[i].Host ||
+			snapsBeforeFail[i].Prefix != snapsAfterFail[i].Prefix {
+			t.Errorf("route %d mismatch after rollback: %+v vs %+v", i, snapsBeforeFail[i], snapsAfterFail[i])
+		}
+	}
+
+	// Scenario 1.4: Invalid RateLimit Rollback
+	invalidRateSpecs := []router.PrefixRouteSpec{
+		{
+			TargetType: router.RouteTypeUpstream,
+			Prefix:     "/rate-v1",
+			Opts: proxy.ProxyOptions{
+				Targets:   []string{backend1.URL},
+				RateLimit: "invalid-rate-format",
+			},
+		},
+	}
+	err = r.ReplacePrefixRoutesBySource("k8s-ingress", invalidRateSpecs)
+	if err == nil {
+		t.Fatal("expected error on invalid rate limit, got nil")
+	}
+	if len(r.GetPrefixRoutes()) != len(snapsBeforeFail) {
+		t.Fatalf("table modified after invalid rate limit: got %d routes", len(r.GetPrefixRoutes()))
+	}
+
+	// Scenario 1.5: Invalid Upstream URL Rollback
+	invalidURLSpecs := []router.PrefixRouteSpec{
+		{
+			TargetType: router.RouteTypeUpstream,
+			Prefix:     "/url-v1",
+			Opts: proxy.ProxyOptions{
+				Targets: []string{"http://bad host:9999"},
+			},
+		},
+	}
+	err = r.ReplacePrefixRoutesBySource("k8s-ingress", invalidURLSpecs)
+	if err == nil {
+		t.Fatal("expected error on bad host URL, got nil")
+	}
+	if len(r.GetPrefixRoutes()) != len(snapsBeforeFail) {
+		t.Fatalf("table modified after invalid URL: got %d routes", len(r.GetPrefixRoutes()))
+	}
+}
+
+func TestRouter_RoutePrefixWithSource_BackwardCompatibility(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("legacy backend payload"))
+	}))
+	defer backend.Close()
+
+	r := router.New()
+
+	// Call legacy RoutePrefix without specifying source
+	err := r.RoutePrefix(router.RouteTypeUpstream, "api.example.com", "/legacy", nil, "", proxy.ProxyOptions{
+		Targets: []string{backend.URL},
+	})
+	if err != nil {
+		t.Fatalf("RoutePrefix failed: %v", err)
+	}
+
+	// Also call RoutePrefixWithSource with custom source
+	err = r.RoutePrefixWithSource("custom-src", router.RouteTypeUpstream, "custom.example.com", "/custom", nil, "", proxy.ProxyOptions{
+		Targets: []string{backend.URL},
+	})
+	if err != nil {
+		t.Fatalf("RoutePrefixWithSource failed: %v", err)
+	}
+
+	// Inspect snapshots
+	snaps := r.GetPrefixRoutes()
+	if len(snaps) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(snaps))
+	}
+
+	// Verify legacy route defaults to source "config"
+	if snaps[0].Source != "config" {
+		t.Errorf("snaps[0].Source = %q, want %q", snaps[0].Source, "config")
+	}
+	if snaps[0].Host != "api.example.com" {
+		t.Errorf("snaps[0].Host = %q, want api.example.com", snaps[0].Host)
+	}
+	if snaps[0].Prefix != "/legacy" {
+		t.Errorf("snaps[0].Prefix = %q, want /legacy", snaps[0].Prefix)
+	}
+	if snaps[0].Type != "upstream" {
+		t.Errorf("snaps[0].Type = %q, want upstream", snaps[0].Type)
+	}
+
+	// Verify custom-src route
+	if snaps[1].Source != "custom-src" {
+		t.Errorf("snaps[1].Source = %q, want custom-src", snaps[1].Source)
+	}
+
+	// Verify RoutesSnapshot parity
+	routesSnaps := r.RoutesSnapshot()
+	if len(routesSnaps) != len(snaps) {
+		t.Fatalf("RoutesSnapshot length mismatch: %d vs %d", len(routesSnaps), len(snaps))
+	}
+	for i := range snaps {
+		if snaps[i].Source != routesSnaps[i].Source ||
+			snaps[i].Type != routesSnaps[i].Type ||
+			snaps[i].Host != routesSnaps[i].Host ||
+			snaps[i].Prefix != routesSnaps[i].Prefix {
+			t.Errorf("RoutesSnapshot[%d] mismatch: %+v vs %+v", i, routesSnaps[i], snaps[i])
+		}
+	}
+
+	// Verify request dispatching to legacy route works
+	req, _ := httpparser.NewRequest("GET", "/legacy/test", "HTTP/1.1")
+	req.Header.Set("Host", "api.example.com")
+	res := httpparser.NewResponse()
+	r.ServeHTTP(req, res)
+	if res.StatusCode != http.StatusOK || !strings.Contains(res.Body.String(), "legacy backend payload") {
+		t.Errorf("legacy route response mismatch: %d %q", res.StatusCode, res.Body.String())
+	}
+}
+
+func TestRouter_HealthCheckCleanupOnRouteReplace(t *testing.T) {
+	var probeCount int64
+	mockUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			atomic.AddInt64(&probeCount, 1)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockUpstream.Close()
+
+	r := router.New()
+	opts := proxy.ProxyOptions{
+		Targets:             []string{mockUpstream.URL},
+		HealthCheckPath:     "/healthz",
+		HealthCheckInterval: 20 * time.Millisecond,
+	}
+	err := r.RoutePrefixWithSource("k8s-ingress", router.RouteTypeUpstream, "health.test", "/app", nil, "", opts)
+	if err != nil {
+		t.Fatalf("RoutePrefixWithSource failed: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	probesBefore := atomic.LoadInt64(&probeCount)
+	if probesBefore == 0 {
+		t.Fatalf("Expected health check probes before replacement, got 0")
+	}
+
+	// Evict route via ReplacePrefixRoutesBySource
+	err = r.ReplacePrefixRoutesBySource("k8s-ingress", []router.PrefixRouteSpec{})
+	if err != nil {
+		t.Fatalf("ReplacePrefixRoutesBySource failed: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	probesAfter := atomic.LoadInt64(&probeCount)
+	if probesAfter > probesBefore+1 {
+		t.Errorf("Expected health checks to cease after eviction: before=%d, after=%d", probesBefore, probesAfter)
+	}
+
+	// Verify teardown on RemovePrefixRoute
+	var probeCount2 int64
+	mockUpstream2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			atomic.AddInt64(&probeCount2, 1)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockUpstream2.Close()
+
+	opts2 := proxy.ProxyOptions{
+		Targets:             []string{mockUpstream2.URL},
+		HealthCheckPath:     "/healthz",
+		HealthCheckInterval: 20 * time.Millisecond,
+	}
+	err = r.RoutePrefixWithSource("k8s-ingress", router.RouteTypeUpstream, "health2.test", "/app2", nil, "", opts2)
+	if err != nil {
+		t.Fatalf("RoutePrefixWithSource 2 failed: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	p2Before := atomic.LoadInt64(&probeCount2)
+	if p2Before == 0 {
+		t.Fatalf("Expected health check probes on route 2, got 0")
+	}
+
+	r.RemovePrefixRoute("health2.test", "/app2")
+	time.Sleep(100 * time.Millisecond)
+	p2After := atomic.LoadInt64(&probeCount2)
+	if p2After > p2Before+1 {
+		t.Errorf("Expected health checks to cease after RemovePrefixRoute: before=%d, after=%d", p2Before, p2After)
+	}
+
+	// Verify teardown on Reset
+	var probeCount3 int64
+	mockUpstream3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			atomic.AddInt64(&probeCount3, 1)
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer mockUpstream3.Close()
+
+	opts3 := proxy.ProxyOptions{
+		Targets:             []string{mockUpstream3.URL},
+		HealthCheckPath:     "/healthz",
+		HealthCheckInterval: 20 * time.Millisecond,
+	}
+	err = r.RoutePrefixWithSource("k8s-ingress", router.RouteTypeUpstream, "health3.test", "/app3", nil, "", opts3)
+	if err != nil {
+		t.Fatalf("RoutePrefixWithSource 3 failed: %v", err)
+	}
+
+	time.Sleep(100 * time.Millisecond)
+	p3Before := atomic.LoadInt64(&probeCount3)
+	if p3Before == 0 {
+		t.Fatalf("Expected health check probes on route 3, got 0")
+	}
+
+	r.Reset()
+	time.Sleep(100 * time.Millisecond)
+	p3After := atomic.LoadInt64(&probeCount3)
+	if p3After > p3Before+1 {
+		t.Errorf("Expected health checks to cease after Reset: before=%d, after=%d", p3Before, p3After)
 	}
 }

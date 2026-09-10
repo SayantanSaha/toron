@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"log"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 // Controller manages Kubernetes Ingress resources and synchronizes upstreams into Toron Router.
 type Controller struct {
 	mu           sync.RWMutex
+	syncMu       sync.Mutex
 	cfg          config.IngressConfig
 	router       *router.Router
 	client       *Client
@@ -109,6 +111,9 @@ func (c *Controller) Stop() {
 }
 
 func (c *Controller) syncIngresses(ctx context.Context) {
+	c.syncMu.Lock()
+	defer c.syncMu.Unlock()
+
 	ingList, err := c.client.ListIngresses(ctx)
 	if err != nil {
 		log.Printf("[INGRESS] Failed to list ingresses from apiserver: %v", err)
@@ -135,11 +140,16 @@ func (c *Controller) syncIngresses(ctx context.Context) {
 		}
 	}
 
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	type routeKey struct {
+		host   string
+		prefix string
+	}
 
-	// Rebuild route map
+	// Rebuild route map and aggregate pod target URLs by (Host, CleanPrefix)
 	newRoutes := make(map[string]*discovery.DiscoveredRoute)
+	var keyOrder []routeKey
+	targetsByKey := make(map[routeKey][]string)
+	seenTarget := make(map[routeKey]map[string]bool)
 
 	for _, ing := range ingList {
 		routes, ok := TranslateIngress(ing, c.cfg.IngressClass, endpointsMap)
@@ -148,16 +158,49 @@ func (c *Controller) syncIngresses(ctx context.Context) {
 		}
 		for _, r := range routes {
 			newRoutes[r.ContainerID] = r
-			if c.router != nil {
-				opts := proxy.ProxyOptions{
-					Targets: []string{r.TargetURL()},
-				}
-				_ = c.router.RoutePrefix("upstream", r.Host, r.Prefix, nil, "", opts)
+
+			cleanPrefix := "/" + strings.Trim(r.Prefix, "/")
+			if cleanPrefix == "/" {
+				cleanPrefix = ""
+			}
+			host := strings.TrimSpace(r.Host)
+			k := routeKey{host: host, prefix: cleanPrefix}
+			targetURL := r.TargetURL()
+
+			if seenTarget[k] == nil {
+				seenTarget[k] = make(map[string]bool)
+				keyOrder = append(keyOrder, k)
+			}
+			if !seenTarget[k][targetURL] {
+				seenTarget[k][targetURL] = true
+				targetsByKey[k] = append(targetsByKey[k], targetURL)
 			}
 		}
 	}
 
+	specs := make([]router.PrefixRouteSpec, 0, len(keyOrder))
+	for _, k := range keyOrder {
+		specs = append(specs, router.PrefixRouteSpec{
+			TargetType: router.RouteTypeUpstream,
+			Host:       k.host,
+			Prefix:     k.prefix,
+			Opts: proxy.ProxyOptions{
+				Targets:   targetsByKey[k],
+				Algorithm: proxy.AlgorithmRoundRobin,
+			},
+		})
+	}
+
+	if c.router != nil {
+		if err := c.router.ReplacePrefixRoutesBySource("k8s-ingress", specs); err != nil {
+			log.Printf("[INGRESS] Failed to replace prefix routes: %v", err)
+			return
+		}
+	}
+
+	c.mu.Lock()
 	c.activeRoutes = newRoutes
+	c.mu.Unlock()
 }
 
 func (c *Controller) watchWorker(ctx context.Context) {
@@ -227,4 +270,3 @@ func (c *Controller) consumeEventsWorker(ctx context.Context) {
 		}
 	}
 }
-

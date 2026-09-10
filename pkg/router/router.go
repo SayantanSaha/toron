@@ -40,6 +40,8 @@ type routeEntry struct {
 }
 
 type prefixRoute struct {
+	source       string
+	proxy        *proxy.ReverseProxy
 	routeType    string
 	method       string
 	host         string
@@ -99,9 +101,16 @@ func (r *Router) Use(mw ...MiddlewareFunc) {
 // Reset clears all registered exact and prefix routes while preserving global middlewares and 404/405 handlers.
 func (r *Router) Reset() {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	evicted := r.prefixRoutes
 	r.routes = make(map[string]map[string][]routeEntry)
 	r.prefixRoutes = nil
+	r.mu.Unlock()
+
+	for _, pr := range evicted {
+		if pr.proxy != nil {
+			pr.proxy.Close()
+		}
+	}
 }
 
 // Handle registers a handler for a specific HTTP method and exact path.
@@ -159,67 +168,88 @@ func (r *Router) POSTHeader(path, headerKey, headerVal string, handler HandlerFu
 	r.HandleHeader("POST", path, map[string]string{headerKey: headerVal}, handler)
 }
 
-// RoutePrefix registers a prefix route that acts either as a static file server or an upstream reverse proxy, matching optional host and headers.
-func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers map[string]string, dirPath string, opts proxy.ProxyOptions) error {
-	cleanPrefix := "/" + strings.Trim(prefix, "/")
+// PrefixRouteSpec defines a declarative configuration for registering or replacing a prefix route.
+type PrefixRouteSpec struct {
+	TargetType RouteType
+	Host       string
+	Prefix     string
+	Headers    map[string]string
+	DirPath    string
+	Opts       proxy.ProxyOptions
+}
+
+func (r *Router) compilePrefixRoute(source string, spec PrefixRouteSpec) (prefixRoute, error) {
+	cleanSource := strings.TrimSpace(source)
+	if cleanSource == "" {
+		cleanSource = "config"
+	}
+
+	cleanPrefix := "/" + strings.Trim(spec.Prefix, "/")
 	if cleanPrefix == "/" {
 		cleanPrefix = ""
 	}
 
-	normType := RouteType(strings.ToLower(strings.TrimSpace(string(targetType))))
+	normType := RouteType(strings.ToLower(strings.TrimSpace(string(spec.TargetType))))
 	if normType == "proxy" {
 		normType = RouteTypeUpstream
 	}
 
-	var handler HandlerFunc
+	var (
+		handler HandlerFunc
+		px      *proxy.ReverseProxy
+	)
 
 	if normType == RouteTypeStatic {
-		if dirPath == "" {
-			return fmt.Errorf("router: static route for prefix %q requires non-empty dirPath", prefix)
+		if spec.DirPath == "" {
+			return prefixRoute{}, fmt.Errorf("router: static route for prefix %q requires non-empty dirPath", spec.Prefix)
 		}
-		absDir, err := filepath.Abs(dirPath)
+		absDir, err := filepath.Abs(spec.DirPath)
 		if err != nil {
-			absDir = dirPath
+			absDir = spec.DirPath
 		}
-		handler = r.createStaticHandler(cleanPrefix, absDir, opts)
+		handler = r.createStaticHandler(cleanPrefix, absDir, spec.Opts)
 	} else if normType == RouteTypeUpstream {
-		px, err := proxy.NewProxyWithOptions(opts)
+		var err error
+		px, err = proxy.NewProxyWithOptions(spec.Opts)
 		if err != nil {
-			return err
+			return prefixRoute{}, err
 		}
 		handler = func(req *httpparser.Request, res *httpparser.Response) {
 			px.ServeHTTPWithPrefix(req, res, cleanPrefix)
 		}
 	} else {
-		return fmt.Errorf("router: invalid route type %q (must be 'static' or 'upstream')", targetType)
+		return prefixRoute{}, fmt.Errorf("router: invalid route type %q (must be 'static' or 'upstream')", spec.TargetType)
 	}
 
-	if strings.TrimSpace(opts.RateLimit) != "" {
-		rlMw, err := NewRateLimitMiddleware(opts.RateLimit)
+	if strings.TrimSpace(spec.Opts.RateLimit) != "" {
+		rlMw, err := NewRateLimitMiddleware(spec.Opts.RateLimit)
 		if err != nil {
-			return fmt.Errorf("router: invalid rate_limit %q for prefix %q: %w", opts.RateLimit, prefix, err)
+			if px != nil {
+				px.Close()
+			}
+			return prefixRoute{}, fmt.Errorf("router: invalid rate_limit %q for prefix %q: %w", spec.Opts.RateLimit, spec.Prefix, err)
 		}
 		handler = rlMw(handler)
 	}
 
-	if opts.Auth != nil {
-		if authCfg, ok := opts.Auth.(AuthConfig); ok && authCfg.Type != "" {
+	if spec.Opts.Auth != nil {
+		if authCfg, ok := spec.Opts.Auth.(AuthConfig); ok && authCfg.Type != "" {
 			handler = NewAuthMiddleware(authCfg)(handler)
 		}
 	}
 
-	if opts.WAF != nil {
-		if wafCfg, ok := opts.WAF.(waf.WAFConfig); ok && (wafCfg.Enabled || len(wafCfg.AllowedIPs) > 0 || len(wafCfg.DeniedIPs) > 0 || len(wafCfg.DisabledRules) > 0 || wafCfg.Mode != "") {
-			if len(opts.TrustedProxies) > 0 && len(wafCfg.TrustedProxies) == 0 {
-				wafCfg.TrustedProxies = opts.TrustedProxies
+	if spec.Opts.WAF != nil {
+		if wafCfg, ok := spec.Opts.WAF.(waf.WAFConfig); ok && (wafCfg.Enabled || len(wafCfg.AllowedIPs) > 0 || len(wafCfg.DeniedIPs) > 0 || len(wafCfg.DisabledRules) > 0 || wafCfg.Mode != "") {
+			if len(spec.Opts.TrustedProxies) > 0 && len(wafCfg.TrustedProxies) == 0 {
+				wafCfg.TrustedProxies = spec.Opts.TrustedProxies
 			}
-			if strings.TrimSpace(opts.SecurityLog) != "" {
-				secLog := strings.ToLower(strings.TrimSpace(opts.SecurityLog))
+			if strings.TrimSpace(spec.Opts.SecurityLog) != "" {
+				secLog := strings.ToLower(strings.TrimSpace(spec.Opts.SecurityLog))
 				if secLog == "off" || secLog == "none" {
 					wafCfg.AuditLog.Enabled = false
 				} else {
 					wafCfg.AuditLog.Enabled = true
-					wafCfg.AuditLog.Output = opts.SecurityLog
+					wafCfg.AuditLog.Output = spec.Opts.SecurityLog
 				}
 			}
 			if routeWafEngine, err := waf.NewEngine(wafCfg); err == nil {
@@ -232,18 +262,90 @@ func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers 
 		}
 	}
 
+	return prefixRoute{
+		source:       cleanSource,
+		proxy:        px,
+		routeType:    string(normType),
+		host:         strings.ToLower(strings.TrimSpace(spec.Host)),
+		prefix:       cleanPrefix,
+		headers:      spec.Headers,
+		redirectHTTP: spec.Opts.RedirectHTTP,
+		accessLog:    strings.TrimSpace(spec.Opts.AccessLog),
+		securityLog:  strings.TrimSpace(spec.Opts.SecurityLog),
+		handler:      handler,
+	}, nil
+}
+
+// RoutePrefixWithSource registers a prefix route tagged with a specific subsystem source identifier.
+func (r *Router) RoutePrefixWithSource(source string, targetType RouteType, host, prefix string, headers map[string]string, dirPath string, opts proxy.ProxyOptions) error {
+	pr, err := r.compilePrefixRoute(source, PrefixRouteSpec{
+		TargetType: targetType,
+		Host:       host,
+		Prefix:     prefix,
+		Headers:    headers,
+		DirPath:    dirPath,
+		Opts:       opts,
+	})
+	if err != nil {
+		return err
+	}
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
-		routeType:    string(normType),
-		host:         strings.ToLower(strings.TrimSpace(host)),
-		prefix:       cleanPrefix,
-		headers:      headers,
-		redirectHTTP: opts.RedirectHTTP,
-		accessLog:    strings.TrimSpace(opts.AccessLog),
-		securityLog:  strings.TrimSpace(opts.SecurityLog),
-		handler:      handler,
-	})
+	r.prefixRoutes = append(r.prefixRoutes, pr)
+	return nil
+}
+
+// RoutePrefix registers a prefix route that acts either as a static file server or an upstream reverse proxy, matching optional host and headers.
+func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers map[string]string, dirPath string, opts proxy.ProxyOptions) error {
+	return r.RoutePrefixWithSource("config", targetType, host, prefix, headers, dirPath, opts)
+}
+
+// ReplacePrefixRoutesBySource atomically replaces all prefix routes matching source with specs under write lock.
+// Routes belonging to other sources are preserved in their exact relative order.
+// If specs is empty, all routes belonging to source are cleanly pruned.
+func (r *Router) ReplacePrefixRoutesBySource(source string, specs []PrefixRouteSpec) error {
+	cleanSource := strings.TrimSpace(source)
+	if cleanSource == "" {
+		cleanSource = "config"
+	}
+
+	// 1. Pre-compile and pre-validate all specs outside lock.
+	compiledRoutes := make([]prefixRoute, 0, len(specs))
+	for _, spec := range specs {
+		pr, err := r.compilePrefixRoute(cleanSource, spec)
+		if err != nil {
+			for _, cpr := range compiledRoutes {
+				if cpr.proxy != nil {
+					cpr.proxy.Close()
+				}
+			}
+			return err
+		}
+		compiledRoutes = append(compiledRoutes, pr)
+	}
+
+	// 2. Under write lock, partition r.prefixRoutes and swap.
+	var evicted []prefixRoute
+	r.mu.Lock()
+	retained := make([]prefixRoute, 0, len(r.prefixRoutes))
+	for _, pr := range r.prefixRoutes {
+		if pr.source == cleanSource {
+			evicted = append(evicted, pr)
+		} else {
+			retained = append(retained, pr)
+		}
+	}
+	r.prefixRoutes = append(retained, compiledRoutes...)
+	r.mu.Unlock()
+
+	// 3. For evicted routes with matching source, invoke pr.proxy.Close() if pr.proxy != nil.
+	for _, pr := range evicted {
+		if pr.proxy != nil {
+			pr.proxy.Close()
+		}
+	}
+
 	return nil
 }
 
@@ -262,6 +364,7 @@ func (r *Router) HandlePrefixWithMatcher(method, host, prefix string, headers ma
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, prefixRoute{
+		source:    "config",
 		routeType: "handler",
 		method:    strings.ToUpper(strings.TrimSpace(method)),
 		host:      strings.ToLower(strings.TrimSpace(host)),
@@ -727,6 +830,7 @@ func RecoveryMiddleware() MiddlewareFunc {
 
 // RouteSnapshot represents a thread-safe view of a registered prefix route.
 type RouteSnapshot struct {
+	Source  string            `json:"source,omitempty"`
 	Type    string            `json:"type"`
 	Host    string            `json:"host,omitempty"`
 	Prefix  string            `json:"prefix"`
@@ -745,6 +849,7 @@ func (r *Router) GetPrefixRoutes() []RouteSnapshot {
 			rType = "upstream"
 		}
 		snapshots = append(snapshots, RouteSnapshot{
+			Source:  pr.source,
 			Type:    rType,
 			Host:    pr.host,
 			Prefix:  pr.prefix,
@@ -754,25 +859,37 @@ func (r *Router) GetPrefixRoutes() []RouteSnapshot {
 	return snapshots
 }
 
+// RoutesSnapshot returns a thread-safe snapshot of all active prefix routes.
+func (r *Router) RoutesSnapshot() []RouteSnapshot {
+	return r.GetPrefixRoutes()
+}
+
 // RemovePrefixRoute removes matching host and prefix routes from the prefix routing table.
 func (r *Router) RemovePrefixRoute(host, prefix string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
 	cleanHost := strings.ToLower(strings.TrimSpace(host))
 	cleanPrefix := "/" + strings.Trim(prefix, "/")
 	if cleanPrefix == "/" {
 		cleanPrefix = ""
 	}
 
+	var evicted []prefixRoute
+	r.mu.Lock()
 	filtered := make([]prefixRoute, 0, len(r.prefixRoutes))
 	for _, pr := range r.prefixRoutes {
 		if pr.host == cleanHost && pr.prefix == cleanPrefix {
+			evicted = append(evicted, pr)
 			continue
 		}
 		filtered = append(filtered, pr)
 	}
 	r.prefixRoutes = filtered
+	r.mu.Unlock()
+
+	for _, pr := range evicted {
+		if pr.proxy != nil {
+			pr.proxy.Close()
+		}
+	}
 }
 
 // HasHost checks if a specific domain host is registered on any exact or prefix route.

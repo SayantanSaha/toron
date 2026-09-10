@@ -1,5 +1,67 @@
 # Release Notes
 
+## 2026-09-10 - Toron v1.5.14 Security Release (SEC-33: Bounded Route Table Lifecycle, Atomic Route Replacement, and Multi-Target Pod Aggregation in Kubernetes Ingress Controller)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-33 (`pkg/ingress`, `pkg/router`)**: Successfully resolved High-severity unbounded route table growth, zombie route persistence, stale endpoint shadowing, and pod replica starvation vulnerability [`SEC-33`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L449-L457) ([CWE-400](https://cwe.mitre.org/data/definitions/400.html), [CWE-670](https://cwe.mitre.org/data/definitions/670.html), [CWE-1059](https://cwe.mitre.org/data/definitions/1059.html), [`SR-091 Finding 3`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md#L130-L152), [`SR-094`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-094.md), [`CR-090`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-090.md)) in the Kubernetes Ingress Controller and Core Router engine.
+- **Source-Tagged Prefix Routing & Atomic Route Table Replacement (`pkg/router/router.go`)**: Extended prefix routing to support subsystem origin tagging (e.g. `"k8s-ingress"`, `"config"`, `"static"`). Introduced declarative route specifications ([`PrefixRouteSpec`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go)) and an atomic route replacement API ([`ReplacePrefixRoutesBySource`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go)). Routes are pre-compiled and validated out of lock with fail-fast rollbacks, and atomically swapped under write lock, guaranteeing all-or-nothing cutovers without route churn or request disruption ([`TASK-116`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-116.md), [`REQ-094`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-094.md), [`ADR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-089.md)).
+- **Bounded Memory Invariant ($O(K)$ Memory Scaling)**: Eliminated monotonic append-only route table growth across periodic resync cycles (every 30s) and watch event notifications. For $K$ active Ingress rules, the prefix route count for source `"k8s-ingress"` strictly equals $K$ across arbitrary $N$ synchronization iterations ($O(1)$ memory scaling with resync count), permanently preventing memory exhaustion, GC stalls, and Out-of-Memory (OOM) gateway terminations ([`TASK-117`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-117.md), [`REQ-094`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-094.md)).
+- **Automatic Zombie Route Elimination & Immediate Deletion Pruning**: Replaced manual route tracking with dynamic reconciliation. When an Ingress or path is deleted in Kubernetes, subsequent reconciliation cycles omit the deleted route from the desired batch, causing `ReplacePrefixRoutesBySource` to immediately evict the route from the routing table. Subsequent HTTP requests return HTTP `404 Not Found`, eliminating traffic leakage to decommissioned backends.
+- **Multi-Pod Endpoint Aggregation & Fair Round-Robin Load Balancing (`pkg/ingress/translator.go`, `pkg/ingress/controller.go`)**: Aggregated multiple pod endpoint IPs sharing `(Host, Prefix)` into a unified multi-target reverse proxy route using [`RoundRobinBalancer`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L30). Eliminated single-pod replica starvation (where replica #1 previously received 100% load) and distributed traffic evenly ($\approx 1/M$ per replica) across all active pods.
+- **Immediate Endpoint Cutover Without Stale Route Shadowing**: Rolling updates, pod restarts, and scale events immediately swap endpoint target lists in place. Stale routes are evicted rather than appended to the end of the routing table, guaranteeing immediate cutover with zero traffic sent to terminated pod IPs.
+- **Clean Background Resource Teardown**: Replaced and evicted prefix routes cleanly invoke `.Close()` on associated `ReverseProxy` instances, terminating active background health check ticker goroutines (`StopActiveHealthCheck`) and releasing idle connection pools, preventing socket descriptor exhaustion (EMFILE).
+- **Zero External Dependencies**: Implemented strictly with the Go standard library (`sync`, `net/http`, `net/url`, `time`, `context`, `strings`, `path`, `path/filepath`, `fmt`, `log`), keeping `go.mod` and `go.sum` with 0 diffs.
+- **Comprehensive Automated Verification Suite (`TC-094`)**: Validated unit source isolation, atomic empty-slice pruning, rollback on invalid specs, controller sync bounds across 50 cycles, zombie 404 pruning, 3-pod round-robin balancing, endpoint cutover without shadowing, health check teardown, and high-concurrency race cleanliness under `go test -race` ([`TASK-116`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-116.md), [`TASK-117`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-117.md), [`TC-094`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-094.md)).
+
+### Fixed
+- **Unbounded Route Table Memory Leak (`SEC-33`, CWE-400)**: Fixed append-only route registration where every 30-second periodic resync and watch event appended duplicate prefix routes to `r.prefixRoutes`, causing monotonic memory growth of ~144,000 duplicate entries/day per 50 routes and eventual OOM crash.
+- **Zombie Route Persistence (`SEC-33`, CWE-670)**: Fixed issue where deleted Ingress resources remained in Toron's routing table indefinitely, proxying client traffic to decommissioned or reassigned backend pods.
+- **Stale Endpoint Shadowing**: Fixed routing anomalies during pod restarts and rollouts where updated endpoints were appended to the end of `r.prefixRoutes` and permanently shadowed by obsolete routes at the head of the linear matching table.
+- **Horizontal Pod Replica Starvation**: Fixed single-target route generation in Ingress translation where multiple pod endpoints created separate routes, causing Toron's prefix matcher to route 100% of traffic to the first pod and starve all other replicas.
+- **Background Goroutine and Socket Descriptor Leaks**: Fixed resource leakage where discarded reverse proxy instances left background health check tickers and connection pools running.
+
+### Changed
+- **Router Subsystem (`pkg/router/router.go`)**:
+  - Extended internal `prefixRoute` struct with `source string` and `proxy *proxy.ReverseProxy`.
+  - Added public declarative specification struct `PrefixRouteSpec`.
+  - Implemented `RoutePrefixWithSource(source, ...)` and delegated legacy `RoutePrefix(...)` to `RoutePrefixWithSource("config", ...)` for 100% backward compatibility.
+  - Implemented atomic batch replacement `ReplacePrefixRoutesBySource(source string, specs []PrefixRouteSpec) error` with pre-compilation out of lock, atomic pointer swap under write lock, and automatic resource teardown on evicted routes.
+  - Added lifecycle teardown calling `.Close()` on evicted routes in `ReplacePrefixRoutesBySource`, `RemovePrefixRoute`, and `Reset`.
+  - Exposed `Source` field in `RouteSnapshot` and `GetPrefixRoutes()` for telemetry and auditing.
+- **Ingress Controller Reconciliation (`pkg/ingress/controller.go`)**:
+  - Refactored `syncIngresses` to aggregate endpoints by unique routing tuple `(Host, CleanPrefix)` into `router.PrefixRouteSpec` with round-robin load balancing across all healthy pod targets.
+  - Synchronized routes dynamically via `c.router.ReplacePrefixRoutesBySource("k8s-ingress", specs)` on every resync and watch event.
+  - Serialized reconciliation cycles using `c.syncMu` to eliminate interleaving races between resync tickers and watch event streams.
+- **Ingress Route Translation (`pkg/ingress/translator.go`)**:
+  - Updated endpoint resolution to aggregate all pod IP addresses per subset into unified multi-target configurations, falling back to cluster Service DNS when endpoints are unavailable.
+
+### Added
+- **Router Declarative API & Telemetry (`pkg/router/router.go`)**:
+  - Added `PrefixRouteSpec` struct for declarative prefix route provisioning.
+  - Added `ReplacePrefixRoutesBySource` and `RoutePrefixWithSource` methods to `Router`.
+  - Added `Source` field to `RouteSnapshot` for telemetry, auditing, and observability.
+- **Automated Verification Suites (`pkg/router/router_test.go`, `pkg/ingress/ingress_test.go`)**:
+  - `TestRouter_ReplacePrefixRoutesBySource_SourceIsolation` (TC-094-01): Verifies atomic replacement alters only matching source, leaves other sources intact, and prunes on empty slice.
+  - `TestRouter_ReplacePrefixRoutesBySource_PreCompilationValidation` (TC-094-02): Verifies all-or-nothing rollback on invalid route specs without modifying active route state.
+  - `TestRouter_RoutePrefix_BackwardCompatibility` (TC-094-03): Verifies legacy callers are tagged as `"config"` and retain 100% functional equivalence.
+  - `TestRouter_ReplacePrefixRoutes_StopsActiveHealthCheck` (TC-094-04): Verifies active background health checks on evicted routes are terminated cleanly.
+  - `TestRouter_RemovePrefixRoute_StopsActiveHealthCheck` & `TestRouter_Reset_StopsActiveHealthCheck`: Verifies teardown on individual route deletion and router reset.
+  - `TestIngressController_BoundedRouteTable` (TC-094-05): Verifies route count remains strictly equal to $K$ across 50 consecutive sync cycles ($O(1)$ memory scaling with sync count).
+  - `TestIngressController_ZombieRoutePruning` (TC-094-06): Verifies deleted Ingresses are immediately pruned and return HTTP 404 Not Found.
+  - `TestIngressController_MultiPodLoadBalancing` (TC-094-07): Verifies requests to 3 pod replicas distribute evenly across all replicas ($\approx 33.3\%$ per pod).
+  - `TestIngressController_EndpointUpdateNoShadowing` (TC-094-08): Verifies immediate cutover to new pod IPs without stale route shadowing.
+  - `TestIngressController_ConcurrentSyncAndRouting_RaceClean` (TC-094-09): High-concurrency test running background churn against parallel client traffic, clean under `go test -race`.
+
+### Related Tasks & Requirements
+- [`TASK-116`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-116.md): Router Source-Tagged Prefix Routing and Atomic Route Replacement API
+- [`TASK-117`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-117.md): Kubernetes Ingress Controller Route Table Dynamic Reconciliation and Multi-Target Pod Aggregation
+- [`REQ-094`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-094.md): Bounded Route Table Lifecycle, Atomic Source Replacement, and Multi-Target Pod Aggregation in Kubernetes Ingress Controller
+- [`ADR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-089.md): Source-Tagged Atomic Prefix Routing & Multi-Pod Ingress Endpoint Aggregation
+- [`TC-094`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-094.md): Verification of Kubernetes Ingress Route Table Lifecycle, Atomic Source Replacement, and Multi-Pod Balancing
+- [`CR-090`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-090.md): Code Review of Bounded Route Table Lifecycle, Atomic Source Replacement, and Multi-Target Pod Aggregation in Kubernetes Ingress Controller
+- [`SR-094`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-094.md): Security Review and Vulnerability Assessment of SEC-33 Remediation
+- [`SEC-33`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L449-L457): Unbounded Routing Table Memory Leak & Zombie Route Persistence in Kubernetes Ingress Controller
+
 ## 2026-09-10 - Toron v1.5.13 Security Release (SEC-32: Fail-Closed WAF IP Access Control on Unidentifiable Client IP)
 
 ### Milestone Summary

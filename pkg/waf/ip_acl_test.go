@@ -227,3 +227,101 @@ func TestWAF_IPACL_AntiSpoofing(t *testing.T) {
 		}
 	})
 }
+
+func TestIPAccessList_CheckIP_NilIP_WithAllowlist(t *testing.T) {
+	tests := []struct {
+		name    string
+		allowed []string
+		denied  []string
+	}{
+		{name: "IPv4 CIDR subnet allowlist", allowed: []string{"10.0.0.0/8"}, denied: nil},
+		{name: "Exact IPv4 address allowlist", allowed: []string{"192.168.1.100"}, denied: nil},
+		{name: "Combined allowlist and denylist", allowed: []string{"10.0.0.0/8", "192.168.1.100"}, denied: []string{"198.51.100.0/24"}},
+		{name: "IPv6 CIDR subnet allowlist", allowed: []string{"2001:db8::/32"}, denied: nil},
+		{name: "Exact IPv6 address allowlist", allowed: []string{"2001:db8::1"}, denied: nil},
+	}
+
+	const expectedReason = "client IP could not be determined and allowed IP list is enforced"
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			acl, err := NewIPAccessList(tc.allowed, tc.denied)
+			if err != nil {
+				t.Fatalf("failed to create ACL: %v", err)
+			}
+			if !acl.HasRules() {
+				t.Fatalf("expected HasRules to be true")
+			}
+			allowed, reason := acl.CheckIP(nil)
+			if allowed {
+				t.Errorf("expected allowed == false for nil IP with allowlist, got true")
+			}
+			if reason != expectedReason {
+				t.Errorf("expected reason %q, got %q", expectedReason, reason)
+			}
+		})
+	}
+}
+
+func TestIPAccessList_CheckIP_NilIP_DenylistOnly(t *testing.T) {
+	tests := []struct {
+		name   string
+		denied []string
+	}{
+		{name: "Denied IPv4 CIDR only", denied: []string{"198.51.100.0/24"}},
+		{name: "Denied exact IPv4 only", denied: []string{"203.0.113.5"}},
+		{name: "Denied IPv6 CIDR only", denied: []string{"2001:db8:ffff::/48"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			acl, err := NewIPAccessList(nil, tc.denied)
+			if err != nil {
+				t.Fatalf("failed to create ACL: %v", err)
+			}
+			if !acl.HasRules() {
+				t.Fatalf("expected HasRules to be true")
+			}
+			allowed, reason := acl.CheckIP(nil)
+			if !allowed {
+				t.Errorf("expected allowed == true for nil IP under denylist-only mode, got false")
+			}
+			if reason != "" {
+				t.Errorf("expected empty reason, got %q", reason)
+			}
+		})
+	}
+}
+
+func TestIPAccessList_CheckIP_NilIP_NoRules(t *testing.T) {
+	t.Run("Empty ACL", func(t *testing.T) {
+		acl, err := NewIPAccessList(nil, nil)
+		if err != nil {
+			t.Fatalf("failed to create ACL: %v", err)
+		}
+		if acl.HasRules() {
+			t.Errorf("expected HasRules to be false for empty ACL")
+		}
+		allowed, reason := acl.CheckIP(nil)
+		if !allowed {
+			t.Errorf("expected allowed == true for empty ACL, got false")
+		}
+		if reason != "" {
+			t.Errorf("expected empty reason, got %q", reason)
+		}
+	})
+
+	t.Run("Nil ACL pointer receiver", func(t *testing.T) {
+		var acl *IPAccessList
+		if acl.HasRules() {
+			t.Errorf("expected HasRules to be false for nil ACL")
+		}
+		allowed, reason := acl.CheckIP(nil)
+		if !allowed {
+			t.Errorf("expected allowed == true for nil ACL receiver, got false")
+		}
+		if reason != "" {
+			t.Errorf("expected empty reason, got %q", reason)
+		}
+	})
+}

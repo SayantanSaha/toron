@@ -1,5 +1,50 @@
 # Release Notes
 
+## 2026-09-10 - Toron v1.5.13 Security Release (SEC-32: Fail-Closed WAF IP Access Control on Unidentifiable Client IP)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-32 (`pkg/waf/middleware.go`, `pkg/waf/ip_acl.go`)**: Successfully resolved fail-open WAF IP access control bypass vulnerability [`SEC-32`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L439-L447) ([CWE-284](https://cwe.mitre.org/data/definitions/284.html), [CWE-1188](https://cwe.mitre.org/data/definitions/1188.html), [CWE-693](https://cwe.mitre.org/data/definitions/693.html), [`SR-091 Finding 2`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md#L102-L127), [`SR-093`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-093.md), [`CR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-089.md)) in the WAF middleware and IP ACL evaluation engine.
+- **Fail-Closed Allowlist Perimeter Enforcement (`pkg/waf/middleware.go`, `pkg/waf/ip_acl.go`)**: Enforced strict fail-closed access control when incoming client IP cannot be determined under an active IP allowlist (`allowed_ips` or `allowedSubnets`). Requests with missing, stripped, untrusted, or malformed IP headers are immediately rejected with HTTP `403 Forbidden` and exact JSON payload `{"error":"Forbidden","message":"client IP could not be determined and allowed IP list is enforced"}` ([`TASK-114`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-114.md), [`REQ-093`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-093.md), [`ADR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-088.md)).
+- **Fail-Open Pass-Through for Denylist-Only Mode (`pkg/waf/ip_acl.go`)**: Preserved negative security model semantics when only `denied_ips` is configured without an active allowlist. Requests with unidentifiable client IP (`nil`) evaluate to `allowed: true, reason: ""` in [`CheckIP`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L76-L87) and pass through the IP ACL stage to subsequent WAF inspection layers, eliminating false-positive outages across internal service meshes, synthetic health probes, or intermediate proxies.
+- **Single-Pass Hot-Path IP Extraction Optimization (`pkg/waf/middleware.go`)**: Eliminated redundant sequential invocations of [`ExtractClientIP`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L181-L207) on the request hot path. Middleware extracts client IP once at entry, caching `clientNetIP net.IP` on the stack for unconditional `acl.CheckIP(clientNetIP)` evaluation and string `clientIP` across all telemetry and audit events ([`TASK-114`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-114.md), [`ADR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-088.md)).
+- **Unconditional IP ACL Delegation**: Removed the vulnerable `if ip != nil` guard in WAF middleware, delegating policy authority unconditionally to [`IPAccessList.CheckIP`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L76-L87) whenever `acl != nil && acl.HasRules()` evaluates to `true`.
+- **Safe Telemetry & Structured Audit Logging**: Guaranteed zero-panic emission of `ip_acl_block` [`SecurityEvent`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/audit.go#L28-L43) records with `ClientIP: ""` (empty string) and metric increment `toron_waf_blocked_requests_total{category="ip_acl"}` on fail-closed rejections.
+- **Zero External Dependencies**: Implemented entirely with Go standard library packages (`net`, `net/http`, `strings`, `bytes`, `sync`), keeping `go.mod` and `go.sum` with 0 diffs.
+- **Comprehensive Automated Verification Suite (`TC-093`)**: Validated unit ACL checks, end-to-end middleware fail-closed rejection, denylist pass-through, malformed header matrix rejection, panic-free audit logging, telemetry parity, and high-concurrency race cleanliness under `go test -race` ([`TASK-115`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-115.md), [`TC-093`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-093.md)).
+
+### Fixed
+- **Fail-Open Allowlist Bypass on Missing Client IP (`SEC-32`, `REQ-093`)**: Fixed critical vulnerability where requests lacking resolvable client IP (`ExtractClientIP` returned `nil`) bypassed allowlist checks due to `if ip != nil` guard in `middleware.go` and `CheckIP(nil)` returning `true, ""` (fail-open) in `ip_acl.go`.
+- **Hot-Path Redundant IP Extraction**: Fixed duplicate invocations of `ExtractClientIP(req, tp)` in WAF middleware closure, eliminating duplicate socket splitting and CIDR matching overhead on high-throughput routes.
+- **Malformed Header Exploitation**: Fixed handling of corrupt, non-IP, or unparseable headers (`RemoteAddr`, `X-Forwarded-For`, `X-Real-IP`), ensuring they evaluate safely to `nil` and trigger fail-closed 403 Forbidden responses under active allowlists.
+
+### Changed
+- **WAF IP ACL Engine (`pkg/waf/ip_acl.go`)**: Refactored [`CheckIP`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L76-L87) to inspect active rules when `ip == nil`. If `len(acl.allowedSubnets) > 0 || len(acl.allowedIPs) > 0`, it returns `allowed: false, reason: "client IP could not be determined and allowed IP list is enforced"`; if only denylists or no rules are configured, it returns `allowed: true, reason: ""` (fail-open).
+- **WAF Middleware Pipeline (`pkg/waf/middleware.go`)**:
+  - Replaced duplicate `ExtractClientIP` calls with single-pass extraction at closure entry (`clientNetIP := ExtractClientIP(req, tp)`).
+  - Removed `if ip != nil` evaluation guard; `acl.CheckIP(clientNetIP)` is invoked unconditionally whenever `acl != nil && acl.HasRules()`.
+  - On denial (`!allowed`), immediately halts processing without invoking `next(req, res)`, sets status to `403 Forbidden`, sets `Content-Type: application/json`, writes exact JSON error payload `{"error":"Forbidden","message":"..."}`, increments Prometheus metric `WAFBlocked("ip_acl", req.Path)`, and emits structured `SecurityEvent`.
+
+### Added
+- **Automated Verification Suites (`pkg/waf/ip_acl_test.go`, `pkg/waf/middleware_test.go`)**:
+  - `TestIPAccessList_CheckIP_NilIP_WithAllowlist` (TC-093-01): Unit test verifying `CheckIP(nil)` returns `allowed == false` and exact reason across IPv4 CIDRs, exact IPv4, IPv6 CIDRs, exact IPv6, and combined allow/deny sets.
+  - `TestIPAccessList_CheckIP_NilIP_DenylistOnly` & `TestIPAccessList_CheckIP_NilIP_NoRules` (TC-093-02): Unit tests verifying fail-open pass-through for `CheckIP(nil)` when only denylists are present, empty ACLs, or nil receiver pointer.
+  - `TestWAFMiddleware_NilClientIP_AllowlistEnforced` (TC-093-03): End-to-end middleware test verifying HTTP 403 Forbidden, exact JSON response body `{"error":"Forbidden","message":"client IP could not be determined and allowed IP list is enforced"}`, immediate execution halt, and Prometheus metric increment on missing client IP.
+  - `TestWAFMiddleware_NilClientIP_DenylistOnly` (TC-093-04): End-to-end middleware test verifying pass-through to downstream handler (HTTP 200) for unidentifiable client IP under denylist-only mode.
+  - `TestWAFMiddleware_MalformedClientIP_AllowlistEnforced` (TC-093-05): Table-driven test evaluating 9 malformed address variants (`"not-an-ip:9999"`, `":::invalid"`, `"hostname-without-ip"`, `"unknown"`, `"localhost"`, `"999.999.999.999"`, `"garbage-header"`, `"invalid-real-ip"`, `"[bad-ipv6"`), verifying all evaluate safely to `nil` and fail closed with HTTP 403.
+  - `TestWAFMiddleware_AuditLogging_NilIP_Blocked` (TC-093-06): Verification of structured audit event emission (`ip_acl_block`, `ClientIP: ""`) on nil IP block with zero panics or nil-pointer dereferences.
+  - `TestWAFMiddleware_SinglePassExtraction_TelemetryParity` (TC-093-07): Verifies single-pass extraction parity across allowed IP (`200 OK`), denied IP (`403 Forbidden`), and nil IP (`403 Forbidden`).
+  - `TestWAFMiddleware_NilClientIP_Concurrency` & `TestWAFMiddleware_ConcurrentRaceClean` (TC-093-08): 100 concurrent workers dispatching 5,000 requests across mixed IP scenarios under `-race`, verifying zero data races and zero deadlocks.
+
+### Related Tasks & Requirements
+- [`TASK-114`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-114.md): WAF Middleware Single-Pass IP Extraction and Fail-Closed Enforcement
+- [`TASK-115`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-115.md): End-to-End WAF Middleware IP ACL Automated Verification Suite (TC-093)
+- [`REQ-093`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-093.md): Fail-Closed WAF IP Access Control Enforcement on Unidentifiable Client IP
+- [`ADR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-088.md): Fail-Closed WAF IP Access Control & Single-Pass Extraction
+- [`TC-093`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-093.md): Test Suite for Fail-Closed WAF IP Access Control on Unidentifiable Client IP
+- [`CR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-089.md): Code Review of Fail-Closed WAF IP Access Control Enforcement on Unidentifiable Client IP
+- [`SR-093`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-093.md): Security Review and Vulnerability Assessment of SEC-32 Remediation
+- [`SEC-32`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L439-L447): Fail-Open WAF IP Access Control Bypass on Unidentifiable Client IP
+
 ## 2026-09-10 - Toron v1.5.12 Security Release (SEC-31: Physical RemoteAddr Binding & Ingress Anti-Spoofing across HTTP/1.1, HTTP/2, and HTTP/3)
 
 ### Milestone Summary

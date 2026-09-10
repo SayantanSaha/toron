@@ -176,4 +176,3 @@ func TestWAF_PathTraversal_CaseInsensitive(t *testing.T) {
 		}
 	})
 }
-

@@ -9,17 +9,31 @@ updated: 2026-09-10
 depends_on:
   - REQ-041
   - REQ-092
+  - REQ-093
   - TASK-041
   - TASK-111
   - TASK-112
   - TASK-113
+  - TASK-114
+  - TASK-115
   - ADR-036
   - ADR-087
+  - ADR-088
 
 derived_from:
   - REQ-041
   - REQ-092
+  - REQ-093
   - SEC-31
+  - SEC-32
+
+references:
+  - REQ-093
+  - SEC-32
+  - ADR-088
+  - TC-093
+  - CR-089
+  - SR-093
 
 documents:
   - WAF-GUIDE
@@ -56,7 +70,9 @@ Toron includes a native, high-throughput **Web Application Firewall (WAF)** midd
    - **Denied IPs (`denied_ips`)**: Configurable list of IPv4 and IPv6 CIDR blocks (e.g. `198.51.100.0/24`) or single IP addresses returning `403 Forbidden`.
    - **Physical RemoteAddr Prioritization**: Client IP identity is anchored to the physical network connection address (`req.RemoteIP()`, `req.RemoteAddr`) across HTTP/1.1, HTTP/2, and HTTP/3 QUIC ([`SEC-31`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L428-L436), [`REQ-092`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-092.md), [`ADR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-087.md)).
    - **Trusted Proxy Gating (`trusted_proxies`)**: Client-supplied `X-Forwarded-For` and `X-Real-IP` headers are discarded unless the client's physical socket IP is verified against configured `trusted_proxies`. Attackers cannot bypass IP blocks or evade allowlists by forging forwarded headers.
-   - **Fail-Secure Allowlist Invariant**: If an IP allowlist is enforced and the client IP cannot be determined, the request is denied access fail-secure by default.
+   - **Fail-Closed Allowlist Enforcement**: When `allowed_ips` is active, any request whose client IP cannot be determined or is malformed is rejected fail-closed with HTTP `403 Forbidden` and exact JSON payload `{"error":"Forbidden","message":"client IP could not be determined and allowed IP list is enforced"}` ([`SEC-32`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L439-L447), [`REQ-093`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-093.md), [`ADR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-088.md)).
+   - **Denylist-Only Fail-Open Pass-Through**: When only `denied_ips` is configured without an active allowlist, unidentifiable client IPs pass through the IP ACL stage (fail-open) to subsequent WAF stages and downstream handlers ([`REQ-093`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-093.md)).
+   - **Single-Pass Hot-Path IP Extraction**: Client IP resolution via [`ExtractClientIP`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L181-L207) executes exactly once at the entry of the middleware closure, caching parsed `net.IP` for unconditional access evaluation and structured telemetry.
    - **Fast-Path $O(1)$ Pre-Inspection**: IP access checking executes before deep regex scanning or body buffering.
 5. **Per-Route WAF Customization & Overrides (`routes.yaml`)**:
    - Any individual route in `routes.yaml` can define its own `waf:` block to selectively override global settings (e.g. tuning anomaly thresholds, disabling specific rules like `SQLI-001` for legacy backends, or setting dedicated CIDR allowlists).
@@ -113,9 +129,110 @@ routes:
         - "SQLI-001"
 ```
 
+## Fail-Closed IP Access Control on Unidentifiable Client IP (SEC-32, REQ-093)
+
+### Security Problem & Vulnerability Remediation
+
+In earlier releases, when an IP allowlist (`allowed_ips`) was enforced, incoming requests lacking resolvable client IP metadata (e.g., stripped connection addresses, intermediate proxy header drops, synthetic test requests, or malformed non-IP headers) bypassed access control checks because the middleware guarded evaluation with `if ip != nil` and [`CheckIP(nil)`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L76-L87) defaulted to fail-open (`true, ""`). This critical vulnerability was tracked as [`SEC-32`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L439-L447) ([CWE-284](https://cwe.mitre.org/data/definitions/284.html), [CWE-1188](https://cwe.mitre.org/data/definitions/1188.html), [CWE-693](https://cwe.mitre.org/data/definitions/693.html), [`SR-091 Finding 2`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md#L102-L127)).
+
+Toron v1.5.13 remediates this vulnerability under [`REQ-093`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-093.md) and [`ADR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-088.md) by enforcing **fail-closed** access control on allowlists, context-aware policy evaluation, and single-pass client IP extraction.
+
+### Behavior Under Active Allowlist (`allowed_ips` Enforced — Fail-Closed)
+
+When an IP allowlist (`allowed_ips` or `allowedSubnets`) is configured and active globally in `config.yaml` or on a specific route in `routes.yaml`:
+
+1. **Strict Positive Security Invariant**: Any request whose client IP cannot be verified against the configured allowlist is immediately rejected fail-closed.
+2. **Evaluation Invariant**: If client IP extraction yields `nil` (due to missing `RemoteAddr`, unverified forwarded headers behind untrusted proxies, or malformed/unparseable values like `"unknown"`, `"localhost"`, `"999.999.999.999"`, `":::invalid"`), [`IPAccessList.CheckIP(nil)`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L76-L87) returns `allowed: false` with reason `"client IP could not be determined and allowed IP list is enforced"`.
+3. **HTTP 403 Forbidden Response**:
+   - Status code: `403 Forbidden`
+   - Header: `Content-Type: application/json`
+   - Exact Body:
+     ```json
+     {"error":"Forbidden","message":"client IP could not be determined and allowed IP list is enforced"}
+     ```
+4. **Immediate Execution Termination**: Middleware immediately halts request processing without calling `next(req, res)` or forwarding traffic to upstream services.
+5. **Observability & Audit Trail**:
+   - Increments Prometheus counter `toron_waf_blocked_requests_total{category="ip_acl", route="..."}`.
+   - Emits a structured [`SecurityEvent`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/audit.go#L28-L43) to the WAF audit logger with `Event: "ip_acl_block"`, `Action: "blocked"`, `Category: "ip_acl"`, `Location: "remote_addr"`, and `ClientIP: ""` (empty string, safe from null-pointer dereference panics).
+
+### Behavior Under Denylist-Only Configurations (`denied_ips` Configured — Fail-Open Pass-Through)
+
+When only `denied_ips` is configured without an active `allowed_ips` allowlist:
+
+1. **Negative Security Model**: Denylists are exclusionary filters designed to block known malicious actors while allowing all other legitimate traffic.
+2. **Fail-Open Pass-Through**: If the incoming client IP cannot be determined (`ExtractClientIP` returns `nil`), [`IPAccessList.CheckIP(nil)`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L76-L87) returns `allowed: true, reason: ""`.
+3. **Subsequent Stage Inspection**: The request passes through the IP ACL stage and proceeds to subsequent WAF inspection layers (Protocol Integrity, Custom Rules, OWASP Injection Rules) and downstream routing.
+4. **Operational Availability**: Preserves availability for internal service mesh calls, synthetic health probes, or intermediate proxies that do not provide client IP headers, eliminating false-positive outages.
+
+### Single-Pass Client IP Extraction Optimization
+
+To eliminate redundant CPU overhead and minimize request latency on the hot path:
+
+1. **Single Extraction per Request**: In [`pkg/waf/middleware.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/middleware.go), [`ExtractClientIP(req, tp)`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go#L181-L207) is executed exactly once at the entry of the WAF middleware closure:
+   ```go
+   clientNetIP := ExtractClientIP(req, tp)
+   clientIP := ""
+   if clientNetIP != nil {
+       clientIP = clientNetIP.String()
+   }
+   ```
+2. **Unconditional ACL Evaluation**: The cached `clientNetIP net.IP` is passed directly to `acl.CheckIP(clientNetIP)` whenever `acl != nil && acl.HasRules()` evaluates to `true`, removing the vulnerable `if ip != nil` guard.
+3. **Telemetry & Audit Parity**: The string representation `clientIP` is computed once and reused across all subsequent security telemetry:
+   - IP ACL denial events (`ip_acl_block`)
+   - Protocol integrity violation events (`protocol_violation`)
+   - Custom rules and OWASP injection rule evaluation and audit logging
+4. **Zero-Allocation Hot Path**: Eliminates duplicate socket host/port parsing, repeated CIDR lookups against `trusted_proxies`, and unnecessary heap allocations on benign requests.
+
+### Policy Evaluation Matrix
+
+| Client IP State | Allowlist (`allowed_ips`) | Denylist (`denied_ips`) | WAF IP ACL Verdict | HTTP Status | Response Payload | Next WAF Stages Executed? |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Unidentifiable / Nil / Malformed** | **Active** | *Any* | **Blocked (Fail-Closed)** | `403` | `{"error":"Forbidden","message":"client IP could not be determined and allowed IP list is enforced"}` | No (Immediate Halt) |
+| **Unidentifiable / Nil / Malformed** | **None** | **Active** | **Allowed (Fail-Open)** | N/A | N/A (Pass-Through) | Yes |
+| **Identified (Valid IP)** | Matches Allowed CIDR | Does Not Match Denied | **Allowed** | N/A | N/A (Pass-Through) | Yes |
+| **Identified (Valid IP)** | Outside Allowed CIDR | *Any* | **Blocked** | `403` | `{"error":"Forbidden","message":"IP address is not in the allowed IP list"}` | No (Immediate Halt) |
+| **Identified (Valid IP)** | *Any* | Matches Denied CIDR | **Blocked** | `403` | `{"error":"Forbidden","message":"IP address matches denied IP list"}` | No (Immediate Halt) |
+
+### Architecture & Evaluation Flow
+
+```mermaid
+flowchart TD
+    Req["Incoming Request at WAF Middleware"] --> SinglePass["Single-Pass Extraction:\nclientNetIP := ExtractClientIP(req, tp)\nclientIP := clientNetIP.String() (or '')"]
+    SinglePass --> CheckRules{"acl != nil &&\nacl.HasRules()?"}
+
+    CheckRules -- "No" --> Pass["Proceed to Protocol Integrity\n& OWASP Injection Inspection"]
+
+    CheckRules -- "Yes" --> UnconditionalCheck["Invoke acl.CheckIP(clientNetIP)\n(Unconditional Evaluation)"]
+
+    UnconditionalCheck --> CheckNil{"clientNetIP == nil?"}
+
+    CheckNil -- "Yes (ip == nil)" --> AllowlistActive{"Allowlist Configured?\n(allowed_ips active)"}
+    AllowlistActive -- "Yes" --> FailClosed["Fail-Closed Denial:\nStatus 403 Forbidden\n'client IP could not be determined...'"]
+    AllowlistActive -- "No (Denylist only)" --> Pass
+
+    CheckNil -- "No (Valid IP)" --> CheckDeny{"Matches Denylist?"}
+    CheckDeny -- "Yes" --> DenyBlock["Fail-Closed Denial:\nStatus 403 Forbidden\n'IP address matches denied...'"]
+    CheckDeny -- "No" --> CheckAllow{"Allowlist Configured?"}
+
+    CheckAllow -- "No (Denylist only)" --> Pass
+    CheckAllow -- "Yes" --> MatchAllow{"Matches Allowlist?"}
+    MatchAllow -- "Yes" --> Pass
+    MatchAllow -- "No" --> WhitelistBlock["Fail-Closed Denial:\nStatus 403 Forbidden\n'IP address is not in allowed...'"]
+
+    subgraph RejectionHandler["WAF Denial Processing"]
+        FailClosed --> RecordMetrics["Increment toron_waf_blocked_requests_total{category='ip_acl'}"]
+        DenyBlock --> RecordMetrics
+        WhitelistBlock --> RecordMetrics
+        RecordMetrics --> EmitAudit["Emit Structured Audit Event (ip_acl_block)"]
+        EmitAudit --> WriteResponse["Write HTTP 403 JSON Response & Terminate (No next)"]
+    end
+```
+
 ## Triggered Block Response Format
 
-When a request is blocked in `enforce` mode, Toron returns `403 Forbidden` with application/json body:
+When a request is blocked in `enforce` mode, Toron returns `403 Forbidden` with an `application/json` payload depending on the violation:
+
+### 1. OWASP Top 10 Injection Violations
 
 ```json
 {
@@ -125,6 +242,32 @@ When a request is blocked in `enforce` mode, Toron returns `403 Forbidden` with 
   "triggered_rules": ["SQLI-001"]
 }
 ```
+
+### 2. Fail-Closed Unidentifiable Client IP (Allowlist Enforced - SEC-32)
+
+```json
+{
+  "error": "Forbidden",
+  "message": "client IP could not be determined and allowed IP list is enforced"
+}
+```
+
+### 3. IP Access Control List Violations (Identified IP)
+
+- **Denied IP Address**:
+  ```json
+  {
+    "error": "Forbidden",
+    "message": "IP address matches denied IP list"
+  }
+  ```
+- **Disallowed IP Address**:
+  ```json
+  {
+    "error": "Forbidden",
+    "message": "IP address is not in the allowed IP list"
+  }
+  ```
 
 ## Prometheus Observability & Metrics
 

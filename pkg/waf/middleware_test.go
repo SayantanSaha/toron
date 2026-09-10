@@ -2,11 +2,14 @@ package waf
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/metrics"
 )
 
 func TestWAFMiddleware_EnforceAndDetection(t *testing.T) {
@@ -269,4 +272,537 @@ func TestWAFMiddleware_TelemetryAndAuditLog(t *testing.T) {
 	if !strings.Contains(logOutput, "XSS-001") {
 		t.Errorf("expected log output to contain XSS-001, got: %s", logOutput)
 	}
+}
+
+func TestWAFMiddleware_NilClientIP_AllowlistEnforced(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Mode = "enforce"
+	cfg.Enabled = true
+	cfg.AllowedIPs = []string{"10.0.0.0/8"}
+	cfg.DeniedIPs = []string{"198.51.100.0/24"}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+
+	mw := NewWAFMiddleware(engine)
+	nextCalled := false
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		nextCalled = true
+		res.SetStatus(200)
+	})
+
+	u, _ := url.Parse("http://localhost/api/protected")
+	req := &httpparser.Request{
+		Method:     "GET",
+		Path:       u.Path,
+		URL:        u,
+		Header:     make(httpparser.Header),
+		RemoteAddr: "",
+		RawConn:    nil,
+	}
+	res := &httpparser.Response{
+		Header: make(httpparser.Header),
+		Body:   bytes.NewBuffer(nil),
+	}
+
+	// Capture metrics baseline
+	initialSummary := metrics.DefaultRegistry.GetSummaryJSON()
+	var initialBlocked uint64
+	if wafSummary, ok := initialSummary["waf"].(map[string]interface{}); ok {
+		if catMap, ok := wafSummary["blocked_by_category"].(map[string]uint64); ok {
+			initialBlocked = catMap["ip_acl"]
+		}
+	}
+
+	handler(req, res)
+
+	if nextCalled {
+		t.Errorf("expected downstream handler not to be called when client IP is nil under allowlist")
+	}
+	if res.StatusCode != 403 {
+		t.Errorf("got status %d, want 403", res.StatusCode)
+	}
+	if ct := res.Header.Get("Content-Type"); ct != "application/json" {
+		t.Errorf("got Content-Type %q, want %q", ct, "application/json")
+	}
+
+	expectedBody := `{"error":"Forbidden","message":"client IP could not be determined and allowed IP list is enforced"}`
+	if res.Body.String() != expectedBody {
+		t.Errorf("expected body %q, got %q", expectedBody, res.Body.String())
+	}
+
+	// Check metrics increment
+	afterSummary := metrics.DefaultRegistry.GetSummaryJSON()
+	var afterBlocked uint64
+	if wafSummary, ok := afterSummary["waf"].(map[string]interface{}); ok {
+		if catMap, ok := wafSummary["blocked_by_category"].(map[string]uint64); ok {
+			afterBlocked = catMap["ip_acl"]
+		}
+	}
+	if afterBlocked != initialBlocked+1 {
+		t.Errorf("expected ip_acl blocked count to increment from %d to %d, got %d", initialBlocked, initialBlocked+1, afterBlocked)
+	}
+
+	promOutput := metrics.DefaultRegistry.ExportPrometheus()
+	expectedMetricKey := `toron_waf_blocked_requests_total{category="ip_acl",route="/api/protected"}`
+	if !strings.Contains(promOutput, expectedMetricKey) {
+		t.Errorf("expected prometheus metrics to contain %q", expectedMetricKey)
+	}
+}
+
+func TestWAFMiddleware_NilClientIP_DenylistOnly(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Mode = "enforce"
+	cfg.Enabled = true
+	cfg.AllowedIPs = nil
+	cfg.DeniedIPs = []string{"198.51.100.0/24"}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+
+	mw := NewWAFMiddleware(engine)
+	nextCalled := false
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		nextCalled = true
+		res.SetStatus(200)
+		_, _ = res.WriteString("success")
+	})
+
+	u, _ := url.Parse("http://localhost/api/test")
+	req := &httpparser.Request{
+		Method:     "GET",
+		Path:       u.Path,
+		URL:        u,
+		Header:     make(httpparser.Header),
+		RemoteAddr: "",
+		RawConn:    nil,
+	}
+	res := &httpparser.Response{
+		Header: make(httpparser.Header),
+		Body:   bytes.NewBuffer(nil),
+	}
+
+	handler(req, res)
+
+	if !nextCalled {
+		t.Errorf("expected downstream handler to be called for nil IP in denylist-only configuration")
+	}
+	if res.StatusCode != 200 {
+		t.Errorf("got status %d, want 200", res.StatusCode)
+	}
+	if res.Body.String() != "success" {
+		t.Errorf("got body %q, want %q", res.Body.String(), "success")
+	}
+}
+
+func TestWAFMiddleware_MalformedClientIP_AllowlistEnforced(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Mode = "enforce"
+	cfg.Enabled = true
+	cfg.AllowedIPs = []string{"10.0.0.0/8"}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+	mw := NewWAFMiddleware(engine)
+
+	scenarios := []struct {
+		name       string
+		remoteAddr string
+		xff        string
+		xri        string
+	}{
+		{name: "Malformed RemoteAddr with port", remoteAddr: "not-an-ip:9999"},
+		{name: "Malformed RemoteAddr IPv6 colons", remoteAddr: ":::invalid"},
+		{name: "Bare hostname in RemoteAddr", remoteAddr: "hostname-without-ip"},
+		{name: "XFF unknown keyword", xff: "unknown"},
+		{name: "XFF localhost hostname", xff: "localhost"},
+		{name: "XFF out-of-range octets", xff: "999.999.999.999"},
+		{name: "XFF arbitrary garbage", xff: "garbage-header"},
+		{name: "X-Real-IP corrupt string", xri: "invalid-real-ip"},
+		{name: "X-Real-IP unclosed bracket IPv6", xri: "[bad-ipv6"},
+	}
+
+	const expectedBody = `{"error":"Forbidden","message":"client IP could not be determined and allowed IP list is enforced"}`
+
+	for _, sc := range scenarios {
+		t.Run(sc.name, func(t *testing.T) {
+			u, _ := url.Parse("http://localhost/api/data")
+			req := &httpparser.Request{
+				Method:     "GET",
+				Path:       u.Path,
+				URL:        u,
+				Header:     make(httpparser.Header),
+				RemoteAddr: sc.remoteAddr,
+			}
+			if sc.xff != "" {
+				req.Header.Set("X-Forwarded-For", sc.xff)
+			}
+			if sc.xri != "" {
+				req.Header.Set("X-Real-IP", sc.xri)
+			}
+
+			// Verify ExtractClientIP evaluates to nil
+			extracted := ExtractClientIP(req)
+			if extracted != nil {
+				t.Fatalf("expected ExtractClientIP to return nil for malformed input %v, got %v", sc, extracted)
+			}
+
+			nextCalled := false
+			handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+				nextCalled = true
+				res.SetStatus(200)
+			})
+
+			res := &httpparser.Response{
+				Header: make(httpparser.Header),
+				Body:   bytes.NewBuffer(nil),
+			}
+
+			handler(req, res)
+
+			if nextCalled {
+				t.Errorf("expected handler not to be called for malformed client IP")
+			}
+			if res.StatusCode != 403 {
+				t.Errorf("got status %d, want 403", res.StatusCode)
+			}
+			if ct := res.Header.Get("Content-Type"); ct != "application/json" {
+				t.Errorf("got Content-Type %q, want %q", ct, "application/json")
+			}
+			if res.Body.String() != expectedBody {
+				t.Errorf("got body %q, want %q", res.Body.String(), expectedBody)
+			}
+		})
+	}
+}
+
+func TestWAFMiddleware_AuditLogging_NilIP_Blocked(t *testing.T) {
+	var logBuf bytes.Buffer
+	cfg := DefaultConfig()
+	cfg.Mode = "enforce"
+	cfg.Enabled = true
+	cfg.AllowedIPs = []string{"10.0.0.0/8"}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+	engine.SetAuditLogger(NewAuditLoggerWithWriter(&logBuf))
+
+	mw := NewWAFMiddleware(engine)
+	nextCalled := false
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		nextCalled = true
+		res.SetStatus(200)
+	})
+
+	u, _ := url.Parse("http://localhost/internal/admin")
+	req := &httpparser.Request{
+		Method:     "POST",
+		Path:       u.Path,
+		URL:        u,
+		Header:     make(httpparser.Header),
+		RemoteAddr: "",
+		RawConn:    nil,
+	}
+	res := &httpparser.Response{
+		Header: make(httpparser.Header),
+		Body:   bytes.NewBuffer(nil),
+	}
+
+	handler(req, res)
+
+	if nextCalled {
+		t.Errorf("expected handler not to be called")
+	}
+	if res.StatusCode != 403 {
+		t.Errorf("got status %d, want 403", res.StatusCode)
+	}
+
+	logLine := strings.TrimSpace(logBuf.String())
+	if logLine == "" {
+		t.Fatalf("expected audit log output, got empty buffer")
+	}
+
+	var event SecurityEvent
+	if err := json.Unmarshal([]byte(logLine), &event); err != nil {
+		t.Fatalf("failed to unmarshal audit log event: %v; raw log: %s", err, logLine)
+	}
+
+	if event.Event != "ip_acl_block" {
+		t.Errorf("got event %q, want %q", event.Event, "ip_acl_block")
+	}
+	if event.ClientIP != "" {
+		t.Errorf("got client_ip %q, want empty string", event.ClientIP)
+	}
+	if event.Method != "POST" {
+		t.Errorf("got method %q, want %q", event.Method, "POST")
+	}
+	if event.Path != "/internal/admin" {
+		t.Errorf("got path %q, want %q", event.Path, "/internal/admin")
+	}
+	if event.Category != "ip_acl" {
+		t.Errorf("got category %q, want %q", event.Category, "ip_acl")
+	}
+	if event.Action != "blocked" {
+		t.Errorf("got action %q, want %q", event.Action, "blocked")
+	}
+	if event.Location != "remote_addr" {
+		t.Errorf("got location %q, want %q", event.Location, "remote_addr")
+	}
+}
+
+func TestWAFMiddleware_SinglePassExtraction_TelemetryParity(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Mode = "enforce"
+	cfg.Enabled = true
+	cfg.AllowedIPs = []string{"10.0.0.0/8"}
+	cfg.DeniedIPs = []string{"10.99.99.99/32"}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+
+	var logBuf bytes.Buffer
+	engine.SetAuditLogger(NewAuditLoggerWithWriter(&logBuf))
+	mw := NewWAFMiddleware(engine)
+
+	// Flow 7A: Valid Allowed IP
+	t.Run("Allowed IP Flow", func(t *testing.T) {
+		logBuf.Reset()
+		u, _ := url.Parse("http://localhost/api/resource")
+		req := &httpparser.Request{
+			Method:     "GET",
+			Path:       u.Path,
+			URL:        u,
+			Header:     make(httpparser.Header),
+			RemoteAddr: "10.1.2.3:55555",
+		}
+		res := &httpparser.Response{
+			Header: make(httpparser.Header),
+			Body:   bytes.NewBuffer(nil),
+		}
+
+		nextCalled := false
+		handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+			nextCalled = true
+			res.SetStatus(200)
+			_, _ = res.WriteString("ok")
+		})
+
+		handler(req, res)
+
+		if !nextCalled {
+			t.Errorf("expected allowed IP to reach downstream handler")
+		}
+		if res.StatusCode != 200 {
+			t.Errorf("got status %d, want 200", res.StatusCode)
+		}
+	})
+
+	// Flow 7B: Valid Denied IP
+	t.Run("Denied IP Flow", func(t *testing.T) {
+		logBuf.Reset()
+		u, _ := url.Parse("http://localhost/api/resource")
+		req := &httpparser.Request{
+			Method:     "GET",
+			Path:       u.Path,
+			URL:        u,
+			Header:     make(httpparser.Header),
+			RemoteAddr: "10.99.99.99:55555",
+		}
+		res := &httpparser.Response{
+			Header: make(httpparser.Header),
+			Body:   bytes.NewBuffer(nil),
+		}
+
+		nextCalled := false
+		handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+			nextCalled = true
+			res.SetStatus(200)
+		})
+
+		handler(req, res)
+
+		if nextCalled {
+			t.Errorf("expected denied IP not to reach downstream handler")
+		}
+		if res.StatusCode != 403 {
+			t.Errorf("got status %d, want 403", res.StatusCode)
+		}
+		expectedReason := "IP address 10.99.99.99 matches denied CIDR 10.99.99.99/32"
+		if !strings.Contains(res.Body.String(), expectedReason) {
+			t.Errorf("expected body to contain %q, got %q", expectedReason, res.Body.String())
+		}
+
+		logLine := strings.TrimSpace(logBuf.String())
+		var event SecurityEvent
+		if err := json.Unmarshal([]byte(logLine), &event); err != nil {
+			t.Fatalf("failed to unmarshal audit log event: %v", err)
+		}
+		if event.ClientIP != "10.99.99.99" {
+			t.Errorf("got audit client_ip %q, want %q", event.ClientIP, "10.99.99.99")
+		}
+		if event.Event != "ip_acl_block" {
+			t.Errorf("got audit event %q, want %q", event.Event, "ip_acl_block")
+		}
+	})
+
+	// Flow 7C: Unidentifiable Client IP
+	t.Run("Nil Client IP Flow", func(t *testing.T) {
+		logBuf.Reset()
+		u, _ := url.Parse("http://localhost/api/resource")
+		req := &httpparser.Request{
+			Method:     "GET",
+			Path:       u.Path,
+			URL:        u,
+			Header:     make(httpparser.Header),
+			RemoteAddr: "",
+		}
+		res := &httpparser.Response{
+			Header: make(httpparser.Header),
+			Body:   bytes.NewBuffer(nil),
+		}
+
+		nextCalled := false
+		handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+			nextCalled = true
+			res.SetStatus(200)
+		})
+
+		handler(req, res)
+
+		if nextCalled {
+			t.Errorf("expected nil IP not to reach downstream handler")
+		}
+		if res.StatusCode != 403 {
+			t.Errorf("got status %d, want 403", res.StatusCode)
+		}
+		expectedReason := "client IP could not be determined and allowed IP list is enforced"
+		if !strings.Contains(res.Body.String(), expectedReason) {
+			t.Errorf("expected body to contain %q, got %q", expectedReason, res.Body.String())
+		}
+
+		logLine := strings.TrimSpace(logBuf.String())
+		var event SecurityEvent
+		if err := json.Unmarshal([]byte(logLine), &event); err != nil {
+			t.Fatalf("failed to unmarshal audit log event: %v", err)
+		}
+		if event.ClientIP != "" {
+			t.Errorf("got audit client_ip %q, want empty string", event.ClientIP)
+		}
+		if event.Event != "ip_acl_block" {
+			t.Errorf("got audit event %q, want %q", event.Event, "ip_acl_block")
+		}
+	})
+}
+
+func TestWAFMiddleware_NilClientIP_Concurrency(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Mode = "enforce"
+	cfg.Enabled = true
+	cfg.AllowedIPs = []string{"10.0.0.0/8"}
+	cfg.DeniedIPs = []string{"198.51.100.0/24"}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+
+	safeLogWriter := &concurrentSafeBuffer{}
+	engine.SetAuditLogger(NewAuditLoggerWithWriter(safeLogWriter))
+
+	mw := NewWAFMiddleware(engine)
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(200)
+		_, _ = res.WriteString("ok")
+	})
+
+	const numGoroutines = 100
+	const iterations = 50
+	var wg sync.WaitGroup
+	wg.Add(numGoroutines)
+
+	for g := 0; g < numGoroutines; g++ {
+		go func(gid int) {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				u, _ := url.Parse("http://localhost/api/test")
+				req := &httpparser.Request{
+					Method: "GET",
+					Path:   u.Path,
+					URL:    u,
+					Header: make(httpparser.Header),
+				}
+				res := &httpparser.Response{
+					Header: make(httpparser.Header),
+					Body:   bytes.NewBuffer(nil),
+				}
+
+				switch {
+				case gid < 25:
+					// Unidentifiable IP
+					req.RemoteAddr = ""
+					handler(req, res)
+					if res.StatusCode != 403 {
+						t.Errorf("gid %d: expected 403 for unidentifiable IP, got %d", gid, res.StatusCode)
+					}
+					if !strings.Contains(res.Body.String(), "client IP could not be determined") {
+						t.Errorf("gid %d: unexpected body %s", gid, res.Body.String())
+					}
+				case gid < 50:
+					// Malformed IP
+					req.RemoteAddr = "corrupt:addr"
+					handler(req, res)
+					if res.StatusCode != 403 {
+						t.Errorf("gid %d: expected 403 for malformed IP, got %d", gid, res.StatusCode)
+					}
+					if !strings.Contains(res.Body.String(), "client IP could not be determined") {
+						t.Errorf("gid %d: unexpected body %s", gid, res.Body.String())
+					}
+				case gid < 75:
+					// Allowed IP
+					req.RemoteAddr = "10.0.1.5:8080"
+					handler(req, res)
+					if res.StatusCode != 200 {
+						t.Errorf("gid %d: expected 200 for allowed IP, got %d", gid, res.StatusCode)
+					}
+				default:
+					// Denied IP
+					req.RemoteAddr = "198.51.100.20:8080"
+					handler(req, res)
+					if res.StatusCode != 403 {
+						t.Errorf("gid %d: expected 403 for denied IP, got %d", gid, res.StatusCode)
+					}
+					if !strings.Contains(res.Body.String(), "matches denied CIDR") {
+						t.Errorf("gid %d: unexpected body %s", gid, res.Body.String())
+					}
+				}
+			}
+		}(g)
+	}
+
+	wg.Wait()
+}
+
+func TestWAFMiddleware_ConcurrentRaceClean(t *testing.T) {
+	TestWAFMiddleware_NilClientIP_Concurrency(t)
+}
+
+type concurrentSafeBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (w *concurrentSafeBuffer) Write(p []byte) (n int, err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
 }

@@ -55,15 +55,15 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 				tp = engine.Config().TrustedProxies
 			}
 
+			clientNetIP := ExtractClientIP(req, tp)
 			clientIP := ""
-			if ip := ExtractClientIP(req, tp); ip != nil {
-				clientIP = ip.String()
+			if clientNetIP != nil {
+				clientIP = clientNetIP.String()
 			}
 
 			// 0. Fast-Path CIDR IP Access Control Check
 			if acl := engine.IPAccessList(); acl != nil && acl.HasRules() {
-				ip := ExtractClientIP(req, tp)
-				allowed, reason := acl.CheckIP(ip)
+				allowed, reason := acl.CheckIP(clientNetIP)
 				if !allowed {
 					metrics.DefaultRegistry.RecordWAFBlocked("ip_acl", req.Path)
 					if logger := engine.AuditLogger(); logger != nil {

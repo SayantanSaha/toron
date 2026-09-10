@@ -11,7 +11,7 @@
 
 This security audit report reflects the state of the Toron Web Server and Edge Gateway codebase following the complete remediation, testing, code review, and merging of all 30 prior security tasks (`TASK-061` through `TASK-110`, resolving `SEC-01` through `SEC-30`).
 
-A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 31 previously identified vulnerabilities (`SEC-01` through `SEC-31`) remain 100% verified and resolved. **7 remaining findings** (`SEC-32` through `SEC-38`) have been identified across peripheral and extended subsystem surfaces and are tracked below for remediation.
+A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 32 previously identified vulnerabilities (`SEC-01` through `SEC-32`) remain 100% verified and resolved. **6 remaining findings** (`SEC-33` through `SEC-38`) have been identified across peripheral and extended subsystem surfaces and are tracked below for remediation.
 
 ---
 
@@ -50,7 +50,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 | **P3** | **SEC-29** | Hop-by-Hop Header Leakage to Upstream in REST-to-gRPC Transcoder | **Low** | CWE-444, CWE-436 | **Resolved** | [`TASK-105`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-105.md)..[`107`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-107.md) | `TC-090`, `SR-089`, `CR-086` | `e1d86bc` |
 | **P2** | **SEC-30** | Subpath Routing Interception & 502 Denial in REST-to-gRPC Transcoder | **Medium** | CWE-284, CWE-400 | **Resolved** | [`TASK-108`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-108.md)..[`110`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-110.md) | `TC-091`, `SR-090`, `CR-087` | `c5ede1b` |
 | **P1** | **SEC-31** | Unauthenticated Client IP Spoofing & Security Bypass via Missing Physical RemoteAddr Binding in HTTP/2 and HTTP/3 Adapters | **High** | CWE-290, CWE-345, CWE-693 | **Resolved** | [`TASK-111`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-111.md)..[`113`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-113.md) | `TC-092 / SR-092` | Verified |
-| **P2** | **SEC-32** | Fail-Open WAF IP Access Control Bypass on Unidentifiable Client IP | **Medium** | CWE-284, CWE-1188, CWE-693 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
+| **P2** | **SEC-32** | Fail-Open WAF IP Access Control Bypass on Unidentifiable Client IP | **Medium** | CWE-284, CWE-1188, CWE-693 | **Resolved** | [`TASK-114`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-114.md)..[`115`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-115.md) | `TC-093 / SR-093` | Verified |
 | **P1** | **SEC-33** | Unbounded Routing Table Memory Leak & Zombie Route Persistence in Kubernetes Ingress Controller | **High** | CWE-400, CWE-670 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
 | **P2** | **SEC-34** | Premature Route Deletion & Load-Balancing Failure Across Multi-Replica Containers in OCI Discovery Engine | **Medium** | CWE-400, CWE-284, CWE-662 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
 | **P1** | **SEC-35** | Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration | **High** | CWE-295 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
@@ -444,6 +444,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
   When an IP allowlist (`allowed_ips` / `allowedSubnets`) is configured, if `ExtractClientIP(req)` returns `nil`, `middleware.go` skips the check entirely. Furthermore, `CheckIP(nil)` returns `true, ""` (fail-open).
 - **Impact**: Requests lacking client IP information bypass configured IP allowlists and access protected resources.
 - **Remediation**: Fail closed by rejecting unidentifiable client requests (`ip == nil`) when an active allowlist is configured.
+- **Resolution Details**: Fully resolved under [`REQ-093`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-093.md), [`ADR-088`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-088.md), [`TASK-114`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-114.md), [`TASK-115`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-115.md). Enforced fail-closed access control in [`pkg/waf/ip_acl.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/ip_acl.go) and [`pkg/waf/middleware.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/middleware.go) when incoming client IP cannot be determined under an active allowlist, returning HTTP 403 Forbidden with exact JSON error body. Eliminated duplicate client IP extraction on request hot path with single-pass caching. Preserved fail-open pass-through for denylist-only configurations. Verified by comprehensive unit, middleware, and high-concurrency race-clean test suite [`TC-093`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-093.md), reviewed and approved in [`CR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-089.md) and [`SR-093`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-093.md).
 
 #### SEC-33: Unbounded Routing Table Memory Leak & Zombie Route Persistence in Kubernetes Ingress Controller
 - **Severity**: **High** (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:H/A:H - Score 8.1)
@@ -540,7 +541,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
   8. Fix subpath dispatch in gRPC transcoder routing (`SEC-30`) - **COMPLETED** (`TASK-108`..`110`, `TC-091`, `SR-090`, `CR-087`).
 - **Phase 6 (Advanced Subsystem & Security Perimeter Hardening - SEC-31..38 - IN PROGRESS)**:
   1. [x] Bind physical `RemoteAddr` in HTTP/2 and HTTP/3 adapters and eliminate header spoofing (`SEC-31`) - **COMPLETED** (`TASK-111`..`113`, `TC-092`, `SR-092`, `CR-088`).
-  2. [ ] Enforce fail-closed access control on unidentifiable client IPs in WAF (`SEC-32`).
+  2. [x] Enforce fail-closed access control on unidentifiable client IPs in WAF (`SEC-32`) - **COMPLETED** (`TASK-114`..`115`, `TC-093`, `SR-093`, `CR-089`).
   3. [ ] Prune deleted Ingress routes and prevent routing table growth in K8s Ingress Controller (`SEC-33`).
   4. [ ] Aggregate multi-replica upstreams and prevent premature route deletion in OCI Discovery (`SEC-34`).
   5. [ ] Remove insecure default `InsecureSkipVerify = true` in Sidecar Client TLS (`SEC-35`).
@@ -552,7 +553,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 
 ## 5. Remediation Status & Verification Summary
 
-31 security vulnerabilities (`SEC-01` through `SEC-31`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
+32 security vulnerabilities (`SEC-01` through `SEC-32`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 - **`SEC-23`**: Verified in `TC-084` (`TASK-084`..`086`, `defc678`).
@@ -564,7 +565,8 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 - **`SEC-29`**: Verified in `TC-090` (`TASK-105`..`107`).
 - **`SEC-30`**: Verified in `TC-091` (`TASK-108`..`110`, `c5ede1b`).
 - **`SEC-31`**: Verified in `TC-092` (`TASK-111`..`113`, `SR-092`, `CR-088`).
+- **`SEC-32`**: Verified in `TC-093` (`TASK-114`..`115`, `SR-093`, `CR-089`).
 
-All 31 vulnerabilities (`SEC-01` through `SEC-31`) remain 100% verified and resolved. **7 remaining findings** (`SEC-32` through `SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems are tracked below for remediation.
+All 32 vulnerabilities (`SEC-01` through `SEC-32`) remain 100% verified and resolved. **6 remaining findings** (`SEC-33` through `SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems are tracked below for remediation.
 
 

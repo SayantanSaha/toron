@@ -96,6 +96,7 @@ flowchart TD
 The Project Manager MUST execute the specification and development agents **serially** in strict order:
 
 1. **Requirement Engineer (Subagent)**:
+   - Defined in [requirement-engineer.md](requirement-engineer.md)
    - Call first to analyze the user request, architectural needs, or reviewer feedback.
    - May ask clarifying questions directly to the user.
    - Outputs a draft specification: `docs/requirements/REQ-XXX.md` with `status: draft`.
@@ -104,13 +105,17 @@ The Project Manager MUST execute the specification and development agents **seri
    - The Project Manager MUST NOT invoke the Development Lead, Architect, Test Designer, or Developer until the user has confirmed approval.
    - Once user approval is granted, the requirement document is transitioned to `status: approved`.
 3. **Development Lead (Subagent)**:
+   - Defined in [development-lead.md](development-lead.md)
    - Call ONLY after the requirement document is formally approved by the user.
    - Breaks down approved requirements into actionable tasks: `docs/tasks/TASK-XXX.md`.
 4. **Architect (Subagent)**:
+   - Defined in [architect.md](architect.md)
    - Call after tasks are defined to formulate technical design and architectural decisions: `docs/architecture/ADR-XXX.md`.
 5. **Test Designer (Subagent)**:
+   - Defined in [test-designer.md](test-designer.md)
    - Call after architecture is decided to specify test cases and verification criteria: `docs/testCases/TC-XXX.md`.
 6. **Developer (Subagent)**:
+   - Defined in [developer.md](developer.md)
    - Call after tasks, architecture, and test cases are ready.
    - Implements Go source code and unit tests using test-driven development.
 
@@ -118,8 +123,10 @@ The Project Manager MUST execute the specification and development agents **seri
 Once the Developer subagent completes implementation, the Project Manager launches review subagents **in parallel**:
 
 - **Code Reviewer (Subagent)**:
+  - Defined in [code-reviewer.md](code-reviewer.md)
   - Analyzes code quality, maintainability, performance, zero-dependency invariant, and test coverage (`docs/codeReview/CR-XXX.md`).
 - **Security Analyst (Subagent)**:
+  - Defined in [security-analyst.md](security-analyst.md)
   - Conducts threat modeling, vulnerability assessment, boundary checks, and CWE evaluation (`docs/securityReview/SR-XXX.md`).
 
 *Both review subagents run concurrently to maximize verification throughput while maintaining independent evaluation.*
@@ -139,6 +146,7 @@ The Project Manager collects and evaluates the verdicts from both parallel revie
 Once parallel reviews approve the implementation:
 
 - **Document Writer (Subagent)**:
+  - Defined in [document-writer.md](document-writer.md)
   - Call after code and security reviews are approved.
   - Updates user-facing documentation in `docs/wiki/` and updates release notes/changelogs.
 

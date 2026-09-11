@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"fmt"
+	"time"
 )
 
 // ContainerEventType indicates the status lifecycle event of an OCI container.
@@ -43,17 +44,20 @@ type ContainerEvent struct {
 
 // DiscoveredRoute captures routing specifications extracted from container labels or annotations.
 type DiscoveredRoute struct {
-	ContainerID       string
-	ContainerName     string
-	Host              string
-	Prefix            string
-	TargetIP          string
-	TargetPort        int
-	Weight            int
-	HealthCheckPath   string
-	StripPrefix       *bool
-	RewriteRedirects  *bool
-	RewriteCookiePath *bool
+	ContainerID         string
+	ContainerName       string
+	Host                string
+	Prefix              string
+	Method              string            // Normalized uppercase HTTP method constraint (e.g., "GET", "POST"), or "" for any method
+	Headers             map[string]string // Canonical HTTP header match constraints (e.g., {"X-Version": "canary"})
+	TargetIP            string
+	TargetPort          int
+	Weight              int
+	HealthCheckPath     string
+	HealthCheckInterval time.Duration
+	StripPrefix         *bool
+	RewriteRedirects    *bool
+	RewriteCookiePath   *bool
 }
 
 // TargetURL formats the upstream destination URL (e.g., http://172.17.0.2:8080).

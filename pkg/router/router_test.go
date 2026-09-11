@@ -1188,3 +1188,208 @@ func TestRouter_HealthCheckCleanupOnRouteReplace(t *testing.T) {
 		t.Errorf("Expected health checks to cease after Reset: before=%d, after=%d", p3Before, p3After)
 	}
 }
+
+func TestRouter_SpecificityOrdering_NoCanaryShadowing(t *testing.T) {
+	genericServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("generic"))
+	}))
+	defer genericServer.Close()
+
+	canaryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("canary"))
+	}))
+	defer canaryServer.Close()
+
+	r := router.New()
+
+	// Register generic fallback FIRST, and canary SECOND (adverse order)
+	genericSpec := router.PrefixRouteSpec{
+		TargetType: router.RouteTypeUpstream,
+		Prefix:     "/api",
+		Opts:       proxy.ProxyOptions{Targets: []string{genericServer.URL}},
+	}
+	canarySpec := router.PrefixRouteSpec{
+		TargetType: router.RouteTypeUpstream,
+		Prefix:     "/api",
+		Headers:    map[string]string{"X-Version": "canary"},
+		Opts:       proxy.ProxyOptions{Targets: []string{canaryServer.URL}},
+	}
+
+	err := r.ReplacePrefixRoutesBySource("oci-discovery", []router.PrefixRouteSpec{genericSpec, canarySpec})
+	if err != nil {
+		t.Fatalf("ReplacePrefixRoutesBySource failed: %v", err)
+	}
+
+	// Verify internal router ordering: Canary must precede Generic
+	routes := r.GetPrefixRoutes()
+	if len(routes) != 2 {
+		t.Fatalf("expected 2 routes, got %d", len(routes))
+	}
+	if len(routes[0].Headers) != 1 || routes[0].Headers["X-Version"] != "canary" {
+		t.Errorf("expected routes[0] to be canary route, got %+v", routes[0])
+	}
+	if len(routes[1].Headers) != 0 {
+		t.Errorf("expected routes[1] to be generic route, got %+v", routes[1])
+	}
+
+	// Request with Canary header -> routes to canary
+	reqCanary, _ := httpparser.NewRequest("GET", "/api/users", "HTTP/1.1")
+	reqCanary.Header.Set("X-Version", "canary")
+	resCanary := httpparser.NewResponse()
+	r.ServeHTTP(reqCanary, resCanary)
+	if resCanary.StatusCode != http.StatusOK || resCanary.Body.String() != "canary" {
+		t.Errorf("canary request failed: status %d, body %q", resCanary.StatusCode, resCanary.Body.String())
+	}
+
+	// Request without header -> falls through to generic
+	reqGeneric, _ := httpparser.NewRequest("GET", "/api/users", "HTTP/1.1")
+	resGeneric := httpparser.NewResponse()
+	r.ServeHTTP(reqGeneric, resGeneric)
+	if resGeneric.StatusCode != http.StatusOK || resGeneric.Body.String() != "generic" {
+		t.Errorf("generic request failed: status %d, body %q", resGeneric.StatusCode, resGeneric.Body.String())
+	}
+
+	// Multi-Tier Specificity Hierarchy Verification (TC-095-06)
+	r2 := router.New()
+	specs := []router.PrefixRouteSpec{
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                                     // Route A
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api/v1/auth", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                               // Route B
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api/v1", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                                    // Route C
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "api.example.com", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                         // Route D
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "api.example.com", Headers: map[string]string{"X-Tier": "gold"}, Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},         // Route E
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "api.example.com", Headers: map[string]string{"X-Tier": "gold"}, Method: "POST", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}}, // Route F
+	}
+
+	err = r2.ReplacePrefixRoutesBySource("oci-discovery", specs)
+	if err != nil {
+		t.Fatalf("ReplacePrefixRoutesBySource failed: %v", err)
+	}
+
+	r2Routes := r2.GetPrefixRoutes()
+	if len(r2Routes) != 6 {
+		t.Fatalf("expected 6 routes, got %d", len(r2Routes))
+	}
+
+	// Expected order: B (/api/v1/auth), C (/api/v1), F (/api, api.example.com, gold, POST), E (/api, api.example.com, gold, any), D (/api, api.example.com), A (/api, "")
+	if r2Routes[0].Prefix != "/api/v1/auth" {
+		t.Errorf("rank 0: expected /api/v1/auth, got %+v", r2Routes[0])
+	}
+	if r2Routes[1].Prefix != "/api/v1" {
+		t.Errorf("rank 1: expected /api/v1, got %+v", r2Routes[1])
+	}
+	if r2Routes[2].Prefix != "/api" || r2Routes[2].Host != "api.example.com" || r2Routes[2].Method != "POST" || len(r2Routes[2].Headers) != 1 {
+		t.Errorf("rank 2: expected Route F, got %+v", r2Routes[2])
+	}
+	if r2Routes[3].Prefix != "/api" || r2Routes[3].Host != "api.example.com" || r2Routes[3].Method != "" || len(r2Routes[3].Headers) != 1 {
+		t.Errorf("rank 3: expected Route E, got %+v", r2Routes[3])
+	}
+	if r2Routes[4].Prefix != "/api" || r2Routes[4].Host != "api.example.com" || len(r2Routes[4].Headers) != 0 {
+		t.Errorf("rank 4: expected Route D, got %+v", r2Routes[4])
+	}
+	if r2Routes[5].Prefix != "/api" || r2Routes[5].Host != "" {
+		t.Errorf("rank 5: expected Route A, got %+v", r2Routes[5])
+	}
+}
+
+func TestRouter_PrefixRouteSpec_MethodMatching(t *testing.T) {
+	postServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("post-handler"))
+	}))
+	defer postServer.Close()
+
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("fallback-handler"))
+	}))
+	defer fallbackServer.Close()
+
+	r := router.New()
+
+	// Single method route registration
+	spec := router.PrefixRouteSpec{
+		TargetType: router.RouteTypeUpstream,
+		Method:     "post",
+		Prefix:     "/submit",
+		Opts:       proxy.ProxyOptions{Targets: []string{postServer.URL}},
+	}
+	err := r.ReplacePrefixRoutesBySource("oci-discovery", []router.PrefixRouteSpec{spec})
+	if err != nil {
+		t.Fatalf("ReplacePrefixRoutesBySource failed: %v", err)
+	}
+
+	snaps := r.GetPrefixRoutes()
+	if len(snaps) != 1 || snaps[0].Method != "POST" {
+		t.Fatalf("expected 1 route with Method=POST, got %+v", snaps)
+	}
+
+	// POST /submit -> 200 OK
+	reqPost, _ := httpparser.NewRequest("POST", "/submit", "HTTP/1.1")
+	resPost := httpparser.NewResponse()
+	r.ServeHTTP(reqPost, resPost)
+	if resPost.StatusCode != http.StatusOK || resPost.Body.String() != "post-handler" {
+		t.Errorf("POST /submit failed: status %d, body %q", resPost.StatusCode, resPost.Body.String())
+	}
+
+	// GET /submit -> 405 Method Not Allowed
+	reqGet, _ := httpparser.NewRequest("GET", "/submit", "HTTP/1.1")
+	resGet := httpparser.NewResponse()
+	r.ServeHTTP(reqGet, resGet)
+	if resGet.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET /submit: expected 405, got %d", resGet.StatusCode)
+	}
+
+	// PUT /submit -> 405 Method Not Allowed
+	reqPut, _ := httpparser.NewRequest("PUT", "/submit", "HTTP/1.1")
+	resPut := httpparser.NewResponse()
+	r.ServeHTTP(reqPut, resPut)
+	if resPut.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("PUT /submit: expected 405, got %d", resPut.StatusCode)
+	}
+
+	// Method route with generic verb fallback
+	rFallback := router.New()
+	postRoute := router.PrefixRouteSpec{
+		TargetType: router.RouteTypeUpstream,
+		Method:     "POST",
+		Prefix:     "/items",
+		Opts:       proxy.ProxyOptions{Targets: []string{postServer.URL}},
+	}
+	anyRoute := router.PrefixRouteSpec{
+		TargetType: router.RouteTypeUpstream,
+		Method:     "",
+		Prefix:     "/items",
+		Opts:       proxy.ProxyOptions{Targets: []string{fallbackServer.URL}},
+	}
+	err = rFallback.ReplacePrefixRoutesBySource("oci-discovery", []router.PrefixRouteSpec{postRoute, anyRoute})
+	if err != nil {
+		t.Fatalf("ReplacePrefixRoutesBySource failed: %v", err)
+	}
+
+	// POST /items -> post-handler
+	reqItemsPost, _ := httpparser.NewRequest("POST", "/items", "HTTP/1.1")
+	resItemsPost := httpparser.NewResponse()
+	rFallback.ServeHTTP(reqItemsPost, resItemsPost)
+	if resItemsPost.StatusCode != http.StatusOK || resItemsPost.Body.String() != "post-handler" {
+		t.Errorf("POST /items: want 200 post-handler, got %d %q", resItemsPost.StatusCode, resItemsPost.Body.String())
+	}
+
+	// GET /items -> fallback-handler
+	reqItemsGet, _ := httpparser.NewRequest("GET", "/items", "HTTP/1.1")
+	resItemsGet := httpparser.NewResponse()
+	rFallback.ServeHTTP(reqItemsGet, resItemsGet)
+	if resItemsGet.StatusCode != http.StatusOK || resItemsGet.Body.String() != "fallback-handler" {
+		t.Errorf("GET /items: want 200 fallback-handler, got %d %q", resItemsGet.StatusCode, resItemsGet.Body.String())
+	}
+
+	// DELETE /items -> fallback-handler
+	reqItemsDel, _ := httpparser.NewRequest("DELETE", "/items", "HTTP/1.1")
+	resItemsDel := httpparser.NewResponse()
+	rFallback.ServeHTTP(reqItemsDel, resItemsDel)
+	if resItemsDel.StatusCode != http.StatusOK || resItemsDel.Body.String() != "fallback-handler" {
+		t.Errorf("DELETE /items: want 200 fallback-handler, got %d %q", resItemsDel.StatusCode, resItemsDel.Body.String())
+	}
+}
+

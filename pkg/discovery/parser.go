@@ -1,20 +1,26 @@
 package discovery
 
 import (
+	"encoding/json"
 	"strconv"
 	"strings"
+	"time"
 )
 
 const (
-	LabelEnable            = "toron.enable"
-	LabelHost              = "toron.host"
-	LabelPrefix            = "toron.prefix"
-	LabelPort              = "toron.port"
-	LabelWeight            = "toron.weight"
-	LabelHealthCheck       = "toron.health_check"
-	LabelStripPrefix       = "toron.strip_prefix"
-	LabelRewriteRedirects  = "toron.rewrite_redirects"
-	LabelRewriteCookiePath = "toron.rewrite_cookie_path"
+	LabelEnable              = "toron.enable"
+	LabelHost                = "toron.host"
+	LabelPrefix              = "toron.prefix"
+	LabelMethod              = "toron.method"
+	LabelHeaders             = "toron.headers"
+	LabelHeaderPrefix        = "toron.header."
+	LabelPort                = "toron.port"
+	LabelWeight              = "toron.weight"
+	LabelHealthCheck         = "toron.health_check"
+	LabelHealthCheckInterval = "toron.health_check_interval"
+	LabelStripPrefix         = "toron.strip_prefix"
+	LabelRewriteRedirects    = "toron.rewrite_redirects"
+	LabelRewriteCookiePath   = "toron.rewrite_cookie_path"
 )
 
 // ParseContainerLabels extracts Toron route configuration from container labels or annotations.
@@ -44,6 +50,91 @@ func ParseContainerLabels(container Container, defaultWeight int) (*DiscoveredRo
 	if prefix == "/internal" || strings.HasPrefix(prefix, "/internal/") ||
 		prefix == "/api/status" || strings.HasPrefix(prefix, "/api/status/") {
 		return nil, false
+	}
+
+	// Method Extraction (REQ-095-AC-02)
+	method := ""
+	if mVal, ok := container.Labels[LabelMethod]; ok {
+		method = strings.ToUpper(strings.TrimSpace(mVal))
+	}
+
+	// Headers Extraction (REQ-095-AC-02)
+	var headers map[string]string
+
+	// 1. Grouped headers label: toron.headers (CSV or JSON)
+	if rawHeaders, ok := container.Labels[LabelHeaders]; ok {
+		raw := strings.TrimSpace(rawHeaders)
+		if raw != "" {
+			if strings.HasPrefix(raw, "{") && strings.HasSuffix(raw, "}") {
+				var jsonMap map[string]string
+				if err := json.Unmarshal([]byte(raw), &jsonMap); err == nil {
+					if len(jsonMap) > 0 {
+						headers = make(map[string]string, len(jsonMap))
+						for k, v := range jsonMap {
+							kTrim := strings.TrimSpace(k)
+							if kTrim != "" {
+								headers[kTrim] = strings.TrimSpace(v)
+							}
+						}
+					}
+				} else {
+					// Fallback to comma-delimited parsing without panic
+					tokens := strings.Split(raw, ",")
+					for _, tok := range tokens {
+						tok = strings.TrimSpace(tok)
+						if tok == "" {
+							continue
+						}
+						parts := strings.SplitN(tok, "=", 2)
+						if len(parts) == 2 {
+							kTrim := strings.TrimSpace(parts[0])
+							if kTrim != "" {
+								if headers == nil {
+									headers = make(map[string]string)
+								}
+								headers[kTrim] = strings.TrimSpace(parts[1])
+							}
+						}
+					}
+				}
+			} else {
+				// Comma-delimited key=value
+				tokens := strings.Split(raw, ",")
+				for _, tok := range tokens {
+					tok = strings.TrimSpace(tok)
+					if tok == "" {
+						continue
+					}
+					parts := strings.SplitN(tok, "=", 2)
+					if len(parts) == 2 {
+						kTrim := strings.TrimSpace(parts[0])
+						if kTrim != "" {
+							if headers == nil {
+								headers = make(map[string]string)
+							}
+							headers[kTrim] = strings.TrimSpace(parts[1])
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// 2. Individual header labels: toron.header.<Name> (merge additively & override grouped headers)
+	for k, v := range container.Labels {
+		if strings.HasPrefix(k, LabelHeaderPrefix) {
+			hName := strings.TrimSpace(k[len(LabelHeaderPrefix):])
+			if hName != "" {
+				if headers == nil {
+					headers = make(map[string]string)
+				}
+				headers[hName] = strings.TrimSpace(v)
+			}
+		}
+	}
+
+	if len(headers) == 0 {
+		headers = nil
 	}
 
 	targetPort := 0
@@ -78,6 +169,13 @@ func ParseContainerLabels(container Container, defaultWeight int) (*DiscoveredRo
 	}
 
 	healthCheck := strings.TrimSpace(container.Labels[LabelHealthCheck])
+
+	var healthCheckInterval time.Duration
+	if hciStr := strings.TrimSpace(container.Labels[LabelHealthCheckInterval]); hciStr != "" {
+		if d, err := time.ParseDuration(hciStr); err == nil && d > 0 {
+			healthCheckInterval = d
+		}
+	}
 
 	var stripPrefix *bool
 	if spStr, ok := container.Labels[LabelStripPrefix]; ok {
@@ -126,16 +224,19 @@ func ParseContainerLabels(container Container, defaultWeight int) (*DiscoveredRo
 	}
 
 	return &DiscoveredRoute{
-		ContainerID:       container.ID,
-		ContainerName:     cName,
-		Host:              host,
-		Prefix:            prefix,
-		TargetIP:          ip,
-		TargetPort:        targetPort,
-		Weight:            weight,
-		HealthCheckPath:   healthCheck,
-		StripPrefix:       stripPrefix,
-		RewriteRedirects:  rewriteRedirects,
-		RewriteCookiePath: rewriteCookiePath,
+		ContainerID:         container.ID,
+		ContainerName:       cName,
+		Host:                host,
+		Prefix:              prefix,
+		Method:              method,
+		Headers:             headers,
+		TargetIP:            ip,
+		TargetPort:          targetPort,
+		Weight:              weight,
+		HealthCheckPath:     healthCheck,
+		HealthCheckInterval: healthCheckInterval,
+		StripPrefix:         stripPrefix,
+		RewriteRedirects:    rewriteRedirects,
+		RewriteCookiePath:   rewriteCookiePath,
 	}, true
 }

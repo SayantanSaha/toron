@@ -8,6 +8,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -173,9 +174,197 @@ type PrefixRouteSpec struct {
 	TargetType RouteType
 	Host       string
 	Prefix     string
+	Method     string
 	Headers    map[string]string
 	DirPath    string
 	Opts       proxy.ProxyOptions
+}
+
+// CanonicalHeaderString formats headers map into a deterministic sorted query-like string (k1=v1&k2=v2).
+func CanonicalHeaderString(headers map[string]string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			sb.WriteByte('&')
+		}
+		sb.WriteString(k)
+		sb.WriteByte('=')
+		sb.WriteString(headers[k])
+	}
+	return sb.String()
+}
+
+func comparePrefixRoutes(a, b prefixRoute) int {
+	// Tier 1: Prefix Length (Longest prefix first)
+	if len(a.prefix) != len(b.prefix) {
+		if len(a.prefix) > len(b.prefix) {
+			return -1
+		}
+		return 1
+	}
+
+	// Tier 2: Host Specificity (Explicit domain host before wildcard/empty)
+	aHasHost := a.host != ""
+	bHasHost := b.host != ""
+	if aHasHost != bHasHost {
+		if aHasHost {
+			return -1
+		}
+		return 1
+	}
+
+	// Tier 3: Header Specificity (More headers before fewer headers)
+	if len(a.headers) != len(b.headers) {
+		if len(a.headers) > len(b.headers) {
+			return -1
+		}
+		return 1
+	}
+
+	// Tier 4: Method Specificity (Explicit method before any-method)
+	aHasMethod := a.method != ""
+	bHasMethod := b.method != ""
+	if aHasMethod != bHasMethod {
+		if aHasMethod {
+			return -1
+		}
+		return 1
+	}
+
+	// Tier 5: Deterministic Tie-Breaking (Alphabetical)
+	if a.host != b.host {
+		if a.host < b.host {
+			return -1
+		}
+		return 1
+	}
+	if len(a.headers) > 0 || len(b.headers) > 0 {
+		aCanon := CanonicalHeaderString(a.headers)
+		bCanon := CanonicalHeaderString(b.headers)
+		if aCanon != bCanon {
+			if aCanon < bCanon {
+				return -1
+			}
+			return 1
+		}
+	}
+	if a.method != b.method {
+		if a.method < b.method {
+			return -1
+		}
+		return 1
+	}
+	if a.prefix != b.prefix {
+		if a.prefix < b.prefix {
+			return -1
+		}
+		return 1
+	}
+	if a.source != b.source {
+		if a.source < b.source {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+func sortPrefixRoutes(routes []prefixRoute) {
+	sort.SliceStable(routes, func(i, j int) bool {
+		return comparePrefixRoutes(routes[i], routes[j]) < 0
+	})
+}
+
+func comparePrefixRouteSpecs(a, b PrefixRouteSpec) int {
+	aPrefix := "/" + strings.Trim(a.Prefix, "/")
+	if aPrefix == "/" {
+		aPrefix = ""
+	}
+	bPrefix := "/" + strings.Trim(b.Prefix, "/")
+	if bPrefix == "/" {
+		bPrefix = ""
+	}
+	if len(aPrefix) != len(bPrefix) {
+		if len(aPrefix) > len(bPrefix) {
+			return -1
+		}
+		return 1
+	}
+
+	aHost := strings.ToLower(strings.TrimSpace(a.Host))
+	bHost := strings.ToLower(strings.TrimSpace(b.Host))
+	aHasHost := aHost != ""
+	bHasHost := bHost != ""
+	if aHasHost != bHasHost {
+		if aHasHost {
+			return -1
+		}
+		return 1
+	}
+
+	if len(a.Headers) != len(b.Headers) {
+		if len(a.Headers) > len(b.Headers) {
+			return -1
+		}
+		return 1
+	}
+
+	aMethod := strings.ToUpper(strings.TrimSpace(a.Method))
+	bMethod := strings.ToUpper(strings.TrimSpace(b.Method))
+	aHasMethod := aMethod != ""
+	bHasMethod := bMethod != ""
+	if aHasMethod != bHasMethod {
+		if aHasMethod {
+			return -1
+		}
+		return 1
+	}
+
+	// Tier 5: Deterministic Tie-Breaking
+	if aHost != bHost {
+		if aHost < bHost {
+			return -1
+		}
+		return 1
+	}
+	if len(a.Headers) > 0 || len(b.Headers) > 0 {
+		aCanon := CanonicalHeaderString(a.Headers)
+		bCanon := CanonicalHeaderString(b.Headers)
+		if aCanon != bCanon {
+			if aCanon < bCanon {
+				return -1
+			}
+			return 1
+		}
+	}
+	if aMethod != bMethod {
+		if aMethod < bMethod {
+			return -1
+		}
+		return 1
+	}
+	if aPrefix != bPrefix {
+		if aPrefix < bPrefix {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+// SortPrefixRouteSpecs sorts a slice of PrefixRouteSpec in descending order of specificity per ADR-005.
+func SortPrefixRouteSpecs(specs []PrefixRouteSpec) {
+	sort.SliceStable(specs, func(i, j int) bool {
+		return comparePrefixRouteSpecs(specs[i], specs[j]) < 0
+	})
 }
 
 func (r *Router) compilePrefixRoute(source string, spec PrefixRouteSpec) (prefixRoute, error) {
@@ -262,10 +451,13 @@ func (r *Router) compilePrefixRoute(source string, spec PrefixRouteSpec) (prefix
 		}
 	}
 
+	normMethod := strings.ToUpper(strings.TrimSpace(spec.Method))
+
 	return prefixRoute{
 		source:       cleanSource,
 		proxy:        px,
 		routeType:    string(normType),
+		method:       normMethod,
 		host:         strings.ToLower(strings.TrimSpace(spec.Host)),
 		prefix:       cleanPrefix,
 		headers:      spec.Headers,
@@ -293,6 +485,7 @@ func (r *Router) RoutePrefixWithSource(source string, targetType RouteType, host
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.prefixRoutes = append(r.prefixRoutes, pr)
+	sortPrefixRoutes(r.prefixRoutes)
 	return nil
 }
 
@@ -337,6 +530,7 @@ func (r *Router) ReplacePrefixRoutesBySource(source string, specs []PrefixRouteS
 		}
 	}
 	r.prefixRoutes = append(retained, compiledRoutes...)
+	sortPrefixRoutes(r.prefixRoutes)
 	r.mu.Unlock()
 
 	// 3. For evicted routes with matching source, invoke pr.proxy.Close() if pr.proxy != nil.
@@ -373,6 +567,7 @@ func (r *Router) HandlePrefixWithMatcher(method, host, prefix string, headers ma
 		headers:   headers,
 		handler:   handler,
 	})
+	sortPrefixRoutes(r.prefixRoutes)
 }
 
 // Proxy registers a URL prefix to reverse proxy incoming requests to an upstream target URL string.
@@ -685,6 +880,9 @@ func (r *Router) ShouldRedirectHTTP(req *httpparser.Request) bool {
 	for i := range r.prefixRoutes {
 		pr := &r.prefixRoutes[i]
 		if pr.prefix == "" || strings.HasPrefix(reqPath, pr.prefix+"/") || reqPath == pr.prefix {
+			if pr.method != "" && !strings.EqualFold(pr.method, req.Method) {
+				continue
+			}
 			if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
 				if pr.redirectHTTP != nil && !*pr.redirectHTTP {
 					return false
@@ -834,6 +1032,7 @@ type RouteSnapshot struct {
 	Type    string            `json:"type"`
 	Host    string            `json:"host,omitempty"`
 	Prefix  string            `json:"prefix"`
+	Method  string            `json:"method,omitempty"`
 	Headers map[string]string `json:"headers,omitempty"`
 }
 
@@ -853,6 +1052,7 @@ func (r *Router) GetPrefixRoutes() []RouteSnapshot {
 			Type:    rType,
 			Host:    pr.host,
 			Prefix:  pr.prefix,
+			Method:  pr.method,
 			Headers: pr.headers,
 		})
 	}

@@ -1,5 +1,69 @@
 # Release Notes
 
+## 2026-09-11 - Toron v1.5.15 Security Release (SEC-34: Composite Route Key Grouping, Multi-Replica Target Aggregation, and Specificity-Based Route Lifecycle in OCI Discovery Engine)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-34 (`pkg/discovery`, `pkg/router`)**: Successfully resolved Medium-severity premature route deletion, denial-of-service outage on replica scale-down, single-replica traffic starvation, route shadowing, and routing dimension collision vulnerability [`SEC-34`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L465-L473) ([CWE-400](https://cwe.mitre.org/data/definitions/400.html), [CWE-284](https://cwe.mitre.org/data/definitions/284.html), [CWE-662](https://cwe.mitre.org/data/definitions/662.html), [CWE-775](https://cwe.mitre.org/data/definitions/775.html), [`SR-091 Finding 4`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md#L154-L171), [`SR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-095.md), [`CR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-091.md)) in the OCI Container Auto-Discovery Engine and Core Router.
+- **4-Dimensional Route Partitioning via `CompositeRouteKey` (`pkg/discovery/manager.go`)**: Established multi-dimensional route partitioning based on a 4-tuple `CompositeRouteKey = (Host, CleanPrefix, Method, CanonicalHeaders)`. Containers sharing identical host and prefix but possessing different HTTP methods or header rules (such as Canary deployments with `X-Version: canary` vs baseline deployments, or `POST` vs `GET`) produce distinct composite keys, preventing variant collisions and cross-tenant traffic leakage ([`TASK-118`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-118.md), [`REQ-095`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-095.md), [`ADR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-095.md)).
+- **Deterministic Alphabetical Header Canonicalization**: Solved Go's pseudo-random `map[string]string` iteration non-determinism by sorting header keys alphabetically (`sort.Strings(keys)`) and serializing them into a canonical query-string representation (`key1=val1&key2=val2`). Guarantees invariant composite key strings across reconciliation passes and eliminates false route churn.
+- **Multi-Replica Target Aggregation & Fair Round-Robin Load Balancing (`pkg/discovery/manager.go`, `pkg/proxy/proxy.go`)**: Aggregated container replicas sharing an identical `CompositeRouteKey` into a unified multi-target `PrefixRouteSpec` using [`RoundRobinBalancer`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L30). Eliminated the prior single-pod overload defect (where linear first-match prefix search sent 100% load to replica #1) and distributes traffic evenly ($\approx 1/M$ per replica) across all active instances.
+- **Non-Destructive Partial Scale-Down (Zero-Downtime Guarantee)**: Eliminated the critical bug where stopping 1 container replica triggered `RemovePrefixRoute` and purged all prefix routes for that service. The discovery engine now recalculates `desiredSpecs` across surviving replicas and performs atomic source-scoped replacement via `router.ReplacePrefixRoutesBySource("oci-discovery", desiredSpecs)`. Stopping 1 replica out of $M$ updates the target list to $M-1$ in place with **zero HTTP 404 errors**, zero connection drops, and zero transient downtime.
+- **ADR-005 Specificity-Based Route Ordering & Anti-Shadowing (`pkg/router/router.go`)**: Enforced a strict 5-tier specificity hierarchy (Longest prefix $\to$ Specific host $\to$ Header constraint count $\to$ Method constraint $\to$ Deterministic tie-break). Unconstrained fallback routes can never shadow more specific canary or method-gated routes, regardless of container discovery arrival or registration order.
+- **Declarative Method Matching Support in Prefix Routing**: Added first-class `Method string` support to [`PrefixRouteSpec`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go#L172-L179), normalizing uppercase verbs and rejecting mismatched verbs with HTTP `405 Method Not Allowed` or falling through to method-compatible routes.
+- **Clean Reverse Proxy & Health Check Teardown**: Evicted routes automatically invoke `pr.proxy.Close()` out of write lock, terminating active background health check ticker goroutines (`StopActiveHealthCheck`) and closing idle TCP connection sockets, eliminating socket descriptor (`EMFILE`) and goroutine leaks.
+- **Zero External Dependencies**: Implemented strictly with the Go standard library (`sync`, `net/http`, `net/url`, `sort`, `strings`, `encoding/json`, `time`, `context`), keeping `go.mod` and `go.sum` with 0 diffs.
+- **Comprehensive Automated Verification Suite (`TC-095`)**: Validated model and label parsing, deterministic composite key generation, multi-replica target aggregation, non-destructive partial scale-down, distinct canary variant separation, ADR-005 specificity ordering without canary shadowing, declarative method matching, atomic eviction teardown, and high-concurrency race cleanliness under `go test -race` ([`TASK-118`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-118.md), [`TC-095`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-095.md)).
+
+### Fixed
+- **Premature Route Deletion & Total Outage on Replica Stop (`SEC-34`, CWE-662, CWE-284)**: Fixed bug where stopping or restarting a single container replica called `RemovePrefixRoute`, which deleted ALL routes sharing `(host, prefix)`, inducing an immediate total outage (HTTP 404) for all surviving healthy replicas.
+- **Horizontal Scaling Defeat & Single-Pod Overload (`SEC-34`, CWE-400)**: Fixed issue where containers were registered as independent single-target routes, causing router first-match prefix search to route 100% of requests to replica #1 and starve replicas #2..$M$.
+- **Routing Dimension Blindness & Canary Collisions**: Fixed inability to route based on HTTP headers and methods in container discovery, preventing canary containers from being merged with baseline containers or overwriting baseline routes.
+- **Route Shadowing via Arbitrary Insertion Order**: Fixed router evaluation order to enforce ADR-005 specificity ranking, preventing broad generic routes from intercepting requests destined for specific canary routes.
+- **Reverse Proxy and Health Check Resource Leaks (`SEC-34`, CWE-775)**: Fixed resource leaks where evicted container routes left reverse proxy health checkers running in background goroutines.
+
+### Changed
+- **Discovered Route Model (`pkg/discovery/provider.go`)**: Extended `DiscoveredRoute` struct with `Method string` and `Headers map[string]string`. Updated `ActiveRoutes()` snapshot method to expose these fields for telemetry.
+- **Label Parser (`pkg/discovery/parser.go`)**: Enhanced `ParseContainerLabels` to extract `toron.method`, individual `toron.header.<Name>`, and grouped `toron.headers` (CSV and JSON formats) with additive merging, override precedence, and graceful panic-free fallback.
+- **Discovery Manager Reconciliation (`pkg/discovery/manager.go`)**:
+  - Replaced incremental `RoutePrefix` / `RemovePrefixRoute` calls with atomic declarative reconciliation using `m.router.ReplacePrefixRoutesBySource("oci-discovery", desiredSpecs)`.
+  - Partitioned active containers using `CompositeRouteKey` with deterministic header canonicalization.
+  - Aggregated multi-replica target URLs into unified round-robin reverse proxy configurations.
+  - Implemented lock-inversion-free synchronization (`m.mu` released prior to router invocation).
+- **Router Prefix Routing Engine (`pkg/router/router.go`)**:
+  - Extended `PrefixRouteSpec` with `Method string`.
+  - Implemented 5-tier specificity sorting (`comparePrefixRoutes`, `comparePrefixRouteSpecs`, `SortPrefixRouteSpecs`).
+  - Added out-of-lock reverse proxy teardown on evicted routes (`pr.proxy.Close()`).
+  - Exposed `Method` in `RouteSnapshot` for administrative and telemetry parity.
+
+### Added
+- **Container Discovery Labels (`pkg/discovery/parser.go`)**:
+  - Added `toron.method` label for HTTP method constraint routing.
+  - Added `toron.header.<Name>` and `toron.headers` labels for HTTP header constraint routing.
+  - Added `toron.health_check_interval` label for configurable health check probing frequency.
+- **Router Sorting & Declarative API (`pkg/router/router.go`)**:
+  - Added `SortPrefixRouteSpecs` public helper function.
+  - Added `Method` field to `PrefixRouteSpec` and `RouteSnapshot`.
+- **Automated Verification Suites (`pkg/discovery/discovery_test.go`, `pkg/router/router_test.go`)**:
+  - `TestParseContainerLabels_MethodAndHeaders` (TC-095-01): Verifies parsing of method, header labels, CSV and JSON formats, overrides, and fallbacks.
+  - `TestDiscoveryManager_CompositeRouteKeyCanonicalization` (TC-095-02): Verifies deterministic 4D composite route keys and map iteration independence.
+  - `TestDiscoveryManager_CompositeRouteKeyAggregation` (TC-095-03): Verifies multi-replica target aggregation, deduplication, and round-robin balancing across replicas.
+  - `TestDiscoveryManager_NonDestructivePartialScaleDown` (TC-095-04): Verifies zero-downtime partial scale-down with continuous traffic forwarding on remaining replicas.
+  - `TestDiscoveryManager_DistinctVariantCanarySeparation` (TC-095-05): Verifies strict target isolation between baseline and canary deployments.
+  - `TestRouter_SpecificityOrdering_NoCanaryShadowing` (TC-095-06): Verifies ADR-005 5-tier specificity hierarchy and anti-shadowing proof.
+  - `TestRouter_PrefixRouteSpec_MethodMatching` (TC-095-07): Verifies declarative method matching and 405 / fallback routing.
+  - `TestDiscoveryManager_AtomicReplacementLifecycle` (TC-095-08): Verifies atomic route eviction and clean reverse proxy teardown.
+  - `TestDiscoveryManager_ConcurrentLifecycleAndRouting_RaceClean` (TC-095-09): High-concurrency test running background container churn against parallel client traffic, clean under `go test -race`.
+
+### Related Tasks & Requirements
+- [`TASK-118`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-118.md): Composite Route Key Grouping, Multi-Replica Target Aggregation, and Specificity-Based Route Lifecycle
+- [`REQ-095`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-095.md): Composite Route Key Grouping, Multi-Replica Target Aggregation, and Specificity-Based Route Lifecycle in OCI Discovery Engine
+- [`ADR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-095.md): Composite Route Key Grouping, Multi-Replica Target Aggregation, and Specificity-Based Route Lifecycle in OCI Discovery Engine
+- [`ADR-005`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-005.md): Route Specificity and Path Matching Precedence
+- [`TC-095`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-095.md): Verification of Composite Route Key Grouping, Multi-Replica Target Aggregation, and Specificity-Based Route Lifecycle in OCI Discovery Engine
+- [`CR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-091.md): Code Review of Composite Route Key Grouping, Multi-Replica Target Aggregation, and Specificity-Based Route Lifecycle in OCI Discovery Engine
+- [`SR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-095.md): Security Review and Vulnerability Assessment of SEC-34 Remediation
+- [`SEC-34`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L465-L473): Premature Route Deletion & Load-Balancing Failure Across Multi-Replica Containers in OCI Discovery Engine
+
 ## 2026-09-10 - Toron v1.5.14 Security Release (SEC-33: Bounded Route Table Lifecycle, Atomic Route Replacement, and Multi-Target Pod Aggregation in Kubernetes Ingress Controller)
 
 ### Milestone Summary

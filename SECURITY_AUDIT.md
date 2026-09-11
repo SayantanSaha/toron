@@ -11,7 +11,7 @@
 
 This security audit report reflects the state of the Toron Web Server and Edge Gateway codebase following the complete remediation, testing, code review, and merging of all 30 prior security tasks (`TASK-061` through `TASK-110`, resolving `SEC-01` through `SEC-30`).
 
-A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 33 previously identified vulnerabilities (`SEC-01` through `SEC-33`) remain 100% verified and resolved. **5 remaining findings** (`SEC-34` through `SEC-38`) have been identified across peripheral and extended subsystem surfaces and are tracked below for remediation.
+A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 34 previously identified vulnerabilities (`SEC-01` through `SEC-34`) remain 100% verified and resolved. **4 remaining findings** (`SEC-35` through `SEC-38`) have been identified across peripheral and extended subsystem surfaces and are tracked below for remediation.
 
 ---
 
@@ -52,7 +52,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 | **P1** | **SEC-31** | Unauthenticated Client IP Spoofing & Security Bypass via Missing Physical RemoteAddr Binding in HTTP/2 and HTTP/3 Adapters | **High** | CWE-290, CWE-345, CWE-693 | **Resolved** | [`TASK-111`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-111.md)..[`113`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-113.md) | `TC-092 / SR-092` | Verified |
 | **P2** | **SEC-32** | Fail-Open WAF IP Access Control Bypass on Unidentifiable Client IP | **Medium** | CWE-284, CWE-1188, CWE-693 | **Resolved** | [`TASK-114`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-114.md)..[`115`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-115.md) | `TC-093 / SR-093` | Verified |
 | **P1** | **SEC-33** | Unbounded Routing Table Memory Leak & Zombie Route Persistence in Kubernetes Ingress Controller | **High** | CWE-400, CWE-670 | **Resolved** | [`TASK-116`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-116.md)..[`117`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-117.md) | `TC-094 / SR-094, CR-090` | Verified |
-| **P2** | **SEC-34** | Premature Route Deletion & Load-Balancing Failure Across Multi-Replica Containers in OCI Discovery Engine | **Medium** | CWE-400, CWE-284, CWE-662 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
+| **P2** | **SEC-34** | Premature Route Deletion & Load-Balancing Failure Across Multi-Replica Containers in OCI Discovery Engine | **Medium** | CWE-400, CWE-284, CWE-662, CWE-775 | **Resolved** | [`TASK-118`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-118.md) | `TC-095 / SR-095, CR-091` | Verified |
 | **P1** | **SEC-35** | Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration | **High** | CWE-295 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
 | **P2** | **SEC-36** | Memory Exhaustion via Unbounded Upstream Response Buffering in Internal API Proxy Test Probe | **Medium** | CWE-400, CWE-770 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
 | **P2** | **SEC-37** | Unbounded HTTP Client & Transport Allocation per Request in Service Mesh Sidecar Proxy | **Medium** | CWE-400, CWE-772 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
@@ -464,12 +464,19 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 
 #### SEC-34: Premature Route Deletion & Load-Balancing Failure Across Multi-Replica Containers in OCI Discovery Engine
 - **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H - Score 7.5)
-- **Location**: [`pkg/discovery/manager.go:L207-L256`](file:///Users/sneha/Developer/toron-research/toron/pkg/discovery/manager.go#L207-L256), [`pkg/router/router.go:L755-L773`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go#L755-L773)
-- **CWE**: CWE-400, CWE-284, CWE-662
+- **Location**: [`pkg/discovery/manager.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/discovery/manager.go), [`pkg/discovery/parser.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/discovery/parser.go), [`pkg/discovery/provider.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/discovery/provider.go), [`pkg/router/router.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go)
+- **CWE**: CWE-400, CWE-284, CWE-662, CWE-775
 - **Root Cause**:  
-  Multi-replica containers sharing `(host, prefix)` are registered as separate prefix routes rather than aggregated into a single multi-target load balancer. When one container stops, `handleContainerStop` calls `RemovePrefixRoute`, which deletes ALL routes for that `(host, prefix)`.
-- **Impact**: Stopping or restarting a single container replica immediately drops all traffic (404) for all other running replicas of the service.
-- **Remediation**: Aggregate targets across active container replicas matching `(host, prefix)` in `discovery.Manager`, updating the router's load balancer atomically on container start/stop events.
+  Multi-replica containers sharing `(host, prefix)` were registered as separate, single-target prefix routes rather than aggregated into a single multi-target load balancer. When one container stopped, `handleContainerStop` called `RemovePrefixRoute`, which deleted ALL routes for that `(host, prefix)`, inducing an immediate total outage (HTTP 404). Furthermore, discovery lacked HTTP method and header label parsing, risking canary variant collisions and route shadowing.
+- **Impact**: Stopping or restarting a single container replica immediately dropped all traffic (HTTP 404) for all other running healthy replicas. In addition, router first-match prefix search dispatched 100% of traffic to the first replica and starved replicas #2..$M$, defeating horizontal scaling.
+- **Remediation**: Aggregate targets across active container replicas matching `CompositeRouteKey` in `discovery.Manager`, update the router atomically using `ReplacePrefixRoutesBySource("oci-discovery", ...)`, enforce ADR-005 specificity ordering, and cleanly teardown evicted reverse proxy instances.
+- **Resolution Details**: Fully resolved under [`REQ-095`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-095.md), [`ADR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-095.md), and [`TASK-118`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-118.md). Eliminated all identified failure modes:
+  1. *Premature Route Deletion & Total Outage Elimination (CWE-662, CWE-284)*: Replaced incremental `RemovePrefixRoute` calls with declarative reconciliation via [`ReplacePrefixRoutesBySource("oci-discovery", desiredSpecs)`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go). Stopping 1 replica of an $M$-replica service recalculates the desired specification across the surviving $M-1$ replicas and swaps the load balancer in place, guaranteeing zero HTTP 404 errors, zero dropped connections, and uninterrupted traffic delivery.
+  2. *Multi-Replica Target Aggregation & Fair Load Balancing (CWE-400)*: Grouped container replicas sharing an identical composite key into a unified multi-target `PrefixRouteSpec` using [`RoundRobinBalancer`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L30), distributing load evenly ($\approx 1/M$ per replica) across all active instances and restoring horizontal scaling.
+  3. *Multi-Dimensional Partitioning via `CompositeRouteKey`*: Implemented 4-tuple partitioning `(Host, CleanPrefix, Method, CanonicalHeaders)` with deterministic alphabetical header sorting, strictly segregating canary deployments (`X-Version: canary`) from baseline traffic pools and eliminating route churn from Go map iteration non-determinism.
+  4. *ADR-005 Specificity-Based Route Ordering*: Enforced a 5-tier specificity hierarchy (Longest prefix $\to$ Specific host $\to$ Header constraint count $\to$ Method constraint $\to$ Deterministic tie-break), ensuring generic fallback routes never shadow specific canary or method-constrained routes.
+  5. *Resource Leak Elimination on Route Eviction (CWE-775)*: Evicted routes cleanly invoke `pr.proxy.Close()`, stopping active background health check tickers (`StopActiveHealthCheck`) and closing idle TCP connection pools.
+  Verified by comprehensive automated verification suite [`TC-095`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-095.md), reviewed and approved in [`CR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-091.md) and [`SR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-095.md).
 
 #### SEC-35: Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration
 - **Severity**: **High** (CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N - Score 8.1)
@@ -550,7 +557,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
   1. [x] Bind physical `RemoteAddr` in HTTP/2 and HTTP/3 adapters and eliminate header spoofing (`SEC-31`) - **COMPLETED** (`TASK-111`..`113`, `TC-092`, `SR-092`, `CR-088`).
   2. [x] Enforce fail-closed access control on unidentifiable client IPs in WAF (`SEC-32`) - **COMPLETED** (`TASK-114`..`115`, `TC-093`, `SR-093`, `CR-089`).
   3. [x] Prune deleted Ingress routes and prevent routing table growth in K8s Ingress Controller (SEC-33) - **COMPLETED** (TASK-116..117, TC-094, SR-094, CR-090).
-  4. [ ] Aggregate multi-replica upstreams and prevent premature route deletion in OCI Discovery (`SEC-34`).
+  4. [x] Aggregate multi-replica upstreams and prevent premature route deletion in OCI Discovery (`SEC-34`) - **COMPLETED** (`TASK-118`, `TC-095`, `SR-095`, `CR-091`).
   5. [ ] Remove insecure default `InsecureSkipVerify = true` in Sidecar Client TLS (`SEC-35`).
   6. [ ] Bound response body ingestion in `/internal/api/proxy-test` probe (`SEC-36`).
   7. [ ] Pool and reuse `http.Transport` instances in Service Mesh Sidecar Proxy (`SEC-37`).
@@ -560,7 +567,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 
 ## 5. Remediation Status & Verification Summary
 
-33 security vulnerabilities (`SEC-01` through `SEC-33`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
+34 security vulnerabilities (`SEC-01` through `SEC-34`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 - **`SEC-23`**: Verified in `TC-084` (`TASK-084`..`086`, `defc678`).
@@ -574,7 +581,8 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 - **`SEC-31`**: Verified in `TC-092` (`TASK-111`..`113`, `SR-092`, `CR-088`).
 - **`SEC-32`**: Verified in `TC-093` (`TASK-114`..`115`, `SR-093`, `CR-089`).
 - **`SEC-33`**: Verified in `TC-094` (`TASK-116`..`117`, `SR-094`, `CR-090`).
+- **`SEC-34`**: Verified in `TC-095` (`TASK-118`, `SR-095`, `CR-091`).
 
-All 33 vulnerabilities (`SEC-01` through `SEC-33`) remain 100% verified and resolved. **5 remaining findings** (`SEC-34` through `SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems are tracked below for remediation.
+All 34 vulnerabilities (`SEC-01` through `SEC-34`) remain 100% verified and resolved. **4 remaining findings** (`SEC-35` through `SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems are tracked below for remediation.
 
 

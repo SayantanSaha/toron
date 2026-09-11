@@ -19,6 +19,7 @@ benchmarks/
 │       └── post_payload.lua      # JSON POST payload ingestion script
 └── fuzzer/                       # Differential protocol security evaluation
     ├── diff_fuzzer.go            # Protocol invariant test engine & raw socket fuzzer
+    ├── diff_fuzzer_test.go       # Unit tests for socket termination verification & latency isolation
     └── run_fuzzer.sh             # Differential fuzzer execution script
 ```
 

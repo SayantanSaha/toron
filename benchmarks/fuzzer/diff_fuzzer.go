@@ -3,11 +3,14 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -232,6 +235,63 @@ func getTestCases() []TestCase {
 	}
 }
 
+// isConnectionClosedErr returns true if the error indicates peer closure, reset, or broken pipe.
+func isConnectionClosedErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, syscall.EPIPE) {
+		return true
+	}
+	errStr := strings.ToLower(err.Error())
+	return strings.Contains(errStr, "connection reset") ||
+		strings.Contains(errStr, "broken pipe") ||
+		strings.Contains(errStr, "closed network connection") ||
+		strings.Contains(errStr, "eof")
+}
+
+// verifySocketClosed actively verifies whether the remote TCP socket was physically closed.
+func verifySocketClosed(conn net.Conn, reader *bufio.Reader) bool {
+	if conn == nil {
+		return true
+	}
+
+	// Phase 1: Drain remaining response bytes (headers/body) under a bounded read deadline
+	_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+	buf := make([]byte, 1024)
+	for {
+		_, err := reader.Read(buf)
+		if err != nil {
+			if errors.Is(err, io.EOF) || isConnectionClosedErr(err) {
+				return true
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				// Reading timed out while socket remains open; proceed to probe
+				break
+			}
+			return true
+		}
+	}
+
+	// Phase 2: Attempt a subsequent probe write to test for TCP half-close or reset
+	_ = conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+	if _, err := conn.Write([]byte("\r\n")); err != nil {
+		return true
+	}
+
+	// Read again after write to observe peer TCP RST or EOF
+	_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	_, err := reader.Read(buf)
+	if err != nil {
+		if errors.Is(err, io.EOF) || isConnectionClosedErr(err) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func executeRawTest(targetHost string, tc TestCase) TestResult {
 	result := TestResult{
 		TestCaseID: tc.ID,
@@ -303,9 +363,15 @@ func executeRawTest(targetHost string, tc TestCase) TestResult {
 		}
 	}
 
+	// Actively verify whether the TCP socket was physically terminated
+	result.ConnectionClose = verifySocketClosed(conn, reader)
+
 	if !statusMatch {
 		result.Passed = false
 		result.FailureReason = fmt.Sprintf("Received status %d, expected one of %v", code, tc.ExpectedStatus)
+	} else if tc.ExpectClose && !result.ConnectionClose {
+		result.Passed = false
+		result.FailureReason = fmt.Sprintf("Received status %d, but connection remained open (expected physical teardown)", code)
 	} else {
 		result.Passed = true
 	}
@@ -356,15 +422,19 @@ func main() {
 
 		cat := categoryStats[tc.Category]
 		cat.Total++
+		connState := "conn:open"
+		if res.ConnectionClose {
+			connState = "conn:closed"
+		}
 		if res.Passed {
 			cat.Passed++
 			passedCount++
-			fmt.Printf(" [PASS] %-14s | %-40s | %d (%s) [%d µs]\n",
-				tc.ID, tc.Name, res.ActualStatus, tc.CWE, res.LatencyUs)
+			fmt.Printf(" [PASS] %-14s | %-40s | %d (%s) [%s] [%d µs]\n",
+				tc.ID, tc.Name, res.ActualStatus, tc.CWE, connState, res.LatencyUs)
 		} else {
 			cat.Failed++
-			fmt.Printf(" [FAIL] %-14s | %-40s | Received %d (%s)\n",
-				tc.ID, tc.Name, res.ActualStatus, res.FailureReason)
+			fmt.Printf(" [FAIL] %-14s | %-40s | Received %d [%s] (%s)\n",
+				tc.ID, tc.Name, res.ActualStatus, connState, res.FailureReason)
 		}
 		categoryStats[tc.Category] = cat
 	}
@@ -434,15 +504,23 @@ func main() {
 			md.WriteString(fmt.Sprintf("| %s | %d | %d | %d | %.1f%% |\n", catName, st.Total, st.Passed, st.Failed, rate))
 		}
 		md.WriteString("\n## 2. Detailed Invariant Test Results\n\n")
-		md.WriteString("| Test ID | Attack / Invariant Vector | CWE | Expected Status | Actual Status | Fail-Fast Latency | Result |\n")
-		md.WriteString("| :--- | :--- | :---: | :---: | :---: | :---: | :---: |\n")
+		md.WriteString("| Test ID | Attack / Invariant Vector | CWE | Expected Status | Actual Status | Conn Closed | Fail-Fast Latency | Result |\n")
+		md.WriteString("| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n")
 		for _, r := range report.Results {
 			statusIcon := "✅ PASS"
 			if !r.Passed {
 				statusIcon = "❌ FAIL"
 			}
-			md.WriteString(fmt.Sprintf("| `%s` | %s | %s | `400/501` | `%d` | `%d µs` | %s |\n",
-				r.TestCaseID, r.Name, r.CWE, r.ActualStatus, r.LatencyUs, statusIcon))
+			connIcon := "Open"
+			if r.ConnectionClose {
+				connIcon = "Closed"
+			}
+			expectedStr := "400/501"
+			if r.TestCaseID == "BASELINE-001" {
+				expectedStr = "200"
+			}
+			md.WriteString(fmt.Sprintf("| `%s` | %s | %s | `%s` | `%d` | `%s` | `%d µs` | %s |\n",
+				r.TestCaseID, r.Name, r.CWE, expectedStr, r.ActualStatus, connIcon, r.LatencyUs, statusIcon))
 		}
 
 		_ = os.WriteFile(*outMD, []byte(md.String()), 0644)

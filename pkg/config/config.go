@@ -101,17 +101,18 @@ type IngressConfig struct {
 
 // SidecarConfig captures Service Mesh Sidecar proxy mode settings.
 type SidecarConfig struct {
-	Enabled       bool                `yaml:"enabled" json:"enabled"`
-	Mode          string              `yaml:"mode" json:"mode"` // "ingress", "egress", "dual"
-	IngressPort   int                 `yaml:"ingress_port" json:"ingress_port"`
-	EgressPort    int                 `yaml:"egress_port" json:"egress_port"`
-	AppPort       int                 `yaml:"app_port" json:"app_port"`
-	MaxBodyBytes  int64               `yaml:"max_body_bytes" json:"max_body_bytes"`
-	StrictmTLS    bool                `yaml:"strict_mtls" json:"strict_mtls"`
-	CertFile      string              `yaml:"cert_file" json:"cert_file"`
-	KeyFile       string              `yaml:"key_file" json:"key_file"`
-	CAFile        string              `yaml:"ca_file" json:"ca_file"`
-	TrafficSplits []TrafficSplitRoute `yaml:"traffic_splits" json:"traffic_splits"`
+	Enabled            bool                `yaml:"enabled" json:"enabled"`
+	Mode               string              `yaml:"mode" json:"mode"` // "ingress", "egress", "dual"
+	IngressPort        int                 `yaml:"ingress_port" json:"ingress_port"`
+	EgressPort         int                 `yaml:"egress_port" json:"egress_port"`
+	AppPort            int                 `yaml:"app_port" json:"app_port"`
+	MaxBodyBytes       int64               `yaml:"max_body_bytes" json:"max_body_bytes"`
+	StrictmTLS         bool                `yaml:"strict_mtls" json:"strict_mtls"`
+	CertFile           string              `yaml:"cert_file" json:"cert_file"`
+	KeyFile            string              `yaml:"key_file" json:"key_file"`
+	CAFile             string              `yaml:"ca_file" json:"ca_file"`
+	InsecureSkipVerify bool                `yaml:"insecure_skip_verify" json:"insecure_skip_verify"`
+	TrafficSplits      []TrafficSplitRoute `yaml:"traffic_splits" json:"traffic_splits"`
 }
 
 // TrafficSplitRoute captures subpath weighted traffic splitting (canary releases).
@@ -575,7 +576,8 @@ func DefaultAppConfig() *AppConfig {
 			Routes:  []ProxyRouteConfig{},
 		},
 		Sidecar: SidecarConfig{
-			MaxBodyBytes: 10 * 1024 * 1024,
+			MaxBodyBytes:       10 * 1024 * 1024,
+			InsecureSkipVerify: false,
 		},
 		Transcoder: TranscoderConfig{
 			MaxBodyBytes: 4 * 1024 * 1024,

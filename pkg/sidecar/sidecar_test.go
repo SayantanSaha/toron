@@ -3,12 +3,22 @@ package sidecar
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"io"
+	"log"
+	"math/big"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -75,6 +85,9 @@ func TestBuildTLSConfig(t *testing.T) {
 
 	if clientTLS == nil {
 		t.Fatalf("clientTLS should not be nil")
+	}
+	if clientTLS.InsecureSkipVerify {
+		t.Errorf("expected InsecureSkipVerify to be false by default, got true")
 	}
 }
 
@@ -859,6 +872,606 @@ func TestTC086_06_HighConcurrencyRaceSafety(t *testing.T) {
 	}
 	if upstreamGet := getCount.Load(); upstreamGet != numPerCategory {
 		t.Errorf("expected %d GETs at upstream, got %d", numPerCategory, upstreamGet)
+	}
+}
+
+// --- TC-097: Verification of Strict Sidecar Client TLS Validation ---
+
+func generateTestCA(t *testing.T) ([]byte, *x509.Certificate, *rsa.PrivateKey) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate CA private key: %v", err)
+	}
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		t.Fatalf("failed to generate serial number: %v", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"Toron Test CA"},
+			CommonName:   "Toron Root CA",
+		},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("failed to create CA certificate: %v", err)
+	}
+
+	caCert, err := x509.ParseCertificate(derBytes)
+	if err != nil {
+		t.Fatalf("failed to parse CA certificate: %v", err)
+	}
+
+	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	return caPEM, caCert, priv
+}
+
+func generateSignedServerCert(t *testing.T, caCert *x509.Certificate, caKey *rsa.PrivateKey, hosts ...string) ([]byte, []byte, tls.Certificate) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate server private key: %v", err)
+	}
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		t.Fatalf("failed to generate serial number: %v", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"Toron Test Server"},
+			CommonName:   "localhost",
+		},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+
+	for _, h := range hosts {
+		if ip := net.ParseIP(h); ip != nil {
+			template.IPAddresses = append(template.IPAddresses, ip)
+		} else {
+			template.DNSNames = append(template.DNSNames, h)
+		}
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, caCert, &priv.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("failed to create server certificate: %v", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyBytes := x509.MarshalPKCS1PrivateKey(priv)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
+
+	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("failed to create tls.Certificate: %v", err)
+	}
+
+	return certPEM, keyPEM, tlsCert
+}
+
+func generateClientCert(t *testing.T) ([]byte, []byte) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate client private key: %v", err)
+	}
+
+	serialNumberLimit := new(big.Int).Lsh(big.NewInt(1), 128)
+	serialNumber, err := rand.Int(rand.Reader, serialNumberLimit)
+	if err != nil {
+		t.Fatalf("failed to generate serial number: %v", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"Toron Test Client"},
+			CommonName:   "client",
+		},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		t.Fatalf("failed to create client certificate: %v", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyBytes := x509.MarshalPKCS1PrivateKey(priv)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
+
+	return certPEM, keyPEM
+}
+
+// TC-097-01: Default Configuration Enforces Strict Validation (InsecureSkipVerify == false, RootCAs == nil)
+func TestBuildClientTLSConfig_DefaultSecure(t *testing.T) {
+	testCases := []struct {
+		name string
+		cfg  config.SidecarConfig
+	}{
+		{
+			name: "1.1 Zero-Value Struct",
+			cfg:  config.SidecarConfig{},
+		},
+		{
+			name: "1.2 Default Config",
+			cfg:  config.DefaultAppConfig().Sidecar,
+		},
+		{
+			name: "1.3 Egress Mode Omitted CA",
+			cfg: config.SidecarConfig{
+				Enabled: true,
+				Mode:    "egress",
+				CAFile:  "",
+			},
+		},
+		{
+			name: "1.4 Explicit False",
+			cfg: config.SidecarConfig{
+				InsecureSkipVerify: false,
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			tlsConfig, err := BuildClientTLSConfig(tc.cfg)
+			if err != nil {
+				t.Fatalf("unexpected error from BuildClientTLSConfig: %v", err)
+			}
+			if tlsConfig == nil {
+				t.Fatalf("expected non-nil *tls.Config")
+			}
+			if tlsConfig.InsecureSkipVerify != false {
+				t.Errorf("expected InsecureSkipVerify == false, got %v", tlsConfig.InsecureSkipVerify)
+			}
+			if tlsConfig.RootCAs != nil {
+				t.Errorf("expected RootCAs == nil for system trust root fallback, got %v", tlsConfig.RootCAs)
+			}
+			if tlsConfig.MinVersion != tls.VersionTLS12 {
+				t.Errorf("expected MinVersion == tls.VersionTLS12 (0x%04x), got 0x%04x", tls.VersionTLS12, tlsConfig.MinVersion)
+			}
+		})
+	}
+}
+
+// TC-097-02: System Trust Store Fallback Handshake Rejection on Untrusted Server
+func TestSidecar_EgressTLS_HandshakeRejection(t *testing.T) {
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("should-not-reach"))
+	}))
+	defer upstream.Close()
+
+	tlsConfig, err := BuildClientTLSConfig(config.SidecarConfig{})
+	if err != nil {
+		t.Fatalf("BuildClientTLSConfig failed: %v", err)
+	}
+
+	if tlsConfig.InsecureSkipVerify {
+		t.Fatalf("expected InsecureSkipVerify == false")
+	}
+	if tlsConfig.RootCAs != nil {
+		t.Fatalf("expected RootCAs == nil")
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	resp, err := client.Get(upstream.URL)
+	if err == nil {
+		if resp != nil {
+			defer resp.Body.Close()
+		}
+		t.Fatalf("expected TLS handshake failure for untrusted certificate, but request succeeded with status %d", resp.StatusCode)
+	}
+
+	if resp != nil {
+		t.Errorf("expected resp == nil on handshake failure, got %v", resp)
+	}
+
+	errStr := err.Error()
+	if !strings.Contains(errStr, "unknown authority") &&
+		!strings.Contains(errStr, "certificate signed by unknown authority") &&
+		!strings.Contains(errStr, "tls: failed to verify certificate") &&
+		!strings.Contains(errStr, "x509: certificate") {
+		t.Errorf("expected unknown authority or certificate verification error, got: %v", err)
+	}
+}
+
+// TC-097-03: Custom CA Certificate Pool Validation and Validated Handshake Success
+func TestBuildClientTLSConfig_CustomCA(t *testing.T) {
+	tmpDir := t.TempDir()
+	caPEM, _, _ := generateTestCA(t)
+	caPath := filepath.Join(tmpDir, "ca.pem")
+	if err := os.WriteFile(caPath, caPEM, 0644); err != nil {
+		t.Fatalf("failed to write CA PEM: %v", err)
+	}
+
+	cfg := config.SidecarConfig{
+		CAFile:             caPath,
+		InsecureSkipVerify: false,
+	}
+
+	tlsConfig, err := BuildClientTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildClientTLSConfig failed: %v", err)
+	}
+
+	if tlsConfig.RootCAs == nil {
+		t.Fatalf("expected RootCAs != nil when CAFile is provided")
+	}
+	if tlsConfig.InsecureSkipVerify {
+		t.Errorf("expected InsecureSkipVerify == false with custom CA, got true")
+	}
+
+	// Invalid CA File Path
+	cfg.CAFile = filepath.Join(tmpDir, "nonexistent-ca.pem")
+	_, err = BuildClientTLSConfig(cfg)
+	if err == nil {
+		t.Fatalf("expected error for nonexistent CAFile, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to read sidecar ca cert") {
+		t.Errorf("expected 'failed to read sidecar ca cert' in error, got: %v", err)
+	}
+}
+
+func TestSidecar_EgressTLS_HandshakeSuccess_WithCustomCA(t *testing.T) {
+	tmpDir := t.TempDir()
+	caPEM, caCert, caKey := generateTestCA(t)
+	caPath := filepath.Join(tmpDir, "ca.pem")
+	if err := os.WriteFile(caPath, caPEM, 0644); err != nil {
+		t.Fatalf("failed to write CA PEM: %v", err)
+	}
+
+	_, _, serverTLSCert := generateSignedServerCert(t, caCert, caKey, "127.0.0.1", "localhost")
+
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("verified-via-custom-ca"))
+	}))
+	upstream.TLS = &tls.Config{
+		Certificates: []tls.Certificate{serverTLSCert},
+	}
+	upstream.StartTLS()
+	defer upstream.Close()
+
+	cfg := config.SidecarConfig{
+		CAFile:             caPath,
+		InsecureSkipVerify: false,
+	}
+
+	tlsConfig, err := BuildClientTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildClientTLSConfig failed: %v", err)
+	}
+
+	if tlsConfig.RootCAs == nil {
+		t.Fatalf("expected RootCAs != nil")
+	}
+	if tlsConfig.InsecureSkipVerify {
+		t.Fatalf("expected InsecureSkipVerify == false")
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	resp, err := client.Get(upstream.URL)
+	if err != nil {
+		t.Fatalf("expected successful TLS handshake with custom CA, got: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected HTTP 200, got %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if string(body) != "verified-via-custom-ca" {
+		t.Errorf("unexpected response body %q", string(body))
+	}
+}
+
+// TC-097-04: Explicit Opt-In InsecureSkipVerify: true and Mandatory Security Warning
+func TestBuildClientTLSConfig_ExplicitInsecureOptIn(t *testing.T) {
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	cfg := config.SidecarConfig{
+		InsecureSkipVerify: true,
+	}
+
+	tlsConfig, err := BuildClientTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildClientTLSConfig failed: %v", err)
+	}
+
+	if !tlsConfig.InsecureSkipVerify {
+		t.Errorf("expected InsecureSkipVerify == true, got false")
+	}
+
+	expectedWarning := "[SIDECAR] WARNING: InsecureSkipVerify is enabled for sidecar egress TLS. Certificate verification is disabled."
+	if !strings.Contains(logBuf.String(), expectedWarning) {
+		t.Errorf("expected log warning %q, got %q", expectedWarning, logBuf.String())
+	}
+}
+
+func TestSidecar_EgressTLS_HandshakeSuccess_WithExplicitOptIn(t *testing.T) {
+	var logBuf bytes.Buffer
+	log.SetOutput(&logBuf)
+	defer log.SetOutput(os.Stderr)
+
+	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("insecure-opt-in-success"))
+	}))
+	defer upstream.Close()
+
+	cfg := config.SidecarConfig{
+		InsecureSkipVerify: true,
+	}
+
+	tlsConfig, err := BuildClientTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildClientTLSConfig failed: %v", err)
+	}
+
+	if !tlsConfig.InsecureSkipVerify {
+		t.Fatalf("expected InsecureSkipVerify == true")
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig: tlsConfig,
+		},
+		Timeout: 5 * time.Second,
+	}
+
+	resp, err := client.Get(upstream.URL)
+	if err != nil {
+		t.Fatalf("expected successful TLS connection with explicit InsecureSkipVerify: true, got: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("expected HTTP 200, got %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("failed to read response body: %v", err)
+	}
+	if string(body) != "insecure-opt-in-success" {
+		t.Errorf("unexpected response body %q", string(body))
+	}
+}
+
+// TC-097-05: Client Identity Certificate Keypair Loading for Egress mTLS
+func TestBuildClientTLSConfig_ClientCertKeypair(t *testing.T) {
+	tmpDir := t.TempDir()
+	certPEM, keyPEM := generateClientCert(t)
+	certPath := filepath.Join(tmpDir, "client.crt")
+	keyPath := filepath.Join(tmpDir, "client.key")
+
+	if err := os.WriteFile(certPath, certPEM, 0644); err != nil {
+		t.Fatalf("failed to write client cert: %v", err)
+	}
+	if err := os.WriteFile(keyPath, keyPEM, 0600); err != nil {
+		t.Fatalf("failed to write client key: %v", err)
+	}
+
+	cfg := config.SidecarConfig{
+		CertFile: certPath,
+		KeyFile:  keyPath,
+	}
+
+	tlsConfig, err := BuildClientTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildClientTLSConfig failed: %v", err)
+	}
+
+	if len(tlsConfig.Certificates) != 1 {
+		t.Fatalf("expected 1 client certificate loaded, got %d", len(tlsConfig.Certificates))
+	}
+
+	// Invalid KeyFile Path
+	cfg.KeyFile = filepath.Join(tmpDir, "nonexistent.key")
+	_, err = BuildClientTLSConfig(cfg)
+	if err == nil {
+		t.Fatalf("expected error for nonexistent KeyFile, got nil")
+	}
+	if !strings.Contains(err.Error(), "failed to load sidecar client tls cert/key pair") {
+		t.Errorf("expected 'failed to load sidecar client tls cert/key pair' in error, got: %v", err)
+	}
+}
+
+// TC-097-06: Minimum TLS Protocol Version Enforcement (tls.VersionTLS12)
+func TestBuildClientTLSConfig_MinVersionTLS12(t *testing.T) {
+	tmpDir := t.TempDir()
+	caPEM, _, _ := generateTestCA(t)
+	caPath := filepath.Join(tmpDir, "ca.pem")
+	_ = os.WriteFile(caPath, caPEM, 0644)
+
+	certPEM, keyPEM := generateClientCert(t)
+	certPath := filepath.Join(tmpDir, "client.crt")
+	keyPath := filepath.Join(tmpDir, "client.key")
+	_ = os.WriteFile(certPath, certPEM, 0644)
+	_ = os.WriteFile(keyPath, keyPEM, 0600)
+
+	testConfigs := []struct {
+		name string
+		cfg  config.SidecarConfig
+	}{
+		{
+			name: "Default Config",
+			cfg:  config.SidecarConfig{},
+		},
+		{
+			name: "Custom CA Config",
+			cfg:  config.SidecarConfig{CAFile: caPath},
+		},
+		{
+			name: "Insecure Opt-In Config",
+			cfg:  config.SidecarConfig{InsecureSkipVerify: true},
+		},
+		{
+			name: "Client mTLS Config",
+			cfg:  config.SidecarConfig{CertFile: certPath, KeyFile: keyPath},
+		},
+	}
+
+	for _, tc := range testConfigs {
+		t.Run(tc.name, func(t *testing.T) {
+			tlsConfig, err := BuildClientTLSConfig(tc.cfg)
+			if err != nil {
+				t.Fatalf("BuildClientTLSConfig failed: %v", err)
+			}
+			if tlsConfig.MinVersion != tls.VersionTLS12 {
+				t.Errorf("expected MinVersion == tls.VersionTLS12 (0x0303), got 0x%04x", tlsConfig.MinVersion)
+			}
+			if tlsConfig.MinVersion == tls.VersionTLS10 {
+				t.Errorf("MinVersion must not be TLS 1.0")
+			}
+			if tlsConfig.MinVersion == tls.VersionTLS11 {
+				t.Errorf("MinVersion must not be TLS 1.1")
+			}
+		})
+	}
+}
+
+// TC-097-07: High-Concurrency Thread Safety and Race Detection
+func TestSidecar_EgressTLS_ConcurrentRouting_RaceClean(t *testing.T) {
+	tmpDir := t.TempDir()
+	caPEM, caCert, caKey := generateTestCA(t)
+	caPath := filepath.Join(tmpDir, "ca.pem")
+	if err := os.WriteFile(caPath, caPEM, 0644); err != nil {
+		t.Fatalf("failed to write CA PEM: %v", err)
+	}
+
+	_, _, serverTLSCert := generateSignedServerCert(t, caCert, caKey, "127.0.0.1", "localhost")
+
+	var requestCount atomic.Int64
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("concurrent-ok"))
+	}))
+	upstream.TLS = &tls.Config{
+		Certificates: []tls.Certificate{serverTLSCert},
+	}
+	upstream.StartTLS()
+	defer upstream.Close()
+
+	cfg := config.SidecarConfig{
+		CAFile:             caPath,
+		InsecureSkipVerify: false,
+	}
+
+	tlsConfig, err := BuildClientTLSConfig(cfg)
+	if err != nil {
+		t.Fatalf("BuildClientTLSConfig failed: %v", err)
+	}
+
+	client := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig:     tlsConfig,
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 50,
+			IdleConnTimeout:     90 * time.Second,
+		},
+		Timeout: 10 * time.Second,
+	}
+
+	const numGoroutines = 20
+	const requestsPerGoroutine = 50
+	var wg sync.WaitGroup
+
+	// Phase 1: Parallel HTTPS requests through shared TLSClientConfig
+	for i := 0; i < numGoroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < requestsPerGoroutine; j++ {
+				resp, err := client.Get(upstream.URL)
+				if err != nil {
+					t.Errorf("concurrent request failed: %v", err)
+					return
+				}
+				if resp.StatusCode != http.StatusOK {
+					t.Errorf("unexpected status code: %d", resp.StatusCode)
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				resp.Body.Close()
+			}
+		}()
+	}
+
+	// Phase 2: Simultaneous concurrent invocation of BuildClientTLSConfig
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			for j := 0; j < 20; j++ {
+				var testCfg config.SidecarConfig
+				switch (idx + j) % 3 {
+				case 0:
+					testCfg = config.SidecarConfig{}
+				case 1:
+					testCfg = config.SidecarConfig{CAFile: caPath}
+				case 2:
+					testCfg = config.SidecarConfig{InsecureSkipVerify: true}
+				}
+				c, cErr := BuildClientTLSConfig(testCfg)
+				if cErr != nil {
+					t.Errorf("concurrent BuildClientTLSConfig failed: %v", cErr)
+				}
+				if c == nil {
+					t.Errorf("concurrent BuildClientTLSConfig returned nil")
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+
+	expectedTotal := int64(numGoroutines * requestsPerGoroutine)
+	if requestCount.Load() != expectedTotal {
+		t.Errorf("expected %d total upstream requests, got %d", expectedTotal, requestCount.Load())
 	}
 }
 

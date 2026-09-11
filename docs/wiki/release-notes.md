@@ -1,5 +1,113 @@
 # Release Notes
 
+## 2026-09-11 - Toron v1.5.16 Security Release (SEC-35: Strict Sidecar Client TLS Certificate Validation and Explicit InsecureSkipVerify Opt-In)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-35 (`pkg/sidecar`, `pkg/config`)**: Successfully resolved High-severity improper certificate validation and silent Man-in-the-Middle (MitM) eavesdropping vulnerability [`SEC-35`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L481-L489) ([CWE-295](https://cwe.mitre.org/data/definitions/295.html), [`SR-091 Finding 5`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md#L173-L195), [`SR-097`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-097.md), [`CR-093`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-093.md)) in the Service Mesh Sidecar Proxy client TLS engine.
+- **Elimination of Insecure Hardcoded Defaults (`pkg/sidecar/mtls.go`)**: Completely eliminated the historical architectural flaw in `BuildClientTLSConfig` where omitting an explicit internal CA certificate bundle (`ca_file: ""`) automatically set `tlsConfig.InsecureSkipVerify = true`. All outbound pod-to-pod egress connections now enforce strict peer certificate validation by default.
+- **Seamless System Trust Root Fallback (`x509.SystemCertPool`)**: When `ca_file` is omitted or empty (`""`), `BuildClientTLSConfig` leaves `tlsConfig.RootCAs = nil`. The Go standard library `crypto/tls` runtime automatically falls back to validating peer certificates against the host operating system's system root certificate pool (`x509.SystemCertPool()`), enabling zero-configuration validation for public PKI, cloud certificates (AWS ACM, Cloudflare), and Let's Encrypt endpoints.
+- **Custom Internal CA Bundle Support**: Retained full enterprise PKI support via `ca_file`. When specified, root certificates are loaded into a dedicated `x509.CertPool` assigned to `tlsConfig.RootCAs`, guaranteeing end-to-end zero-trust validation for internal service mesh certificate authorities.
+- **Explicit `insecure_skip_verify` Opt-In & Mandatory Warning Log (`pkg/config/config.go`, `pkg/sidecar/mtls.go`)**: Added explicit opt-in boolean field `InsecureSkipVerify` to [`SidecarConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L103) (`insecure_skip_verify`), defaulting to `false`. When explicitly set to `true` for non-production environments, a high-visibility audit warning is emitted to the server log: `[SIDECAR] WARNING: InsecureSkipVerify is enabled for sidecar egress TLS. Certificate verification is disabled.`
+- **Cryptographic Protocol Floor (`tls.VersionTLS12`)**: Strictly enforces `MinVersion: tls.VersionTLS12` across all client TLS configurations, completely preventing protocol downgrade attacks to SSLv3, TLS 1.0, or TLS 1.1.
+- **Mutual TLS (mTLS) Client Identity Preservation**: Supports client certificate keypairs (`cert_file`, `key_file`) loaded via `tls.LoadX509KeyPair`, enabling client identity authentication during outbound egress handshakes.
+- **Zero External Dependencies**: Implemented strictly with the Go standard library (`crypto/tls`, `crypto/x509`, `fmt`, `log`, `os`), keeping `go.mod` and `go.sum` with 0 diffs.
+- **Comprehensive Automated Verification Suite (`TC-097`)**: Fully validated via unit and end-to-end test cases TC-097-01 through TC-097-07, verifying secure default rejection of self-signed/expired/invalid certificates, successful system trust root and custom CA validation, explicit opt-in behavior with warning logs, mTLS client keypair presentation, TLS 1.2 minimum version enforcement, and high-concurrency race cleanliness under `go test -race` ([`TASK-120`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md), [`TC-097`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-097.md)).
+
+### Fixed
+- **Insecure Default `InsecureSkipVerify = true` in Sidecar Client TLS (`SEC-35`, CWE-295)**: Fixed severe flaw where omitting `ca_file` defaulted `InsecureSkipVerify = true`, completely disabling certificate verification and exposing outbound inter-service traffic to silent Man-in-the-Middle (MitM) eavesdropping, tampering, and credential theft on shared container networks.
+- **Failure to Fall Back to Host System Trust Roots**: Fixed issue where omitting `ca_file` prevented the sidecar from utilizing host OS trust roots for public certificate validation without disabling security checks.
+
+### Changed
+- **Sidecar Client TLS Constructor (`pkg/sidecar/mtls.go`)**:
+  - Eliminated the `else { tlsConfig.InsecureSkipVerify = true }` branch in `BuildClientTLSConfig`.
+  - Assigned `tlsConfig.InsecureSkipVerify = cfg.InsecureSkipVerify`.
+  - Configured `tlsConfig.RootCAs = nil` when `cfg.CAFile == ""` to enable automatic host OS trust pool fallback.
+  - Added high-visibility warning logging when `cfg.InsecureSkipVerify == true`.
+- **Sidecar Configuration Schema (`pkg/config/config.go`)**:
+  - Extended `SidecarConfig` with `InsecureSkipVerify bool `yaml:"insecure_skip_verify" json:"insecure_skip_verify"``.
+  - Initialized `InsecureSkipVerify: false` in `defaultConfig()` and `DefaultAppConfig()`.
+
+### Added
+- **Configuration Option (`insecure_skip_verify`)**: Added explicit opt-in boolean in `toron.yaml` (`sidecar.insecure_skip_verify`) for non-production debugging environments.
+- **Automated Verification Suite (`pkg/sidecar/sidecar_test.go`)**:
+  - `TestBuildClientTLSConfig_DefaultSecure` (TC-097-01): Verifies `InsecureSkipVerify == false` and `RootCAs == nil` by default.
+  - `TestSidecar_EgressTLS_HandshakeRejection` (TC-097-02): Verifies immediate handshake failure and HTTP 502 rejection when encountering untrusted/self-signed upstream certificates under default settings.
+  - `TestBuildClientTLSConfig_CustomCA` & `TestSidecar_EgressTLS_HandshakeSuccess_WithCustomCA` (TC-097-03): Verifies successful handshake and proxying when upstream certificate is signed by configured `ca_file`.
+  - `TestBuildClientTLSConfig_ExplicitInsecureOptIn` & `TestSidecar_EgressTLS_HandshakeSuccess_WithExplicitOptIn` (TC-097-04): Verifies successful bypass and mandatory audit warning when `insecure_skip_verify: true`.
+  - `TestBuildClientTLSConfig_ClientCertKeypair` (TC-097-05): Verifies loading of client mTLS certificate and keypair into `tlsConfig.Certificates`.
+  - `TestBuildClientTLSConfig_MinVersionTLS12` (TC-097-06): Verifies strict `tls.VersionTLS12` minimum protocol enforcement.
+  - `TestSidecar_EgressTLS_ConcurrentRouting_RaceClean` (TC-097-07): High-concurrency egress proxy routing test clean under `go test -race`.
+
+### Related Tasks & Requirements
+- [`TASK-120`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md): Secure Default Certificate Validation and Explicit InsecureSkipVerify Opt-In in Sidecar Client TLS
+- [`REQ-097`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md): Secure Default Certificate Validation and Explicit InsecureSkipVerify Opt-In in Sidecar Client TLS Configuration
+- [`ADR-097`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-097.md): Secure Default Client TLS Validation and Explicit InsecureSkipVerify Opt-In in Sidecar Proxy
+- [`TC-097`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-097.md): Verification of Secure Default Certificate Validation and Explicit InsecureSkipVerify Opt-In in Sidecar Client TLS Configuration
+- [`CR-093`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-093.md): Code Review of Secure Default Certificate Validation and Explicit InsecureSkipVerify Opt-In in Sidecar Client TLS Configuration
+- [`SR-097`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-097.md): Security Review and Vulnerability Assessment of SEC-35 Remediation
+- [`SEC-35`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L481-L489): Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration
+
+## 2026-09-11 - Toron v1.5.16 Release (REQ-096 / TASK-119: Composite Route Key Grouping, Multi-Pod Target Aggregation, Canary Variant Isolation, and Specificity-Based Route Lifecycle in Kubernetes Ingress Controller)
+
+### Milestone Summary
+- **Parity with OCI Discovery Engine (`pkg/ingress`, `pkg/router`)**: Established full architectural parity between Toron's Kubernetes Ingress Controller and the OCI Container Discovery engine ([`REQ-095`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-095.md), [`ADR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-095.md), [`CR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-091.md)), eliminating Canary target pool contamination, route shadowing, and single-pod starvation in Kubernetes environments ([`TASK-119`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-119.md), [`REQ-096`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-096.md), [`ADR-096`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-096.md), [`CR-092`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-092.md), [`SR-096`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-096.md)).
+- **4-Dimensional Route Partitioning via `CompositeRouteKey` (`pkg/ingress/controller.go`)**: Partitioned Ingress routes using a 4-dimensional tuple `CompositeRouteKey = (Host, CleanPrefix, Method, CanonicalHeaders)`. Multiple Ingress definitions sharing the same domain and path prefix but differing in header criteria (e.g. Canary vs Baseline) or HTTP methods produce distinct composite keys, preventing target pool pollution and cross-variant traffic leakage.
+- **Deterministic Alphabetical Header Canonicalization (`canonicalizeHeaders`)**: Implemented deterministic header sorting and lowercase normalization across all header keys (`a-env=staging&z-version=v2`), eliminating Go's non-deterministic `map[string]string` traversal and preventing false route churn across repeated 30-second reconciliation passes.
+- **Strict Canary vs Baseline Target Segregation (Zero Traffic Bleed)**: Fully resolved the critical issue where Canary and Baseline pod endpoints were merged into a single load balancer pool. Canary Ingresses (`nginx.ingress.kubernetes.io/canary: "true"` or `toron.io/headers`) and Baseline Ingresses maintain separate reverse proxy pools. Traffic bearing canary headers routes exclusively to Canary pods, while standard traffic routes exclusively to Baseline pods.
+- **Dual-Ecosystem Annotation Support (`pkg/ingress/translator.go`)**:
+  - **Native Toron Annotations**: Supports `toron.io/method` (normalized uppercase HTTP verbs), `toron.io/header.<Name>` (individual header matches), and `toron.io/headers` (supporting both JSON object and CSV key=value formats) with additive merging and override precedence.
+  - **Industry-Standard NGINX Canary Annotations**: Full compatibility with `nginx.ingress.kubernetes.io/canary: "true"`, `nginx.ingress.kubernetes.io/canary-by-header`, and `nginx.ingress.kubernetes.io/canary-by-header-value` (defaulting to `"always"` if omitted), enabling seamless zero-code migrations of existing Kubernetes Canary manifests.
+- **ADR-005 Specificity-Based Route Ordering & Anti-Shadowing (`pkg/ingress/controller.go`)**: Enforced a strict 5-tier specificity hierarchy (Longest prefix $\to$ Specific host $\to$ Header constraint count $\to$ Method constraint $\to$ Deterministic tie-break) on all Ingress route specifications (`router.SortPrefixRouteSpecs(specs)`). Guaranteed that header-constrained Canary routes evaluate ahead of generic fallback Baseline routes, permanently eliminating route shadowing regardless of the discovery order returned by the Kubernetes API server.
+- **Multi-Pod Target Aggregation & Fair Round-Robin Load Balancing**: Aggregated all pod IP endpoints for each composite key into a unified multi-target `PrefixRouteSpec` using [`RoundRobinBalancer`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L30), eliminating single-pod overload and distributing load evenly ($\approx 1/M$ per replica) across all active pod replicas.
+- **Non-Destructive Scale-Down & Clean Eviction Teardown**: Pod scaling down updates the reverse proxy target pool in place with zero HTTP 404 errors or connection drops. Deleting an Ingress purges its routes and cleanly invokes `proxy.Close()`, stopping active health check tickers (`StopActiveHealthCheck`) and closing idle TCP connection pools, preventing socket descriptor leaks (`EMFILE`).
+- **Declarative HTTP Method Filtering Support**: Populated `PrefixRouteSpec.Method` from `toron.io/method`, enforcing HTTP verb constraints at runtime in `router.ServeHTTP` and returning HTTP `405 Method Not Allowed` on method mismatches or falling through to method-compatible fallback routes.
+- **Zero External Dependencies**: Pure Go standard library implementation (`sync`, `net/http`, `net/url`, `sort`, `strings`, `encoding/json`, `time`, `context`, `path`, `fmt`, `strconv`), keeping `go.mod` and `go.sum` with 0 diffs.
+- **Comprehensive Automated Verification Suite (`TC-096`)**: Validated Ingress annotation parsing, deterministic composite key generation, multi-pod target aggregation, strict Canary/Baseline segregation, ADR-005 specificity sorting without Canary shadowing, declarative method filtering, non-destructive scale-down with zero downtime, and concurrent race-clean execution under `go test -race` ([`TASK-119`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-119.md), [`TC-096`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-096.md)).
+
+### Fixed
+- **Canary Target Pool Pollution & Traffic Bleed (`REQ-096`, CWE-284)**: Fixed bug where Canary and Baseline pod endpoints were grouped using a naive 2-tuple `(Host, Prefix)`, causing Canary and Baseline pods to be lumped into a single reverse proxy target pool and sending unvalidated canary code to normal users ($\approx 33\text{--}50\%$).
+- **Canary Route Shadowing via Non-Deterministic Arrival Order (`REQ-096`, CWE-284)**: Fixed issue where Ingress routes were evaluated in arbitrary Kubernetes API arrival order, allowing generic Baseline routes to intercept requests and shadow header-constrained Canary routes.
+- **Missing Ingress Routing Dimension Support**: Fixed inability to specify HTTP methods and headers on Kubernetes Ingresses, bringing complete parity with OCI container discovery.
+- **Single-Pod Starvation & Horizontal Scaling Collapse (`CWE-400`)**: Fixed single-pod monopolization by aggregating pod targets into round-robin load balancers.
+- **Socket Descriptor & Health Checker Leaks (`CWE-775`)**: Fixed resource leaks where deleted Ingresses abandoned active health check tickers in heap memory.
+
+### Changed
+- **Ingress Route Translation (`pkg/ingress/translator.go`)**:
+  - Implemented annotation extraction for `toron.io/method`, `toron.io/header.<Name>`, `toron.io/headers` (CSV and JSON), and `nginx.ingress.kubernetes.io/canary*`.
+  - Populated `DiscoveredRoute.Method` and `DiscoveredRoute.Headers`.
+- **Ingress Controller Dynamic Reconciliation (`pkg/ingress/controller.go`)**:
+  - Introduced 4-dimensional `CompositeRouteKey` and deterministic `canonicalizeHeaders`.
+  - Aggregated and deduplicated pod endpoints into multi-target `PrefixRouteSpec`s.
+  - Added ADR-005 specificity sorting on compiled specs (`router.SortPrefixRouteSpecs(specs)`) prior to atomic replacement.
+
+### Added
+- **Supported Ingress Annotations**:
+  - `toron.io/method`
+  - `toron.io/header.<Name>`
+  - `toron.io/headers`
+  - `nginx.ingress.kubernetes.io/canary`
+  - `nginx.ingress.kubernetes.io/canary-by-header`
+  - `nginx.ingress.kubernetes.io/canary-by-header-value`
+- **Automated Verification Suites (`scratch/tc_096_full_test_suite.go`, `pkg/ingress/ingress_test.go`)**:
+  - `TestTranslateIngress_MethodAndHeaderAnnotations` (TC-096-01): 10 table-driven scenarios validating method, individual/grouped headers, NGINX canary defaults/custom values, override precedence, malformed JSON fallback, and backward compatibility.
+  - `TestIngressController_CompositeRouteKeyAggregation` (TC-096-02): Deterministic canonicalization and key differentiation across 100 iterations.
+  - `TestIngressController_CompositeRouteKeyAggregation` (TC-096-03): Multi-pod target aggregation, deduplication, and 33.3% round-robin distribution.
+  - `TestIngressController_CanaryBaselineStrictSegregation` (TC-096-04): 100% Canary/Baseline isolation with zero traffic bleed.
+  - `TestIngressController_SpecificityOrdering_NoCanaryShadowing` (TC-096-05): Adverse discovery order test confirming Canary route evaluation ahead of Baseline.
+  - `TestIngressController_PrefixRouteSpec_MethodFiltering` (TC-096-06): Declarative method filtering and HTTP 405 Method Not Allowed handling.
+  - `TestIngressController_PodScaleDown_ZeroDowntime` (TC-096-07): Zero-downtime scale-down (zero 404s) and clean Ingress deletion proxy teardown.
+  - `TestIngressController_ConcurrentEventsAndRouting_RaceClean` (TC-096-08): High-concurrency test running 5 churn workers + 20 traffic workers clean under `go test -race`.
+
+### Related Tasks & Requirements
+- [`TASK-119`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-119.md): Composite Route Key Grouping, Multi-Pod Target Aggregation, and Specificity-Based Route Lifecycle in Kubernetes Ingress Controller
+- [`REQ-096`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-096.md): Composite Route Key Grouping, Multi-Pod Target Aggregation, Canary Variant Isolation, and Specificity-Based Route Lifecycle in Kubernetes Ingress Controller
+- [`ADR-096`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-096.md): Composite Route Key Grouping, Multi-Pod Target Aggregation, Canary Variant Isolation, and Specificity-Based Route Lifecycle in Kubernetes Ingress Controller
+- [`ADR-005`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-005.md): Route Specificity and Path Matching Precedence
+- [`ADR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-089.md): Source-Tagged Atomic Prefix Routing & Multi-Pod Ingress Endpoint Aggregation
+- [`TC-096`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-096.md): Verification of Composite Route Key Grouping, Multi-Pod Target Aggregation, and Specificity-Based Route Lifecycle in Kubernetes Ingress Controller
+- [`CR-092`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-092.md): Code Review of Composite Route Key Grouping, Multi-Pod Target Aggregation, and Specificity-Based Route Lifecycle in Kubernetes Ingress Controller
+- [`SR-096`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-096.md): Security Review of Composite Route Key Grouping, Multi-Pod Target Aggregation, and Specificity-Based Route Lifecycle in Kubernetes Ingress Controller
+
 ## 2026-09-11 - Toron v1.5.15 Security Release (SEC-34: Composite Route Key Grouping, Multi-Replica Target Aggregation, and Specificity-Based Route Lifecycle in OCI Discovery Engine)
 
 ### Milestone Summary

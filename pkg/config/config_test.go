@@ -27,6 +27,9 @@ func TestConfig_DefaultValues(t *testing.T) {
 	if cfg.Sidecar.MaxBodyBytes != 10*1024*1024 {
 		t.Errorf("expected default sidecar max body bytes 10MB, got %d", cfg.Sidecar.MaxBodyBytes)
 	}
+	if cfg.Sidecar.InsecureSkipVerify != false {
+		t.Errorf("expected default sidecar InsecureSkipVerify false, got %v", cfg.Sidecar.InsecureSkipVerify)
+	}
 }
 
 func TestConfig_SidecarMaxBodyBytes(t *testing.T) {
@@ -49,6 +52,49 @@ sidecar:
 
 	if cfg.Sidecar.MaxBodyBytes != 2097152 {
 		t.Errorf("expected sidecar max body bytes 2097152, got %d", cfg.Sidecar.MaxBodyBytes)
+	}
+}
+
+func TestConfig_SidecarInsecureSkipVerify(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	// Default case (omitted in YAML)
+	yamlPathDefault := filepath.Join(tmpDir, "config_default.yaml")
+	yamlDataDefault := `
+sidecar:
+  enabled: true
+`
+	if err := os.WriteFile(yamlPathDefault, []byte(yamlDataDefault), 0644); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	cfgDefault, err := config.LoadFromFile(yamlPathDefault)
+	if err != nil {
+		t.Fatalf("failed to load yaml config: %v", err)
+	}
+
+	if cfgDefault.Sidecar.InsecureSkipVerify != false {
+		t.Errorf("expected sidecar InsecureSkipVerify to default to false, got %v", cfgDefault.Sidecar.InsecureSkipVerify)
+	}
+
+	// Explicit true case
+	yamlPathOptIn := filepath.Join(tmpDir, "config_optin.yaml")
+	yamlDataOptIn := `
+sidecar:
+  enabled: true
+  insecure_skip_verify: true
+`
+	if err := os.WriteFile(yamlPathOptIn, []byte(yamlDataOptIn), 0644); err != nil {
+		t.Fatalf("failed to write test yaml: %v", err)
+	}
+
+	cfgOptIn, err := config.LoadFromFile(yamlPathOptIn)
+	if err != nil {
+		t.Fatalf("failed to load yaml config: %v", err)
+	}
+
+	if cfgOptIn.Sidecar.InsecureSkipVerify != true {
+		t.Errorf("expected sidecar InsecureSkipVerify true when specified in YAML, got %v", cfgOptIn.Sidecar.InsecureSkipVerify)
 	}
 }
 

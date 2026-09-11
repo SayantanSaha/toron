@@ -4,6 +4,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"fmt"
+	"log"
 	"os"
 
 	"toron/pkg/config"
@@ -46,7 +47,12 @@ func BuildServerTLSConfig(cfg config.SidecarConfig) (*tls.Config, error) {
 // BuildClientTLSConfig constructs a client-side TLS configuration for egress pod-to-pod mTLS.
 func BuildClientTLSConfig(cfg config.SidecarConfig) (*tls.Config, error) {
 	tlsConfig := &tls.Config{
-		MinVersion: tls.VersionTLS12,
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: cfg.InsecureSkipVerify,
+	}
+
+	if cfg.InsecureSkipVerify {
+		log.Printf("[SIDECAR] WARNING: InsecureSkipVerify is enabled for sidecar egress TLS. Certificate verification is disabled.")
 	}
 
 	if cfg.CertFile != "" && cfg.KeyFile != "" {
@@ -65,9 +71,6 @@ func BuildClientTLSConfig(cfg config.SidecarConfig) (*tls.Config, error) {
 		caPool := x509.NewCertPool()
 		caPool.AppendCertsFromPEM(caBytes)
 		tlsConfig.RootCAs = caPool
-	} else {
-		// Default to insecure verify if custom CA is omitted in test environments
-		tlsConfig.InsecureSkipVerify = true
 	}
 
 	return tlsConfig, nil

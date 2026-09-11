@@ -11,7 +11,7 @@
 
 This security audit report reflects the state of the Toron Web Server and Edge Gateway codebase following the complete remediation, testing, code review, and merging of all 30 prior security tasks (`TASK-061` through `TASK-110`, resolving `SEC-01` through `SEC-30`).
 
-A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 34 previously identified vulnerabilities (`SEC-01` through `SEC-34`) remain 100% verified and resolved. **4 remaining findings** (`SEC-35` through `SEC-38`) have been identified across peripheral and extended subsystem surfaces and are tracked below for remediation.
+A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 35 previously identified vulnerabilities (`SEC-01` through `SEC-35`) remain 100% verified and resolved. **3 remaining findings** (`SEC-36` through `SEC-38`) have been identified across peripheral and extended subsystem surfaces and are tracked below for remediation.
 
 ---
 
@@ -53,7 +53,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 | **P2** | **SEC-32** | Fail-Open WAF IP Access Control Bypass on Unidentifiable Client IP | **Medium** | CWE-284, CWE-1188, CWE-693 | **Resolved** | [`TASK-114`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-114.md)..[`115`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-115.md) | `TC-093 / SR-093` | Verified |
 | **P1** | **SEC-33** | Unbounded Routing Table Memory Leak & Zombie Route Persistence in Kubernetes Ingress Controller | **High** | CWE-400, CWE-670 | **Resolved** | [`TASK-116`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-116.md)..[`117`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-117.md) | `TC-094 / SR-094, CR-090` | Verified |
 | **P2** | **SEC-34** | Premature Route Deletion & Load-Balancing Failure Across Multi-Replica Containers in OCI Discovery Engine | **Medium** | CWE-400, CWE-284, CWE-662, CWE-775 | **Resolved** | [`TASK-118`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-118.md) | `TC-095 / SR-095, CR-091` | Verified |
-| **P1** | **SEC-35** | Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration | **High** | CWE-295 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
+| **P1** | **SEC-35** | Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration | **High** | CWE-295 | **Resolved** | [`TASK-120`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md) | `TC-097 / SR-097, CR-093` | Verified |
 | **P2** | **SEC-36** | Memory Exhaustion via Unbounded Upstream Response Buffering in Internal API Proxy Test Probe | **Medium** | CWE-400, CWE-770 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
 | **P2** | **SEC-37** | Unbounded HTTP Client & Transport Allocation per Request in Service Mesh Sidecar Proxy | **Medium** | CWE-400, CWE-772 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
 | **P3** | **SEC-38** | Missing Token Syntax and Length Validation in ACME HTTP-01 Challenge Handler | **Low** | CWE-20, CWE-703 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
@@ -480,12 +480,23 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 
 #### SEC-35: Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration
 - **Severity**: **High** (CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:N - Score 8.1)
-- **Location**: [`pkg/sidecar/mtls.go:L68-L71`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/mtls.go#L68-L71)
+- **Location**: [`pkg/sidecar/mtls.go:L48-L77`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/mtls.go#L48-L77)
 - **CWE**: CWE-295
+- **Status**: **Resolved**
+- **Mapped Requirement**: [`REQ-097: Secure Default Certificate Validation and Explicit InsecureSkipVerify Opt-In in Sidecar Client TLS Configuration`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md)
+- **Mapped Task**: [`TASK-120: Secure Default Certificate Validation and Explicit InsecureSkipVerify Opt-In in Sidecar Client TLS`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md)
 - **Root Cause**:  
-  `BuildClientTLSConfig` automatically defaults `tlsConfig.InsecureSkipVerify = true` whenever `cfg.CAFile` is empty.
-- **Impact**: Inter-service mesh egress TLS connections disable certificate validation by default, allowing network eavesdropping and Man-in-the-Middle (MITM) attacks.
-- **Remediation**: Default `InsecureSkipVerify = false` and fall back to system trust roots when `CAFile` is empty; require an explicit opt-in flag for skipping verification.
+  `BuildClientTLSConfig` automatically defaulted `tlsConfig.InsecureSkipVerify = true` whenever `cfg.CAFile` was empty (`""`). In standard deployments where services rely on public PKI, cloud certificates (AWS ACM, Cloudflare, Let's Encrypt), or the host operating system's trust store, `ca_file` was omitted, causing client egress connections to unconditionally bypass all certificate chain, expiration, and hostname validation.
+- **Impact**: Inter-service mesh egress TLS connections disabled certificate validation by default, allowing network-adjacent attackers in shared Kubernetes pods, container networks, or compromised network infrastructure to execute silent Man-in-the-Middle (MitM) eavesdropping, credential theft, and plaintext payload interception.
+- **Remediation**: Enforce secure-by-default certificate validation with `InsecureSkipVerify = false`, automatically fall back to host operating system certificate trust roots (`x509.SystemCertPool()`) when `ca_file` is empty, require explicit `insecure_skip_verify: true` opt-in, emit a mandatory high-visibility audit warning log on opt-in, and enforce `tls.VersionTLS12` minimum protocol version.
+- **Resolution Details**: Fully resolved under [`REQ-097`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md), [`ADR-097`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-097.md), and [`TASK-120`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md):
+  1. *Secure-by-Default Validation (CWE-295 Elimination)*: Eliminated hardcoded `else { tlsConfig.InsecureSkipVerify = true }`. Initialized `InsecureSkipVerify: false` in `SidecarConfig` and `defaultConfig()`. All outbound egress connections strictly validate peer certificates against trust roots by default.
+  2. *Operating System Trust Root Fallback (`x509.SystemCertPool`)*: When `ca_file` is empty, `BuildClientTLSConfig` leaves `tlsConfig.RootCAs = nil`, directing Go's `crypto/tls` runtime to validate certificates against host OS trust roots for seamless compatibility with public/cloud PKI.
+  3. *Custom Internal Enterprise CA Integration*: Retained `ca_file` support to load dedicated Root CA certificate pools (`RootCAs = caPool`) for private service mesh and enterprise PKI environments.
+  4. *Explicit Opt-In & Mandatory Warning Log*: Added `insecure_skip_verify` YAML option for isolated testing. Emits a high-visibility warning to server logs: `[SIDECAR] WARNING: InsecureSkipVerify is enabled for sidecar egress TLS. Certificate verification is disabled.`
+  5. *Protocol Version Floor*: Enforced `MinVersion: tls.VersionTLS12`, eliminating downgrade attacks to SSLv3, TLS 1.0, or TLS 1.1.
+  6. *Client mTLS Identity*: Preserved client certificate and keypair loading (`CertFile`, `KeyFile`) for mutual TLS pod authentication.
+  Verified by comprehensive automated verification suite [`TC-097`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-097.md), reviewed and approved in [`CR-093`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-093.md) and [`SR-097`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-097.md).
 
 #### SEC-36: Memory Exhaustion via Unbounded Upstream Response Buffering in Internal API Proxy Test Probe
 - **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:N/I:N/A:H - Score 6.5)
@@ -558,7 +569,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
   2. [x] Enforce fail-closed access control on unidentifiable client IPs in WAF (`SEC-32`) - **COMPLETED** (`TASK-114`..`115`, `TC-093`, `SR-093`, `CR-089`).
   3. [x] Prune deleted Ingress routes and prevent routing table growth in K8s Ingress Controller (SEC-33) - **COMPLETED** (TASK-116..117, TC-094, SR-094, CR-090).
   4. [x] Aggregate multi-replica upstreams and prevent premature route deletion in OCI Discovery (`SEC-34`) - **COMPLETED** (`TASK-118`, `TC-095`, `SR-095`, `CR-091`).
-  5. [ ] Remove insecure default `InsecureSkipVerify = true` in Sidecar Client TLS (`SEC-35`).
+  5. [x] Remove insecure default `InsecureSkipVerify = true` in Sidecar Client TLS (`SEC-35`) - **COMPLETED** (`TASK-120`, `TC-097`, `SR-097`, `CR-093`).
   6. [ ] Bound response body ingestion in `/internal/api/proxy-test` probe (`SEC-36`).
   7. [ ] Pool and reuse `http.Transport` instances in Service Mesh Sidecar Proxy (`SEC-37`).
   8. [ ] Enforce RFC 8555 base64url token syntax validation in ACME challenge handler (`SEC-38`).
@@ -567,7 +578,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 
 ## 5. Remediation Status & Verification Summary
 
-34 security vulnerabilities (`SEC-01` through `SEC-34`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
+35 security vulnerabilities (`SEC-01` through `SEC-35`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 - **`SEC-23`**: Verified in `TC-084` (`TASK-084`..`086`, `defc678`).
@@ -582,7 +593,8 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 - **`SEC-32`**: Verified in `TC-093` (`TASK-114`..`115`, `SR-093`, `CR-089`).
 - **`SEC-33`**: Verified in `TC-094` (`TASK-116`..`117`, `SR-094`, `CR-090`).
 - **`SEC-34`**: Verified in `TC-095` (`TASK-118`, `SR-095`, `CR-091`).
+- **`SEC-35`**: Verified in `TC-097` (`TASK-120`, `SR-097`, `CR-093`).
 
-All 34 vulnerabilities (`SEC-01` through `SEC-34`) remain 100% verified and resolved. **4 remaining findings** (`SEC-35` through `SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems are tracked below for remediation.
+All 35 vulnerabilities (`SEC-01` through `SEC-35`) remain 100% verified and resolved. **3 remaining findings** (`SEC-36` through `SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems are tracked below for remediation.
 
 

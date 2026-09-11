@@ -743,7 +743,7 @@ func TestDiscoveryManager_CompositeRouteKeyAggregation(t *testing.T) {
 	counts := make(map[string]int)
 	for i := 0; i < 30; i++ {
 		req, _ := httpparser.NewRequest("GET", "/v1/data", "HTTP/1.1")
-		req.Host = "api.example.com"
+		req.Header.Set("Host", "api.example.com")
 		req.Header.Set("X-Region", "us-east")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
@@ -800,7 +800,7 @@ func TestDiscoveryManager_NonDestructivePartialScaleDown(t *testing.T) {
 	// Phase 1: 6 requests -> 2 to each server
 	for i := 0; i < 6; i++ {
 		req, _ := httpparser.NewRequest("GET", "/api/test", "HTTP/1.1")
-		req.Host = "scale.test"
+		req.Header.Set("Host", "scale.test")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
 		if res.StatusCode != http.StatusOK {
@@ -815,7 +815,7 @@ func TestDiscoveryManager_NonDestructivePartialScaleDown(t *testing.T) {
 	counts := make(map[string]int)
 	for i := 0; i < 20; i++ {
 		req, _ := httpparser.NewRequest("GET", "/api/test", "HTTP/1.1")
-		req.Host = "scale.test"
+		req.Header.Set("Host", "scale.test")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
 		if res.StatusCode != http.StatusOK {
@@ -841,7 +841,7 @@ func TestDiscoveryManager_NonDestructivePartialScaleDown(t *testing.T) {
 	}
 
 	req404, _ := httpparser.NewRequest("GET", "/api/test", "HTTP/1.1")
-	req404.Host = "scale.test"
+	req404.Header.Set("Host", "scale.test")
 	res404 := httpparser.NewResponse()
 	r.ServeHTTP(req404, res404)
 	if res404.StatusCode != http.StatusNotFound {
@@ -907,7 +907,7 @@ func TestDiscoveryManager_DistinctVariantCanarySeparation(t *testing.T) {
 	// 20 requests with canary header -> canary
 	for i := 0; i < 20; i++ {
 		req, _ := httpparser.NewRequest("GET", "/checkout/pay", "HTTP/1.1")
-		req.Host = "shop.example.com"
+		req.Header.Set("Host", "shop.example.com")
 		req.Header.Set("X-Version", "canary")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
@@ -919,7 +919,7 @@ func TestDiscoveryManager_DistinctVariantCanarySeparation(t *testing.T) {
 	// 20 requests without header -> baseline
 	for i := 0; i < 20; i++ {
 		req, _ := httpparser.NewRequest("GET", "/checkout/pay", "HTTP/1.1")
-		req.Host = "shop.example.com"
+		req.Header.Set("Host", "shop.example.com")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
 		if res.StatusCode != http.StatusOK || res.Body.String() != "baseline-response" {
@@ -930,7 +930,7 @@ func TestDiscoveryManager_DistinctVariantCanarySeparation(t *testing.T) {
 	// 10 requests with mismatched canary header (X-Version: v1) -> baseline
 	for i := 0; i < 10; i++ {
 		req, _ := httpparser.NewRequest("GET", "/checkout/pay", "HTTP/1.1")
-		req.Host = "shop.example.com"
+		req.Header.Set("Host", "shop.example.com")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
 		if res.StatusCode != http.StatusOK || res.Body.String() != "baseline-response" {

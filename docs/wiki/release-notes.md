@@ -17,15 +17,16 @@
 - **Missing Idle Connection Teardown on Proxy Teardown (`SEC-37`, CWE-772)**: Fixed `ReverseProxy.Close()` omission of `tr.CloseIdleConnections()`, which previously orphaned idle TCP sockets upon route removal or proxy closure.
 - **Cache Key Proliferation Risk**: Preempted cache map bloating by normalizing raw URLs to canonical `scheme://host[:port]` origins before caching.
 - **Egress Client mTLS Disconnect**: Fixed omission of client TLS configurations in `proxyToURL`, ensuring outbound egress proxying adheres to sidecar mTLS settings.
+- **TLSClientConfig NextProtos Concurrency Data Race**: Resolved Go standard library data race during concurrent TLS handshakes by implementing two-tier defensive cloning (`p.clientTLS.Clone()` in `getOrCreateProxy` and `opts.TLSClientConfig.Clone()` in `NewProxyWithOptions`), ensuring each `http.Transport` operates on an independent `*tls.Config` instance.
 
 ### Changed
 - **Reverse Proxy Core (`pkg/proxy/proxy.go`)**:
   - Extended `ProxyOptions` with `TLSClientConfig *tls.Config`.
-  - Attached `opts.TLSClientConfig` to `http.Transport` in `NewProxyWithOptions`.
+  - Added defensive cloning in `NewProxyWithOptions` (`tr.TLSClientConfig = opts.TLSClientConfig.Clone()`) to prevent shared-pointer `NextProtos` data races across concurrent transports.
   - Added `tr.CloseIdleConnections()` invocation inside `ReverseProxy.Close()`.
 - **Sidecar Proxy Engine (`pkg/sidecar/proxy.go`)**:
   - Extended `ProxyEngine` with `proxies map[string]*proxy.ReverseProxy`.
-  - Added `getOrCreateProxy` with thread-safe double-checked locking using `sync.RWMutex`.
+  - Added `getOrCreateProxy` with thread-safe double-checked locking using `sync.RWMutex` and defensive client TLS cloning (`p.clientTLS.Clone()`).
   - Pre-compiled client TLS configuration in `NewProxyEngine` and stored in `p.clientTLS`.
   - Updated `proxyToURL` to route requests through cached origin proxies.
   - Updated `ProxyEngine.Stop()` to iterate through and close all cached proxies.

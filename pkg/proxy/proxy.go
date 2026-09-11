@@ -520,7 +520,7 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 	}
 
 	if opts.TLSClientConfig != nil {
-		tr.TLSClientConfig = opts.TLSClientConfig
+		tr.TLSClientConfig = opts.TLSClientConfig.Clone()
 	}
 
 	client := &http.Client{

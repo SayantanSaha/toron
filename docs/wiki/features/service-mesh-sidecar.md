@@ -255,8 +255,8 @@ The enhanced sidecar proxy architecture eliminates these vulnerabilities across 
    ```
    When `ProxyEngine.Stop()` is invoked during pod shutdown or container lifecycle events, it iterates over all cached proxies in `p.proxies`, invoking `px.Close()` and releasing all idle TCP connections immediately, preventing socket leaks.
 
-5. **Client mTLS Propagation (`ProxyOptions.TLSClientConfig`)**:
-   [`ProxyOptions`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L466) includes `TLSClientConfig *tls.Config`. During initialization, `NewProxyEngine` compiles the client TLS configuration once via `BuildClientTLSConfig(cfg)`. When a cached proxy is created in `getOrCreateProxy`, `opts.TLSClientConfig: p.clientTLS` is passed directly to `NewProxyWithOptions`. Egress mutual TLS handshakes seamlessly validate upstream custom CA bundles and present client certificates (`cert_file`, `key_file`), satisfying [`REQ-097`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md) and [`SEC-35`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L481-L489).
+5. **Client mTLS Propagation & Defensive Cloning (`ProxyOptions.TLSClientConfig`)**:
+   [`ProxyOptions`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L466) includes `TLSClientConfig *tls.Config`. During initialization, `NewProxyEngine` compiles the client TLS configuration once via `BuildClientTLSConfig(cfg)`. When a cached proxy is created in `getOrCreateProxy`, `p.clientTLS.Clone()` is passed to `opts.TLSClientConfig`, and `NewProxyWithOptions` defensively clones it again (`tr.TLSClientConfig = opts.TLSClientConfig.Clone()`). This two-tier defensive cloning prevents Go standard library data races on `NextProtos` during concurrent TLS handshakes across multiple transports. Egress mutual TLS handshakes seamlessly validate upstream custom CA bundles and present client certificates (`cert_file`, `key_file`), satisfying [`REQ-097`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md) and [`SEC-35`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L481-L489).
 
 ### Proxy Caching & Connection Lifecycle Flow
 
@@ -274,7 +274,7 @@ flowchart TD
     WriteLock --> DoubleCheck{"Already Created<br/>by Concurrent Goroutine?"}
     DoubleCheck -- Yes --> WriteUnlock["p.mu.Unlock()"] --> Dispatch
     
-    DoubleCheck -- No --> NewProxy["proxy.NewProxyWithOptions:<br/>- Targets: [origin]<br/>- TLSClientConfig: p.clientTLS"]
+    DoubleCheck -- No --> NewProxy["proxy.NewProxyWithOptions:<br/>- Targets: [origin]<br/>- TLSClientConfig: p.clientTLS.Clone()"]
     NewProxy --> CacheStore["p.proxies[origin] = newPx"]
     CacheStore --> WriteUnlock --> Dispatch
     

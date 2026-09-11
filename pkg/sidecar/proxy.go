@@ -259,9 +259,13 @@ func (p *ProxyEngine) getOrCreateProxy(targetURL string) (*proxy.ReverseProxy, e
 		return px, nil
 	}
 
+	var clientTLS *tls.Config
+	if p.clientTLS != nil {
+		clientTLS = p.clientTLS.Clone()
+	}
 	opts := proxy.ProxyOptions{
 		Targets:         []string{origin},
-		TLSClientConfig: p.clientTLS,
+		TLSClientConfig: clientTLS,
 	}
 
 	newPx, err := proxy.NewProxyWithOptions(opts)

@@ -191,3 +191,126 @@ func TestExecuteRawTest_LatencyIsolation(t *testing.T) {
 		t.Errorf("expected LatencyUs < 100000 (100ms), got %d µs (probe timeout leaked into latency)", res.LatencyUs)
 	}
 }
+
+// TC-102-01: Rejection of HTTP 404 False-Positive Pass for Traversal
+func TestExecuteRawTest_Traversal_Rejects404AsFailure(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 1024)
+		_, _ = conn.Read(buf)
+		_, _ = conn.Write([]byte("HTTP/1.1 404 Not Found\r\nContent-Length: 9\r\n\r\nNot Found"))
+	}()
+
+	testCases := getTestCases()
+	var traversalTC TestCase
+	for _, tc := range testCases {
+		if tc.ID == "TRAVERSAL-001" {
+			traversalTC = tc
+			break
+		}
+	}
+	if traversalTC.ID == "" {
+		t.Fatalf("TRAVERSAL-001 test case not found")
+	}
+
+	res := executeRawTest(ln.Addr().String(), traversalTC)
+	if res.Passed {
+		t.Errorf("expected TRAVERSAL-001 to fail when server returns 404, but it passed")
+	}
+	if !strings.Contains(res.FailureReason, "404") {
+		t.Errorf("expected failure reason to mention status 404, got: %s", res.FailureReason)
+	}
+}
+
+// TC-102-02 & TC-102-03: Acceptance of HTTP 403 and 400 Active Defensive Status Codes
+func TestExecuteRawTest_Traversal_Accepts403And400(t *testing.T) {
+	for _, expectedCode := range []int{403, 400} {
+		ln, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("failed to listen: %v", err)
+		}
+
+		go func(code int) {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			buf := make([]byte, 1024)
+			_, _ = conn.Read(buf)
+			statusText := "Forbidden"
+			if code == 400 {
+				statusText = "Bad Request"
+			}
+			_, _ = conn.Write([]byte(strings.Join([]string{
+				"HTTP/1.1 " + string(rune('0'+code/100)) + string(rune('0'+(code/10)%10)) + string(rune('0'+code%10)) + " " + statusText,
+				"Content-Length: 0",
+				"\r\n",
+			}, "\r\n")))
+		}(expectedCode)
+
+		testCases := getTestCases()
+		var traversalTC TestCase
+		for _, tc := range testCases {
+			if tc.ID == "TRAVERSAL-001" {
+				traversalTC = tc
+				break
+			}
+		}
+
+		res := executeRawTest(ln.Addr().String(), traversalTC)
+		ln.Close()
+
+		if !res.Passed {
+			t.Errorf("expected status %d to pass active traversal oracle, failed with: %s", expectedCode, res.FailureReason)
+		}
+	}
+}
+
+// TC-102-04: Rejection of HTTP 200 Canary Leakage
+func TestExecuteRawTest_Traversal_Rejects200CanaryLeak(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		buf := make([]byte, 1024)
+		_, _ = conn.Read(buf)
+		// Server mistakenly leaks canary file
+		_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 42\r\n\r\nTORON_CANARY_TRAVERSAL_PROTECTION_VERIFIED\n"))
+	}()
+
+	testCases := getTestCases()
+	var traversalTC TestCase
+	for _, tc := range testCases {
+		if tc.ID == "TRAVERSAL-001" {
+			traversalTC = tc
+			break
+		}
+	}
+
+	res := executeRawTest(ln.Addr().String(), traversalTC)
+	if res.Passed {
+		t.Errorf("expected TRAVERSAL-001 to fail when server leaks canary with 200, but it passed")
+	}
+	if !strings.Contains(res.FailureReason, "200") {
+		t.Errorf("expected failure reason to mention status 200, got: %s", res.FailureReason)
+	}
+}

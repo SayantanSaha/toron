@@ -78,7 +78,8 @@ Transmits raw TCP byte streams containing deliberate RFC protocol violations, de
    - Null bytes (`0x00`) in URI paths.
    - Terminal control sequences (`0x07` Bell, `0x1B` ANSI escape) in headers and query parameters.
 4. **Path Traversal & Normalization (CWE-22 / RFC 3986)**:
-   - Raw dot-dot (`..`) segments escaping root boundaries.
+   - Strict active defense oracle: asserts `400 Bad Request` or `403 Forbidden` (`404 Not Found` rejected as false-positive).
+   - Raw dot-dot (`..`) segments escaping root boundaries targeting canary file (`canary_traversal.txt`).
    - Uppercase percent-encoded (`%2E%2E`) sequences.
    - Double percent-encoded (`%252e%252e`) sequences.
 5. **Heap Allocation Bounding (CWE-400)**:

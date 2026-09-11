@@ -214,3 +214,82 @@ func NewRequestFromStd(r *http.Request) *Request {
 	}
 	return req
 }
+
+// ValidateHTTP2Request validates semantic translation invariants on an incoming HTTP/2 request (RFC 7540 §8.1.2).
+// It rejects forbidden connection-specific headers, conflicting Content-Length declarations, and CRLF/NUL injection.
+func ValidateHTTP2Request(r *http.Request) error {
+	if r == nil {
+		return nil
+	}
+
+	// 1. CRLF and NUL character injection check on request-line elements
+	if hasCRLFOrNUL(r.Method) || hasCRLFOrNUL(r.RequestURI) || hasCRLFOrNUL(r.Host) {
+		return ErrHTTP2CRLFInjection
+	}
+	if r.URL != nil {
+		if hasCRLFOrNUL(r.URL.Path) || hasCRLFOrNUL(r.URL.RawQuery) {
+			return ErrHTTP2CRLFInjection
+		}
+	}
+
+	// 2. CRLF and NUL check on headers, plus RFC 7540 §8.1.2.2 forbidden connection headers
+	for k, vv := range r.Header {
+		if hasCRLFOrNUL(k) {
+			return ErrHTTP2CRLFInjection
+		}
+		for _, v := range vv {
+			if hasCRLFOrNUL(v) {
+				return ErrHTTP2CRLFInjection
+			}
+		}
+
+		lk := strings.ToLower(k)
+		switch lk {
+		case "transfer-encoding", "connection", "keep-alive", "proxy-connection":
+			return ErrHTTP2ForbiddenHeader
+		case "upgrade":
+			// RFC 8441: Upgrade is ONLY permitted if it's an extended CONNECT with :protocol
+			hasProto := r.Header.Get(":protocol") != ""
+			if !(r.Method == "CONNECT" && hasProto) {
+				return ErrHTTP2ForbiddenHeader
+			}
+		}
+	}
+
+	// Also check r.TransferEncoding slice if populated by stdlib
+	if len(r.TransferEncoding) > 0 {
+		return ErrHTTP2ForbiddenHeader
+	}
+
+	// 3. Content-Length invariant validation (H2.CL)
+	clHeaders := r.Header["Content-Length"]
+	if len(clHeaders) > 1 {
+		return ErrHTTP2MultipleContentLength
+	}
+	if len(clHeaders) == 1 {
+		clStr := strings.TrimSpace(clHeaders[0])
+		if strings.Contains(clStr, ",") {
+			return ErrHTTP2MultipleContentLength
+		}
+		if clStr == "" {
+			return ErrHTTP2MultipleContentLength
+		}
+		for _, ch := range clStr {
+			if ch < '0' || ch > '9' {
+				return ErrHTTP2MultipleContentLength
+			}
+		}
+	}
+
+	return nil
+}
+
+func hasCRLFOrNUL(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c == '\r' || c == '\n' || c == 0x00 {
+			return true
+		}
+	}
+	return false
+}

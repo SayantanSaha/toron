@@ -1226,3 +1226,48 @@ func TestReverseProxy_Close_ClosesIdleConnections(t *testing.T) {
 	emptyPx := &proxy.ReverseProxy{}
 	emptyPx.Close()
 }
+
+// TC-112-07: Upstream HTTP/1.1 Pseudo-Header Stripping Verification
+func TestProxy_HTTP2ToHTTP1_PseudoHeaderStripping(t *testing.T) {
+	var receivedHeaders http.Header
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedHeaders = r.Header.Clone()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstreamServer.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets: []string{upstreamServer.URL},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	// Simulate translated HTTP/2 request with pseudo-headers in req.Header
+	req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/2.0")
+	req.Header.Set(":protocol", "websocket")
+	req.Header.Set(":path", "/api/data")
+	req.Header.Set(":authority", "example.com")
+	req.Header.Set(":method", "GET")
+	req.Header.Set(":scheme", "https")
+	req.Header.Set("X-Normal-Header", "present")
+
+	res := httpparser.NewResponse()
+	px.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+
+	// Verify that NO headers received by upstreamServer start with ":"
+	for k := range receivedHeaders {
+		if strings.HasPrefix(k, ":") {
+			t.Errorf("pseudo-header leaked to upstream: %s", k)
+		}
+	}
+	if receivedHeaders.Get("X-Normal-Header") != "present" {
+		t.Errorf("expected X-Normal-Header to be forwarded, got %q", receivedHeaders.Get("X-Normal-Header"))
+	}
+}

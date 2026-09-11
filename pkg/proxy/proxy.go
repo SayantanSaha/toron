@@ -811,8 +811,11 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		}
 	}
 
-	// Copy original request headers, stripping RFC 7230 §6.1 hop-by-hop headers
+	// Copy original request headers, stripping RFC 7230 §6.1 hop-by-hop headers and HTTP/2 pseudo-headers
 	for key, values := range req.Header {
+		if strings.HasPrefix(key, ":") {
+			continue // Strip HTTP/2 pseudo-headers (:protocol, :path, :authority, etc.)
+		}
 		lowerKey := strings.ToLower(key)
 		if hopByHopHeaders[lowerKey] || customHopByHop[lowerKey] {
 			continue
@@ -1111,6 +1114,9 @@ func (p *ReverseProxy) serveWebSocketProxy(req *httpparser.Request, res *httppar
 	var reqBuf bytes.Buffer
 	fmt.Fprintf(&reqBuf, "%s %s HTTP/1.1\r\n", req.Method, reqURI)
 	for k, vv := range req.Header {
+		if strings.HasPrefix(k, ":") {
+			continue // Strip HTTP/2 pseudo-headers from HTTP/1.1 wire serialization
+		}
 		for _, v := range vv {
 			fmt.Fprintf(&reqBuf, "%s: %s\r\n", k, v)
 		}

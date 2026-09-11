@@ -178,3 +178,66 @@ func TestRequest_NewRequestFromStd_RemoteAddr(t *testing.T) {
 		t.Errorf("expected RemoteIP 192.0.2.10, got %v", ip)
 	}
 }
+
+func TestValidateHTTP2Request(t *testing.T) {
+	t.Run("nil_request", func(t *testing.T) {
+		if err := ValidateHTTP2Request(nil); err != nil {
+			t.Fatalf("expected nil error for nil request, got %v", err)
+		}
+	})
+
+	t.Run("valid_request", func(t *testing.T) {
+		stdReq, _ := http.NewRequest("GET", "https://example.com/api/v1/users?page=1", nil)
+		stdReq.Header.Set("User-Agent", "curl/7.88.1")
+		stdReq.Header.Set("Accept", "application/json")
+		if err := ValidateHTTP2Request(stdReq); err != nil {
+			t.Fatalf("expected valid request to pass, got %v", err)
+		}
+	})
+
+	t.Run("transfer_encoding_rejected", func(t *testing.T) {
+		stdReq, _ := http.NewRequest("POST", "https://example.com/api", nil)
+		stdReq.Header.Set("Transfer-Encoding", "chunked")
+		if err := ValidateHTTP2Request(stdReq); err == nil {
+			t.Fatal("expected error for Transfer-Encoding, got nil")
+		}
+	})
+
+	t.Run("connection_header_rejected", func(t *testing.T) {
+		stdReq, _ := http.NewRequest("GET", "https://example.com/api", nil)
+		stdReq.Header.Set("Connection", "keep-alive")
+		if err := ValidateHTTP2Request(stdReq); err == nil {
+			t.Fatal("expected error for Connection header, got nil")
+		}
+	})
+
+	t.Run("multiple_content_length_rejected", func(t *testing.T) {
+		stdReq, _ := http.NewRequest("POST", "https://example.com/api", nil)
+		stdReq.Header["Content-Length"] = []string{"10", "20"}
+		if err := ValidateHTTP2Request(stdReq); err == nil {
+			t.Fatal("expected error for multiple Content-Length, got nil")
+		}
+	})
+
+	t.Run("crlf_in_header_rejected", func(t *testing.T) {
+		stdReq, _ := http.NewRequest("GET", "https://example.com/api", nil)
+		stdReq.Header.Set("X-Custom", "evil\r\nHeader: foo")
+		if err := ValidateHTTP2Request(stdReq); err == nil {
+			t.Fatal("expected error for CRLF in header, got nil")
+		}
+	})
+}
+
+func BenchmarkValidateHTTP2Request(b *testing.B) {
+	stdReq, _ := http.NewRequest("GET", "https://example.com/api/v1/resource?id=100", nil)
+	stdReq.Header.Set("User-Agent", "benchmark-agent")
+	stdReq.Header.Set("Accept", "application/json")
+	stdReq.Header.Set("Content-Length", "0")
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		_ = ValidateHTTP2Request(stdReq)
+	}
+}

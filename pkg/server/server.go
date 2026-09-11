@@ -11,6 +11,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -327,6 +328,14 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 
 func (s *Server) http2AdapterHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Enforce HTTP/2 translation invariants (RFC 7540 §8.1.2, H2.CL, H2.TE, CRLF injection)
+		if err := httpparser.ValidateHTTP2Request(r); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(fmt.Sprintf(`{"error":"400 Bad Request: %s"}`, err.Error())))
+			return
+		}
+
 		req := httpparser.NewRequestFromStd(r)
 
 		if r.Method != "CONNECT" && r.Body != nil {
@@ -347,6 +356,21 @@ func (s *Server) http2AdapterHandler() http.Handler {
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusRequestEntityTooLarge)
 				_, _ = w.Write([]byte(`{"error":"413 Payload Too Large"}`))
+				return
+			}
+			// H2.CL Invariant Check: Verify that declared Content-Length strictly equals received body bytes
+			if clHdr := r.Header.Get("Content-Length"); clHdr != "" {
+				cl, parseErr := strconv.ParseInt(strings.TrimSpace(clHdr), 10, 64)
+				if parseErr != nil || cl != int64(len(bodyBytes)) {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = w.Write([]byte(`{"error":"400 Bad Request: Content-Length does not match received body length"}`))
+					return
+				}
+			} else if r.ContentLength > 0 && r.ContentLength != int64(len(bodyBytes)) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"400 Bad Request: Content-Length does not match received body length"}`))
 				return
 			}
 			req.Body = bytes.NewReader(bodyBytes)

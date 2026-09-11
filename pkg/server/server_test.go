@@ -1871,3 +1871,200 @@ func TestServer_HTTP1Pipelining(t *testing.T) {
 	})
 }
 
+// TC-112-01: H2.TE Rejection (Transfer-Encoding in HTTP/2)
+func TestServer_HTTP2_TransferEncodingRejected(t *testing.T) {
+	r := router.New()
+	r.POST("/test", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+	})
+
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	httpReq := httptest.NewRequest("POST", "/test", strings.NewReader("body"))
+	httpReq.Header.Set("Transfer-Encoding", "chunked")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, httpReq)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for HTTP/2 with Transfer-Encoding, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "400 Bad Request") {
+		t.Errorf("expected 400 Bad Request error body, got %q", rec.Body.String())
+	}
+}
+
+// TC-112-02: H2.CL Multiple / Conflicting Content-Length Rejection
+func TestServer_HTTP2_MultipleContentLengthRejected(t *testing.T) {
+	r := router.New()
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	t.Run("duplicate_headers", func(t *testing.T) {
+		httpReq := httptest.NewRequest("POST", "/test", strings.NewReader("hello"))
+		httpReq.Header["Content-Length"] = []string{"5", "10"}
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, httpReq)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for duplicate Content-Length, got %d", rec.Code)
+		}
+	})
+
+	t.Run("comma_separated_values", func(t *testing.T) {
+		httpReq := httptest.NewRequest("POST", "/test", strings.NewReader("hello"))
+		httpReq.Header.Set("Content-Length", "5, 10")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, httpReq)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for comma-separated Content-Length, got %d", rec.Code)
+		}
+	})
+
+	t.Run("non_numeric_value", func(t *testing.T) {
+		httpReq := httptest.NewRequest("POST", "/test", strings.NewReader("hello"))
+		httpReq.Header.Set("Content-Length", "five")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, httpReq)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 Bad Request for non-numeric Content-Length, got %d", rec.Code)
+		}
+	})
+}
+
+// TC-112-03: H2.CL Payload Length Discrepancy Rejection
+func TestServer_HTTP2_ContentLengthMismatchRejected(t *testing.T) {
+	r := router.New()
+	r.POST("/test", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+	})
+
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	// Declared length 20, but body only provides 5 bytes
+	httpReq := httptest.NewRequest("POST", "/test", strings.NewReader("hello"))
+	httpReq.Header.Set("Content-Length", "20")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, httpReq)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 Bad Request for Content-Length mismatch, got %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "Content-Length") {
+		t.Errorf("expected Content-Length mismatch error, got %q", rec.Body.String())
+	}
+}
+
+// TC-112-04: CRLF and NUL Binary Injection Rejection
+func TestServer_HTTP2_CRLFInjectionRejected(t *testing.T) {
+	r := router.New()
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	testCases := []struct {
+		name  string
+		setup func(req *http.Request)
+	}{
+		{
+			name: "crlf_in_header_value",
+			setup: func(req *http.Request) {
+				req.Header.Set("X-Custom", "value\r\nInjected: evil")
+			},
+		},
+		{
+			name: "crlf_in_path",
+			setup: func(req *http.Request) {
+				req.URL.Path = "/api\r\nGET /smuggled"
+			},
+		},
+		{
+			name: "nul_in_header_value",
+			setup: func(req *http.Request) {
+				req.Header.Set("X-Custom", "evil\x00data")
+			},
+		},
+		{
+			name: "crlf_in_query",
+			setup: func(req *http.Request) {
+				req.URL.RawQuery = "param=safe\r\nHost: evil.com"
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			httpReq := httptest.NewRequest("GET", "/test", nil)
+			tc.setup(httpReq)
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, httpReq)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("[%s] expected 400 Bad Request, got %d", tc.name, rec.Code)
+			}
+			if !strings.Contains(rec.Body.String(), "400 Bad Request") {
+				t.Errorf("[%s] expected 400 Bad Request error body, got %q", tc.name, rec.Body.String())
+			}
+		})
+	}
+}
+
+// TC-112-05: Forbidden Connection Headers Rejection
+func TestServer_HTTP2_ForbiddenConnectionHeadersRejected(t *testing.T) {
+	r := router.New()
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	forbiddenHeaders := []string{
+		"Connection",
+		"Keep-Alive",
+		"Proxy-Connection",
+		"Upgrade",
+	}
+
+	for _, hdr := range forbiddenHeaders {
+		t.Run(hdr, func(t *testing.T) {
+			httpReq := httptest.NewRequest("GET", "/test", nil)
+			httpReq.Header.Set(hdr, "close")
+			rec := httptest.NewRecorder()
+
+			handler.ServeHTTP(rec, httpReq)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 Bad Request for forbidden header %s, got %d", hdr, rec.Code)
+			}
+		})
+	}
+}
+
+// TC-112-06: RFC 8441 Extended CONNECT Compatibility
+func TestServer_HTTP2_ExtendedConnectAllowed(t *testing.T) {
+	r := router.New()
+	r.Handle("CONNECT", "/chat", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusSwitchingProtocols)
+	})
+
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	httpReq := httptest.NewRequest("CONNECT", "/chat", nil)
+	httpReq.Header.Set(":protocol", "websocket")
+	httpReq.Header.Set("Upgrade", "websocket")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, httpReq)
+
+	// In RFC 8441, switching protocols becomes 200 OK in http2AdapterHandler
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK for valid extended CONNECT, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+}
+

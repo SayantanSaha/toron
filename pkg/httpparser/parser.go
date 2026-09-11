@@ -17,6 +17,10 @@ var (
 	ErrBodyTooLarge                = errors.New("httpparser: request payload body too large")
 	ErrUnsupportedProtocol         = errors.New("httpparser: unsupported HTTP protocol version")
 	ErrUnsupportedTransferEncoding = errors.New("httpparser: unsupported transfer encoding")
+	ErrHTTP2ForbiddenHeader        = fmt.Errorf("%w: forbidden connection-specific header in HTTP/2 request (RFC 7540 §8.1.2.2)", ErrBadRequest)
+	ErrHTTP2MultipleContentLength  = fmt.Errorf("%w: multiple or conflicting Content-Length headers in HTTP/2 request", ErrBadRequest)
+	ErrHTTP2ContentLengthMismatch  = fmt.Errorf("%w: Content-Length does not match received body length in HTTP/2 request", ErrBadRequest)
+	ErrHTTP2CRLFInjection          = fmt.Errorf("%w: CRLF or NUL injection detected in HTTP/2 request", ErrBadRequest)
 )
 
 // maxPooledBodySize defines the maximum body payload size (64 KB) handled by bodyBufferPool.

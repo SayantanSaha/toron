@@ -4,8 +4,10 @@ import (
 	"bufio"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"testing"
 
 	"toron/pkg/httpparser"
@@ -586,5 +588,147 @@ func BenchmarkParseRequest_InvalidTokenRejection(b *testing.B) {
 		}
 	}
 }
+
+// TC-110-01: Standard Payload Body Buffer Pooling (<= 64 KB)
+func TestParseRequest_PooledBodyLifecycle(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+	bodyData := bytes.Repeat([]byte("test-payload-data-"), 100) // ~1.9 KB
+	rawReq := fmt.Sprintf("POST /api/upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: %d\r\n\r\n%s", len(bodyData), string(bodyData))
+
+	req, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+	if err != nil {
+		t.Fatalf("unexpected parse error: %v", err)
+	}
+
+	readBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
+	if !bytes.Equal(readBody, bodyData) {
+		t.Fatalf("body data mismatch: expected %d bytes, got %d", len(bodyData), len(readBody))
+	}
+
+	if err := req.CloseBody(); err != nil {
+		t.Fatalf("unexpected CloseBody error: %v", err)
+	}
+
+	// Immediate reuse from pool should yield clean buffer without corruption
+	bodyData2 := []byte("second-request-body-payload")
+	rawReq2 := fmt.Sprintf("POST /api/upload2 HTTP/1.1\r\nHost: localhost\r\nContent-Length: %d\r\n\r\n%s", len(bodyData2), string(bodyData2))
+
+	req2, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq2), opts)
+	if err != nil {
+		t.Fatalf("unexpected second parse error: %v", err)
+	}
+
+	readBody2, err := io.ReadAll(req2.Body)
+	if err != nil {
+		t.Fatalf("failed to read body 2: %v", err)
+	}
+	if !bytes.Equal(readBody2, bodyData2) {
+		t.Fatalf("second body mismatch: expected %q, got %q", string(bodyData2), string(readBody2))
+	}
+	_ = req2.CloseBody()
+}
+
+// TC-110-02: Large Payload Heap Allocation Fallback (> 64 KB)
+func TestParseRequest_LargeBodyFallback(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+	largeBody := bytes.Repeat([]byte("large-payload-chunk-"), 5000) // ~100 KB > 64 KB
+	rawReq := fmt.Sprintf("POST /api/large HTTP/1.1\r\nHost: localhost\r\nContent-Length: %d\r\n\r\n%s", len(largeBody), string(largeBody))
+
+	req, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+	if err != nil {
+		t.Fatalf("unexpected parse error on large payload: %v", err)
+	}
+
+	readBody, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("failed to read large body: %v", err)
+	}
+	if !bytes.Equal(readBody, largeBody) {
+		t.Fatalf("large body mismatch: expected %d bytes, got %d", len(largeBody), len(readBody))
+	}
+
+	if err := req.CloseBody(); err != nil {
+		t.Fatalf("CloseBody failed on large payload: %v", err)
+	}
+}
+
+// TC-110-03: Idempotent Close and Double-Free Prevention
+func TestParseRequest_IdempotentClose(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+	rawReq := "POST /api/idempotent HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\n\r\nhello"
+
+	req, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Close multiple times in succession
+	for i := 0; i < 5; i++ {
+		if err := req.CloseBody(); err != nil {
+			t.Fatalf("iteration %d CloseBody returned error: %v", i, err)
+		}
+	}
+}
+
+// TC-110-04: Concurrent Pool Race Safety
+func TestParseRequest_ConcurrentPoolRace(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+	var wg sync.WaitGroup
+	numWorkers := 30
+	iterations := 20
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				content := fmt.Sprintf("worker-%d-iter-%d-payload", workerID, j)
+				rawReq := fmt.Sprintf("POST /api/race HTTP/1.1\r\nHost: localhost\r\nContent-Length: %d\r\n\r\n%s", len(content), content)
+				req, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+				if err != nil {
+					t.Errorf("worker %d parse error: %v", workerID, err)
+					return
+				}
+				readBytes, err := io.ReadAll(req.Body)
+				if err != nil {
+					t.Errorf("worker %d read error: %v", workerID, err)
+					return
+				}
+				if string(readBytes) != content {
+					t.Errorf("worker %d data corruption: expected %q, got %q", workerID, content, string(readBytes))
+					return
+				}
+				_ = req.CloseBody()
+			}
+		}(i)
+	}
+
+	wg.Wait()
+}
+
+// TC-110-05: Allocation Reduction Microbenchmark for Pooled Body Reading
+func BenchmarkParseRequest_PooledBody(b *testing.B) {
+	body := bytes.Repeat([]byte("a"), 1024)
+	raw := fmt.Sprintf("POST /submit HTTP/1.1\r\nHost: example.com\r\nContent-Length: %d\r\n\r\n%s", len(body), string(body))
+	payload := []byte(raw)
+	opts := httpparser.DefaultParserOptions()
+	r := bytes.NewReader(payload)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		r.Reset(payload)
+		req, err := httpparser.ParseRequest(r, opts)
+		if err != nil {
+			b.Fatalf("unexpected error: %v", err)
+		}
+		_ = req.CloseBody()
+	}
+}
+
 
 

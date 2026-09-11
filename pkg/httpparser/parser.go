@@ -8,6 +8,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 var (
@@ -17,6 +18,51 @@ var (
 	ErrUnsupportedProtocol         = errors.New("httpparser: unsupported HTTP protocol version")
 	ErrUnsupportedTransferEncoding = errors.New("httpparser: unsupported transfer encoding")
 )
+
+// maxPooledBodySize defines the maximum body payload size (64 KB) handled by bodyBufferPool.
+const maxPooledBodySize = 64 * 1024
+
+var (
+	lineBufferPool = sync.Pool{
+		New: func() interface{} {
+			return bytes.NewBuffer(make([]byte, 0, 1024))
+		},
+	}
+
+	bodyBufferPool = sync.Pool{
+		New: func() interface{} {
+			b := make([]byte, maxPooledBodySize)
+			return &b
+		},
+	}
+)
+
+type pooledBodyReader struct {
+	r      *bytes.Reader
+	bufPtr *[]byte
+	once   sync.Once
+}
+
+func newPooledBodyReader(b []byte, bufPtr *[]byte) *pooledBodyReader {
+	return &pooledBodyReader{
+		r:      bytes.NewReader(b),
+		bufPtr: bufPtr,
+	}
+}
+
+func (p *pooledBodyReader) Read(b []byte) (int, error) {
+	return p.r.Read(b)
+}
+
+func (p *pooledBodyReader) Close() error {
+	p.once.Do(func() {
+		if p.bufPtr != nil {
+			bodyBufferPool.Put(p.bufPtr)
+			p.bufPtr = nil
+		}
+	})
+	return nil
+}
 
 // validHeaderTokenTable defines RFC 7230 §3.2.6 token characters:
 // token = 1*tchar
@@ -170,18 +216,31 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 		req.Header.Set("Content-Length", strconv.FormatInt(clInt, 10))
 
 		// Read Body payload
-		bodyBuf := make([]byte, clInt)
-		if _, err := io.ReadFull(bufr, bodyBuf); err != nil {
-			return nil, fmt.Errorf("%w: unexpected EOF reading body", ErrBadRequest)
+		if clInt <= maxPooledBodySize {
+			bufPtr := bodyBufferPool.Get().(*[]byte)
+			buf := *bufPtr
+			if _, err := io.ReadFull(bufr, buf[:clInt]); err != nil {
+				bodyBufferPool.Put(bufPtr)
+				return nil, fmt.Errorf("%w: unexpected EOF reading body", ErrBadRequest)
+			}
+			req.Body = newPooledBodyReader(buf[:clInt], bufPtr)
+		} else {
+			bodyBuf := make([]byte, clInt)
+			if _, err := io.ReadFull(bufr, bodyBuf); err != nil {
+				return nil, fmt.Errorf("%w: unexpected EOF reading body", ErrBadRequest)
+			}
+			req.Body = io.NopCloser(bytes.NewReader(bodyBuf))
 		}
-		req.Body = bytes.NewReader(bodyBuf)
 	}
 
 	return req, nil
 }
 
 func readLineBounded(r *bufio.Reader, maxBytes int) (string, error) {
-	var buf strings.Builder
+	buf := lineBufferPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer lineBufferPool.Put(buf)
+
 	for {
 		b, err := r.ReadByte()
 		if err != nil {

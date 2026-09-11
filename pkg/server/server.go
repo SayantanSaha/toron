@@ -312,8 +312,11 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		if err := res.Serialize(conn); err != nil {
+			_ = req.CloseBody()
 			return fmt.Errorf("server: failed to write response: %w", err)
 		}
+
+		_ = req.CloseBody()
 
 		outConnHeader := strings.ToLower(res.Header.Get("Connection"))
 		if connHeader == "close" || outConnHeader == "close" {

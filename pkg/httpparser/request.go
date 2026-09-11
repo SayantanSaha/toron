@@ -86,6 +86,17 @@ func (r *Request) IsWebSocketUpgrade() bool {
 	return false
 }
 
+// CloseBody closes the request body if it implements io.Closer.
+func (r *Request) CloseBody() error {
+	if r == nil || r.Body == nil {
+		return nil
+	}
+	if closer, ok := r.Body.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
 // NewRequest creates a Request with initialized fields.
 func NewRequest(method, reqURI, proto string) (*Request, error) {
 	parsedURL, err := url.ParseRequestURI(reqURI)

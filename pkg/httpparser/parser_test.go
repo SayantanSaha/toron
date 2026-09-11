@@ -338,3 +338,62 @@ func TestParseRequest_ContentLengthMultiplicityAndConflict(t *testing.T) {
 	}
 }
 
+// --- In-Process Microbenchmarks (TST-05 / REQ-105) ---
+
+// BenchmarkParseRequest_WhitespaceRejection measures nanosecond-level fail-fast rejection
+// of RFC 7230 §3.2.4 whitespace violations preceding the field colon.
+func BenchmarkParseRequest_WhitespaceRejection(b *testing.B) {
+	payload := []byte("GET / HTTP/1.1\r\nHost : example.com\r\nUser-Agent: toron-bench\r\n\r\n")
+	opts := httpparser.DefaultParserOptions()
+	r := bytes.NewReader(payload)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		r.Reset(payload)
+		_, err := httpparser.ParseRequest(r, opts)
+		if err == nil {
+			b.Fatal("expected whitespace rejection error, got nil")
+		}
+	}
+}
+
+// BenchmarkParseRequest_MultipleCL measures nanosecond-level fail-fast rejection
+// of RFC 7230 §3.3.2 conflicting multiple Content-Length headers.
+func BenchmarkParseRequest_MultipleCL(b *testing.B) {
+	payload := []byte("POST /api/v1/submit HTTP/1.1\r\nHost: example.com\r\nContent-Length: 5\r\nContent-Length: 10\r\n\r\nhello")
+	opts := httpparser.DefaultParserOptions()
+	r := bytes.NewReader(payload)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		r.Reset(payload)
+		_, err := httpparser.ParseRequest(r, opts)
+		if err == nil {
+			b.Fatal("expected multiple Content-Length rejection error, got nil")
+		}
+	}
+}
+
+// BenchmarkParseRequest_ValidBaseline measures baseline parsing latency and memory allocation profile
+// of a valid RFC 7230 HTTP/1.1 request for comparative ablation.
+func BenchmarkParseRequest_ValidBaseline(b *testing.B) {
+	payload := []byte("GET /api/v1/resource HTTP/1.1\r\nHost: example.com\r\nUser-Agent: toron-bench\r\nAccept: application/json\r\n\r\n")
+	opts := httpparser.DefaultParserOptions()
+	r := bytes.NewReader(payload)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		r.Reset(payload)
+		_, err := httpparser.ParseRequest(r, opts)
+		if err != nil {
+			b.Fatalf("unexpected parse error on valid baseline request: %v", err)
+		}
+	}
+}
+

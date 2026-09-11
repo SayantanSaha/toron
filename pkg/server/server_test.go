@@ -749,6 +749,7 @@ func TestServer_UpgradedConn_IdleTimeout(t *testing.T) {
 
 	cfg := server.DefaultConfig()
 	cfg.Addr = "127.0.0.1:0"
+	cfg.WorkerPoolSize = 8
 	cfg.UpgradeIdleTimeout = 150 * time.Millisecond
 	cfg.ReadTimeout = 2 * time.Second
 
@@ -768,13 +769,13 @@ func TestServer_UpgradedConn_IdleTimeout(t *testing.T) {
 		_ = srv.Shutdown(ctx)
 	}()
 
-	baselineGoroutines := runtime.NumGoroutine()
-
 	conn, err := net.Dial("tcp", ln.Addr().String())
 	if err != nil {
 		t.Fatalf("failed to dial server: %v", err)
 	}
 	defer conn.Close()
+
+	baselineGoroutines := runtime.NumGoroutine()
 
 	reqStr := "GET /ws-idle HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"
 	if _, err := conn.Write([]byte(reqStr)); err != nil {

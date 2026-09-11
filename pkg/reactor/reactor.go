@@ -31,6 +31,7 @@ func (f HandlerFunc) HandleConn(ctx context.Context, conn net.Conn) error {
 type Config struct {
 	Addr           string
 	WorkerPoolSize int
+	MaxQueueSize   int
 	ReadTimeout    time.Duration
 	WriteTimeout   time.Duration
 	IdleTimeout    time.Duration
@@ -42,6 +43,7 @@ func DefaultConfig() Config {
 	return Config{
 		Addr:           ":8080",
 		WorkerPoolSize: 128,
+		MaxQueueSize:   512,
 		ReadTimeout:    5 * time.Second,
 		WriteTimeout:   5 * time.Second,
 		IdleTimeout:    30 * time.Second,
@@ -55,9 +57,12 @@ type Reactor struct {
 	handler    Handler
 	listener   net.Listener
 	bufferPool *sync.Pool
+	tasks      chan net.Conn
 
 	connsMu sync.Mutex
 	conns   map[net.Conn]struct{}
+
+	activeWorkers atomic.Int64
 
 	ctx        context.Context
 	cancel     context.CancelFunc
@@ -69,6 +74,9 @@ type Reactor struct {
 func New(cfg Config, handler Handler) *Reactor {
 	if cfg.WorkerPoolSize <= 0 {
 		cfg.WorkerPoolSize = 64
+	}
+	if cfg.MaxQueueSize <= 0 {
+		cfg.MaxQueueSize = cfg.WorkerPoolSize * 4
 	}
 	if cfg.MaxBufferBytes <= 0 {
 		cfg.MaxBufferBytes = 32 * 1024
@@ -88,6 +96,7 @@ func New(cfg Config, handler Handler) *Reactor {
 		config:     cfg,
 		handler:    handler,
 		bufferPool: pool,
+		tasks:      make(chan net.Conn, cfg.MaxQueueSize),
 		conns:      make(map[net.Conn]struct{}),
 		ctx:        ctx,
 		cancel:     cancel,
@@ -104,6 +113,24 @@ func (r *Reactor) PutBuffer(b *[]byte) {
 	if b != nil {
 		r.bufferPool.Put(b)
 	}
+}
+
+// ActiveWorkers returns the number of worker goroutines currently executing connection handlers.
+func (r *Reactor) ActiveWorkers() int {
+	return int(r.activeWorkers.Load())
+}
+
+// QueueLen returns the number of accepted connections currently queued in the task channel.
+func (r *Reactor) QueueLen() int {
+	if r.tasks == nil {
+		return 0
+	}
+	return len(r.tasks)
+}
+
+// WorkerPoolSize returns the configured worker pool capacity.
+func (r *Reactor) WorkerPoolSize() int {
+	return r.config.WorkerPoolSize
 }
 
 // ListenAndServe starts the TCP listener and worker event loops.
@@ -125,10 +152,26 @@ func (r *Reactor) Addr() net.Addr {
 
 // Serve accepts incoming TCP connections on the provided net.Listener.
 func (r *Reactor) Serve(ln net.Listener) error {
+	if r.isShutdown.Load() {
+		return ErrServerClosed
+	}
+
 	r.listener = ln
 
+	if r.tasks == nil {
+		r.tasks = make(chan net.Conn, r.config.MaxQueueSize)
+	}
+
+	// Start bounded worker pool
+	for i := 0; i < r.config.WorkerPoolSize; i++ {
+		r.wg.Add(1)
+		go r.workerLoop()
+	}
+
 	defer func() {
+		close(r.tasks)
 		r.wg.Wait()
+		r.tasks = nil
 	}()
 
 	for {
@@ -151,12 +194,50 @@ func (r *Reactor) Serve(ln net.Listener) error {
 		}
 
 		r.trackConn(conn, true)
-		r.wg.Add(1)
-		go func(c net.Conn) {
-			defer r.wg.Done()
-			defer r.trackConn(c, false)
-			r.processConn(c)
-		}(conn)
+
+		select {
+		case r.tasks <- conn:
+		case <-r.ctx.Done():
+			r.trackConn(conn, false)
+			_ = conn.Close()
+			return ErrServerClosed
+		}
+	}
+}
+
+// workerLoop processes connection jobs from the tasks channel.
+func (r *Reactor) workerLoop() {
+	defer r.wg.Done()
+
+	for {
+		select {
+		case conn, ok := <-r.tasks:
+			if !ok {
+				return
+			}
+			func() {
+				r.activeWorkers.Add(1)
+				defer func() {
+					r.trackConn(conn, false)
+					r.activeWorkers.Add(-1)
+				}()
+				r.processConn(conn)
+			}()
+		case <-r.ctx.Done():
+			// Context is cancelled. Drain any remaining closed connections in queue.
+			for {
+				select {
+				case conn, ok := <-r.tasks:
+					if !ok {
+						return
+					}
+					r.trackConn(conn, false)
+					_ = conn.Close()
+				default:
+					return
+				}
+			}
+		}
 	}
 }
 

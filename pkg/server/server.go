@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -180,6 +181,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 	}
 
+	br := bufio.NewReader(conn)
 	firstRequest := true
 	for {
 		select {
@@ -189,14 +191,14 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		timeout := s.config.ReadTimeout
-		if !firstRequest && s.config.IdleTimeout > 0 {
+		if !firstRequest && br.Buffered() == 0 && s.config.IdleTimeout > 0 {
 			timeout = s.config.IdleTimeout
 		}
 		if timeout > 0 {
 			_ = conn.SetReadDeadline(time.Now().Add(timeout))
 		}
 
-		req, err := httpparser.ParseRequest(conn, opts)
+		req, err := httpparser.ParseRequest(br, opts)
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				return nil
@@ -294,7 +296,13 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 				if idleTimeout <= 0 {
 					idleTimeout = 60 * time.Second
 				}
-				s.relayUpgradedStreams(conn, res.UpgradedConn, idleTimeout)
+				var streamConn net.Conn = conn
+				if br.Buffered() > 0 {
+					unconsumed := make([]byte, br.Buffered())
+					_, _ = io.ReadFull(br, unconsumed)
+					streamConn = &prefixConn{Conn: conn, prefix: unconsumed}
+				}
+				s.relayUpgradedStreams(streamConn, res.UpgradedConn, idleTimeout)
 				return nil
 			}
 		}

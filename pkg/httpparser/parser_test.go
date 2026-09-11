@@ -1,6 +1,7 @@
 package httpparser_test
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"io"
@@ -394,6 +395,36 @@ func BenchmarkParseRequest_ValidBaseline(b *testing.B) {
 		if err != nil {
 			b.Fatalf("unexpected parse error on valid baseline request: %v", err)
 		}
+	}
+}
+
+// TC-108-05: Verify *bufio.Reader preservation and reuse across consecutive ParseRequest calls
+func TestParseRequest_BufioReaderReuse(t *testing.T) {
+	pipelinedData := "GET /first HTTP/1.1\r\nHost: localhost\r\n\r\nGET /second HTTP/1.1\r\nHost: localhost\r\n\r\n"
+	br := bufio.NewReader(bytes.NewBufferString(pipelinedData))
+	opts := httpparser.DefaultParserOptions()
+
+	// Parse first request
+	req1, err := httpparser.ParseRequest(br, opts)
+	if err != nil {
+		t.Fatalf("unexpected error parsing request 1: %v", err)
+	}
+	if req1.Path != "/first" {
+		t.Errorf("expected path /first, got %s", req1.Path)
+	}
+
+	// Unconsumed bytes of request 2 must remain in br
+	if br.Buffered() == 0 {
+		t.Fatalf("expected buffered bytes remaining in br, got 0")
+	}
+
+	// Parse second request using the EXACT same *bufio.Reader
+	req2, err := httpparser.ParseRequest(br, opts)
+	if err != nil {
+		t.Fatalf("unexpected error parsing request 2 from preserved bufio.Reader: %v", err)
+	}
+	if req2.Path != "/second" {
+		t.Errorf("expected path /second, got %s", req2.Path)
 	}
 }
 

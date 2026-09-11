@@ -41,7 +41,12 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 		opts.MaxBodyBytes = 4 * 1024 * 1024
 	}
 
-	bufr := bufio.NewReader(r)
+	var bufr *bufio.Reader
+	if br, ok := r.(*bufio.Reader); ok {
+		bufr = br
+	} else {
+		bufr = bufio.NewReader(r)
+	}
 
 	// Read Request Line (e.g. "GET /index.html HTTP/1.1\r\n")
 	requestLine, err := readLineBounded(bufr, opts.MaxHeaderBytes)

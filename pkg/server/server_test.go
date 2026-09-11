@@ -1583,3 +1583,290 @@ func TestServer_ResponseConnectionClose_SocketTeardown(t *testing.T) {
 		}
 	})
 }
+
+// TC-108-01 through TC-108-04: HTTP/1.1 Pipelining and Persistent Connection Tests
+func TestServer_HTTP1Pipelining(t *testing.T) {
+	r := router.New()
+
+	r.GET("/pipe1", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("response-1")
+	})
+
+	r.GET("/pipe2", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("response-2")
+	})
+
+	r.GET("/pipe3", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("response-3")
+	})
+
+	r.POST("/upload", func(req *httpparser.Request, res *httpparser.Response) {
+		body, _ := io.ReadAll(req.Body)
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("received:" + string(body))
+	})
+
+	r.GET("/status", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("status-ok")
+	})
+
+	var upstreamPipeEnd net.Conn
+	var pipeMu sync.Mutex
+	r.GET("/upgrade", func(req *httpparser.Request, res *httpparser.Response) {
+		c1, c2 := net.Pipe()
+		pipeMu.Lock()
+		upstreamPipeEnd = c2
+		pipeMu.Unlock()
+		res.SetStatus(http.StatusSwitchingProtocols)
+		res.Header.Set("Upgrade", "websocket")
+		res.Header.Set("Connection", "Upgrade")
+		res.UpgradedConn = c1
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.ReadTimeout = 2 * time.Second
+	cfg.IdleTimeout = 2 * time.Second
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", cfg.Addr)
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	addr := ln.Addr().String()
+
+	readResponse := func(reader *bufio.Reader) (string, int, string, error) {
+		statusLine, err := reader.ReadString('\n')
+		if err != nil {
+			return "", 0, "", err
+		}
+		var statusCode int
+		if strings.Contains(statusLine, "200") {
+			statusCode = 200
+		} else if strings.Contains(statusLine, "101") {
+			statusCode = 101
+		} else {
+			statusCode = 400
+		}
+
+		headers := make(http.Header)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return statusLine, statusCode, "", err
+			}
+			lineTrimmed := strings.TrimRight(line, "\r\n")
+			if lineTrimmed == "" {
+				break
+			}
+			parts := strings.SplitN(lineTrimmed, ":", 2)
+			if len(parts) == 2 {
+				headers.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+			}
+		}
+
+		clStr := headers.Get("Content-Length")
+		var body string
+		if clStr != "" {
+			var cl int
+			_, _ = fmt.Sscanf(clStr, "%d", &cl)
+			if cl > 0 {
+				bodyBytes := make([]byte, cl)
+				_, err = io.ReadFull(reader, bodyBytes)
+				if err != nil {
+					return statusLine, statusCode, "", err
+				}
+				body = string(bodyBytes)
+			}
+		}
+		return headers.Get("Connection"), statusCode, body, nil
+	}
+
+	// TC-108-01: Dual and Multi-Request GET Pipelining in single write
+	t.Run("TC-108-01: Multi-Request GET Pipelining", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer conn.Close()
+
+		pipelinedPayload := "GET /pipe1 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /pipe2 HTTP/1.1\r\nHost: localhost\r\n\r\n" +
+			"GET /pipe3 HTTP/1.1\r\nHost: localhost\r\n\r\n"
+
+		if _, err := conn.Write([]byte(pipelinedPayload)); err != nil {
+			t.Fatalf("failed to write pipelined requests: %v", err)
+		}
+
+		reader := bufio.NewReader(conn)
+
+		// Response 1
+		_, code1, body1, err := readResponse(reader)
+		if err != nil {
+			t.Fatalf("failed to read response 1: %v", err)
+		}
+		if code1 != 200 || body1 != "response-1" {
+			t.Fatalf("response 1 mismatch: got code %d, body %q", code1, body1)
+		}
+
+		// Response 2
+		_, code2, body2, err := readResponse(reader)
+		if err != nil {
+			t.Fatalf("failed to read response 2: %v", err)
+		}
+		if code2 != 200 || body2 != "response-2" {
+			t.Fatalf("response 2 mismatch: got code %d, body %q", code2, body2)
+		}
+
+		// Response 3
+		_, code3, body3, err := readResponse(reader)
+		if err != nil {
+			t.Fatalf("failed to read response 3: %v", err)
+		}
+		if code3 != 200 || body3 != "response-3" {
+			t.Fatalf("response 3 mismatch: got code %d, body %q", code3, body3)
+		}
+	})
+
+	// TC-108-02: Pipelined POST with Body Followed by GET
+	t.Run("TC-108-02: Pipelined POST with Body Followed by GET", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer conn.Close()
+
+		postAndGet := "POST /upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 11\r\n\r\nhello-world" +
+			"GET /status HTTP/1.1\r\nHost: localhost\r\n\r\n"
+
+		if _, err := conn.Write([]byte(postAndGet)); err != nil {
+			t.Fatalf("failed to write POST + GET: %v", err)
+		}
+
+		reader := bufio.NewReader(conn)
+
+		// Response 1 (POST)
+		_, code1, body1, err := readResponse(reader)
+		if err != nil {
+			t.Fatalf("failed to read POST response: %v", err)
+		}
+		if code1 != 200 || body1 != "received:hello-world" {
+			t.Fatalf("POST response mismatch: got code %d, body %q", code1, body1)
+		}
+
+		// Response 2 (GET)
+		_, code2, body2, err := readResponse(reader)
+		if err != nil {
+			t.Fatalf("failed to read GET response: %v", err)
+		}
+		if code2 != 200 || body2 != "status-ok" {
+			t.Fatalf("GET response mismatch: got code %d, body %q", code2, body2)
+		}
+	})
+
+	// TC-108-03: Pipelined Request with Connection Close
+	t.Run("TC-108-03: Pipelined Request with Connection Close", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer conn.Close()
+
+		reqWithClose := "GET /pipe1 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" +
+			"GET /pipe2 HTTP/1.1\r\nHost: localhost\r\n\r\n"
+
+		if _, err := conn.Write([]byte(reqWithClose)); err != nil {
+			t.Fatalf("failed to write: %v", err)
+		}
+
+		reader := bufio.NewReader(conn)
+
+		connHdr, code1, body1, err := readResponse(reader)
+		if err != nil {
+			t.Fatalf("failed to read response 1: %v", err)
+		}
+		if code1 != 200 || body1 != "response-1" {
+			t.Fatalf("response 1 mismatch: got code %d, body %q", code1, body1)
+		}
+		if !strings.EqualFold(connHdr, "close") {
+			t.Errorf("expected Connection: close header, got %q", connHdr)
+		}
+
+		// Socket must now be closed by the server; subsequent read should yield EOF
+		_, err = reader.ReadByte()
+		if err == nil {
+			t.Fatalf("expected EOF after Connection: close, but socket is still readable")
+		}
+		if !errors.Is(err, io.EOF) && !strings.Contains(err.Error(), "closed") {
+			t.Logf("connection closed as expected with: %v", err)
+		}
+	})
+
+	// TC-108-04: Protocol Upgrade Handover with Residual Buffered Frames
+	t.Run("TC-108-04: Protocol Upgrade Handover with Residual Frames", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer conn.Close()
+
+		upgradeWithFrame := "GET /upgrade HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n" +
+			"residual-websocket-data"
+
+		if _, err := conn.Write([]byte(upgradeWithFrame)); err != nil {
+			t.Fatalf("failed to write upgrade: %v", err)
+		}
+
+		reader := bufio.NewReader(conn)
+
+		// Read 101 Switching Protocols response
+		statusLine, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("failed to read status: %v", err)
+		}
+		if !strings.Contains(statusLine, "101") {
+			t.Fatalf("expected 101, got: %s", statusLine)
+		}
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil || line == "\r\n" {
+				break
+			}
+		}
+
+		// Upstream pipe end should receive "residual-websocket-data"
+		pipeMu.Lock()
+		upstream := upstreamPipeEnd
+		pipeMu.Unlock()
+
+		if upstream == nil {
+			t.Fatalf("upstream pipe was not initialized")
+		}
+		defer upstream.Close()
+
+		received := make([]byte, len("residual-websocket-data"))
+		_, err = io.ReadFull(upstream, received)
+		if err != nil {
+			t.Fatalf("failed to read residual data on upstream: %v", err)
+		}
+		if string(received) != "residual-websocket-data" {
+			t.Fatalf("expected 'residual-websocket-data', got %q", string(received))
+		}
+	})
+}
+

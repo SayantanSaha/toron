@@ -428,3 +428,163 @@ func TestParseRequest_BufioReaderReuse(t *testing.T) {
 	}
 }
 
+// TC-109-01 through TC-109-04: Header field-name token grammar validation (RFC 7230 §3.2)
+func TestParseRequest_HeaderFieldNameTokenGrammar(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+
+	tests := []struct {
+		name        string
+		rawReq      string
+		expectError bool
+	}{
+		// TC-109-01: RFC 7230 Delimiters
+		{
+			name:        "Delimiter @",
+			rawReq:      "GET / HTTP/1.1\r\nHost@Domain: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Parentheses ( )",
+			rawReq:      "GET / HTTP/1.1\r\nHeader(Name): example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Comma ,",
+			rawReq:      "GET / HTTP/1.1\r\nHeader,Name: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Slash /",
+			rawReq:      "GET / HTTP/1.1\r\nHeader/Name: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Semicolon ;",
+			rawReq:      "GET / HTTP/1.1\r\nHeader;Name: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Angle Brackets < >",
+			rawReq:      "GET / HTTP/1.1\r\nHeader<Name>: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Equal Sign =",
+			rawReq:      "GET / HTTP/1.1\r\nHeader=Name: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Question Mark ?",
+			rawReq:      "GET / HTTP/1.1\r\nHeader?Name: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Square Brackets [ ]",
+			rawReq:      "GET / HTTP/1.1\r\nHeader[Name]: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Backslash \\",
+			rawReq:      "GET / HTTP/1.1\r\nHeader\\Name: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Curly Braces { }",
+			rawReq:      "GET / HTTP/1.1\r\nHeader{Name}: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Delimiter Double Quote \"",
+			rawReq:      "GET / HTTP/1.1\r\nHeader\"Name: example.com\r\n\r\n",
+			expectError: true,
+		},
+		// TC-109-02: ASCII Control Characters
+		{
+			name:        "Control Byte NUL (0x00)",
+			rawReq:      "GET / HTTP/1.1\r\nHead\x00er: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Control Byte BEL (0x07)",
+			rawReq:      "GET / HTTP/1.1\r\nHead\x07er: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Control Byte ESC (0x1B)",
+			rawReq:      "GET / HTTP/1.1\r\nHead\x1Ber: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "Control Byte DEL (0x7F)",
+			rawReq:      "GET / HTTP/1.1\r\nHead\x7Fer: example.com\r\n\r\n",
+			expectError: true,
+		},
+		// TC-109-03: High-Bit Non-ASCII Bytes
+		{
+			name:        "High-Bit Byte 0x80",
+			rawReq:      "GET / HTTP/1.1\r\nHead\x80er: example.com\r\n\r\n",
+			expectError: true,
+		},
+		{
+			name:        "High-Bit Byte 0xFF",
+			rawReq:      "GET / HTTP/1.1\r\nHead\xFFer: example.com\r\n\r\n",
+			expectError: true,
+		},
+		// TC-109-04: Valid Complex RFC 7230 Tokens
+		{
+			name:        "Valid RFC 7230 Special Characters",
+			rawReq:      "GET / HTTP/1.1\r\nHost: example.com\r\nX-Custom_Header.1!#$%&'*+-.^_`|~: special-token-value\r\n\r\n",
+			expectError: false,
+		},
+		{
+			name:        "Valid Standard Headers",
+			rawReq:      "GET / HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\nAccept-Encoding: gzip, deflate\r\n\r\n",
+			expectError: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req, err := httpparser.ParseRequest(bytes.NewBufferString(tt.rawReq), opts)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error for %s, got nil", tt.name)
+				}
+				if !errors.Is(err, httpparser.ErrBadRequest) {
+					t.Fatalf("expected error wrapping ErrBadRequest for %s, got %v", tt.name, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error for %s: %v", tt.name, err)
+				}
+				if tt.name == "Valid RFC 7230 Special Characters" {
+					expectedVal := "special-token-value"
+					gotVal := req.Header.Get("X-Custom_Header.1!#$%&'*+-.^_`|~")
+					if gotVal != expectedVal {
+						t.Errorf("expected header value %q, got %q", expectedVal, gotVal)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TC-109-05: Nanosecond In-Process Microbenchmark for Invalid Header Token Rejection
+func BenchmarkParseRequest_InvalidTokenRejection(b *testing.B) {
+	payload := []byte("GET / HTTP/1.1\r\nHost: example.com\r\nX-Invalid@Header: test-value\r\n\r\n")
+	opts := httpparser.DefaultParserOptions()
+	r := bytes.NewReader(payload)
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		r.Reset(payload)
+		_, err := httpparser.ParseRequest(r, opts)
+		if err == nil {
+			b.Fatal("expected invalid token rejection error, got nil")
+		}
+	}
+}
+
+

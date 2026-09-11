@@ -18,6 +18,27 @@ var (
 	ErrUnsupportedTransferEncoding = errors.New("httpparser: unsupported transfer encoding")
 )
 
+// validHeaderTokenTable defines RFC 7230 §3.2.6 token characters:
+// token = 1*tchar
+// tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
+//         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+var validHeaderTokenTable = func() [256]bool {
+	var table [256]bool
+	for c := '0'; c <= '9'; c++ {
+		table[c] = true
+	}
+	for c := 'a'; c <= 'z'; c++ {
+		table[c] = true
+	}
+	for c := 'A'; c <= 'Z'; c++ {
+		table[c] = true
+	}
+	for _, c := range []byte("!#$%&'*+-.^_`|~") {
+		table[c] = true
+	}
+	return table
+}()
+
 // ParserOptions holds security limit configurations for the parser.
 type ParserOptions struct {
 	MaxHeaderBytes int
@@ -96,8 +117,17 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 		}
 
 		k := lineTrimmed[:colonIdx]
-		if k == "" || strings.ContainsAny(k, " \t\r\n") {
+		if k == "" {
 			return nil, fmt.Errorf("%w: whitespace in header field-name", ErrBadRequest)
+		}
+		for i := 0; i < len(k); i++ {
+			b := k[i]
+			if !validHeaderTokenTable[b] {
+				if b == ' ' || b == '\t' || b == '\r' || b == '\n' {
+					return nil, fmt.Errorf("%w: whitespace in header field-name", ErrBadRequest)
+				}
+				return nil, fmt.Errorf("%w: invalid header field-name token grammar", ErrBadRequest)
+			}
 		}
 		v := strings.TrimSpace(lineTrimmed[colonIdx+1:])
 		req.Header.Add(k, v)

@@ -644,6 +644,7 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string, opts proxy.Prox
 		if err != nil || strings.HasPrefix(relFromDir, "..") || (strings.HasPrefix(relFromDir, ".") && len(relFromDir) > 1 && relFromDir[1] == '.') {
 			res.SetStatus(http.StatusForbidden)
 			res.Header.Set("Content-Type", "application/json")
+			res.Header.Set("Connection", "close")
 			_, _ = res.WriteString(`{"error":"403 Forbidden: Path Traversal Disallowed"}`)
 			return
 		}
@@ -658,6 +659,7 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string, opts proxy.Prox
 			if err != nil || strings.HasPrefix(relFromReal, "..") || (strings.HasPrefix(relFromReal, ".") && len(relFromReal) > 1 && relFromReal[1] == '.') {
 				res.SetStatus(http.StatusForbidden)
 				res.Header.Set("Content-Type", "application/json")
+				res.Header.Set("Connection", "close")
 				_, _ = res.WriteString(`{"error":"403 Forbidden: Symlink Path Traversal Disallowed"}`)
 				return
 			}
@@ -676,6 +678,7 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string, opts proxy.Prox
 				if err != nil || strings.HasPrefix(relFB, "..") || (strings.HasPrefix(relFB, ".") && len(relFB) > 1 && relFB[1] == '.') {
 					res.SetStatus(http.StatusForbidden)
 					res.Header.Set("Content-Type", "application/json")
+					res.Header.Set("Connection", "close")
 					_, _ = res.WriteString(`{"error":"403 Forbidden: Path Traversal Disallowed"}`)
 					return
 				}
@@ -685,6 +688,7 @@ func (r *Router) createStaticHandler(cleanPrefix, absDir string, opts proxy.Prox
 					if err != nil || strings.HasPrefix(relFBReal, "..") || (strings.HasPrefix(relFBReal, ".") && len(relFBReal) > 1 && relFBReal[1] == '.') {
 						res.SetStatus(http.StatusForbidden)
 						res.Header.Set("Content-Type", "application/json")
+						res.Header.Set("Connection", "close")
 						_, _ = res.WriteString(`{"error":"403 Forbidden: Symlink Path Traversal Disallowed"}`)
 						return
 					}

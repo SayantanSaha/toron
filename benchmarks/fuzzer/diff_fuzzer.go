@@ -174,7 +174,7 @@ func getTestCases() []TestCase {
 			CWE:         "CWE-117",
 			RawPayload:  "GET /health\x00/admin HTTP/1.1\r\nHost: localhost\r\n\r\n",
 			ExpectedStatus: []int{400},
-			ExpectClose: false,
+			ExpectClose: true,
 			Description: "Non-printable null byte in URI must be rejected to prevent log poisoning",
 		},
 		{
@@ -184,7 +184,7 @@ func getTestCases() []TestCase {
 			CWE:         "CWE-117",
 			RawPayload:  "GET /health HTTP/1.1\r\nHost: localhost\r\nX-Audit-Payload: test\x07alert\r\n\r\n",
 			ExpectedStatus: []int{400},
-			ExpectClose: false,
+			ExpectClose: true,
 			Description: "Terminal control sequences in headers must be rejected by protocol guard",
 		},
 		{
@@ -194,7 +194,7 @@ func getTestCases() []TestCase {
 			CWE:         "CWE-117",
 			RawPayload:  "GET /health?q=\x1b[31mRed HTTP/1.1\r\nHost: localhost\r\n\r\n",
 			ExpectedStatus: []int{400},
-			ExpectClose: false,
+			ExpectClose: true,
 			Description: "ANSI escape codes in query params must be rejected",
 		},
 
@@ -226,7 +226,7 @@ func getTestCases() []TestCase {
 			CWE:         "CWE-22",
 			RawPayload:  "GET /internal/dashboard/%252e%252e/%252e%252e/canary_traversal.txt HTTP/1.1\r\nHost: localhost\r\n\r\n",
 			ExpectedStatus: []int{400, 403},
-			ExpectClose: false,
+			ExpectClose: true,
 			Description: "Double percent-encoding must not bypass path normalization boundaries",
 		},
 
@@ -248,7 +248,7 @@ func getTestCases() []TestCase {
 			CWE:         "CWE-400",
 			RawPayload:  fmt.Sprintf("GET /health?param=%s HTTP/1.1\r\nHost: localhost\r\n\r\n", strings.Repeat("B", 3000)),
 			ExpectedStatus: []int{400, 413, 414},
-			ExpectClose: false,
+			ExpectClose: true,
 			Description: "Excessive query param length must be bounded to prevent ReDoS / memory spikes",
 		},
 

@@ -307,7 +307,8 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			return fmt.Errorf("server: failed to write response: %w", err)
 		}
 
-		if connHeader == "close" {
+		outConnHeader := strings.ToLower(res.Header.Get("Connection"))
+		if connHeader == "close" || outConnHeader == "close" {
 			return nil
 		}
 	}

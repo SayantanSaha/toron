@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -1464,4 +1465,121 @@ func TestServer_UpgradedConn_ConcurrencyRaceSafety(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("concurrent test timed out after 5s")
 	}
+}
+
+// TC-107-02 & TC-107-03: Response-Driven Connection Teardown and Benign Keep-Alive Preservation
+func TestServer_ResponseConnectionClose_SocketTeardown(t *testing.T) {
+	r := router.New()
+
+	// Route that explicitly terminates connection via response header
+	r.GET("/close-me", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusForbidden)
+		res.Header.Set("Connection", "close")
+		res.Header.Set("Content-Type", "application/json")
+		_, _ = res.WriteString(`{"error":"403 Forbidden"}`)
+	})
+
+	// Benign route that keeps connection open
+	r.GET("/keep-alive", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("hello keepalive")
+	})
+
+	cfg := server.DefaultConfig()
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	addr := ln.Addr().String()
+
+	// TC-107-02: Server-initiated teardown when client sent keep-alive
+	t.Run("TC-107-02: Response Connection Close Teardown", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer conn.Close()
+
+		req := "GET /close-me HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"
+		if _, err := conn.Write([]byte(req)); err != nil {
+			t.Fatalf("failed to write: %v", err)
+		}
+
+		respBytes, err := io.ReadAll(conn)
+		if err != nil && !errors.Is(err, io.EOF) {
+			t.Fatalf("read failed: %v", err)
+		}
+
+		respStr := string(respBytes)
+		if !strings.Contains(respStr, "403 Forbidden") {
+			t.Errorf("expected 403 Forbidden, got:\n%s", respStr)
+		}
+		if !strings.Contains(strings.ToLower(respStr), "connection: close") {
+			t.Errorf("expected Connection: close, got:\n%s", respStr)
+		}
+		// io.ReadAll terminated with EOF, proving the physical TCP socket was closed by the server
+	})
+
+	// TC-107-03: Benign requests preserve keep-alive connection across multiple requests
+	t.Run("TC-107-03: Benign Keep-Alive Preserved", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer conn.Close()
+
+		reader := bufio.NewReader(conn)
+
+		// Request 1
+		req1 := "GET /keep-alive HTTP/1.1\r\nHost: localhost\r\n\r\n"
+		if _, err := conn.Write([]byte(req1)); err != nil {
+			t.Fatalf("write 1 failed: %v", err)
+		}
+
+		status1, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read status 1 failed: %v", err)
+		}
+		if !strings.Contains(status1, "200") {
+			t.Fatalf("expected 200, got: %s", status1)
+		}
+
+		// Drain headers and body for request 1
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil || line == "\r\n" {
+				break
+			}
+		}
+		bodyBuf1 := make([]byte, len("hello keepalive"))
+		_, _ = io.ReadFull(reader, bodyBuf1)
+
+		// Request 2 on the EXACT SAME TCP socket
+		req2 := "GET /keep-alive HTTP/1.1\r\nHost: localhost\r\n\r\n"
+		if _, err := conn.Write([]byte(req2)); err != nil {
+			t.Fatalf("write 2 failed: %v", err)
+		}
+
+		status2, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read status 2 failed (socket closed prematurely): %v", err)
+		}
+		if !strings.Contains(status2, "200") {
+			t.Fatalf("expected 200 on request 2, got: %s", status2)
+		}
+	})
 }

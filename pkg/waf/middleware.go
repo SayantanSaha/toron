@@ -84,6 +84,7 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 					}
 					res.Body.Reset()
 					res.Header.Set("Content-Type", "application/json")
+					res.Header.Set("Connection", "close")
 					res.SetStatus(403)
 					_, _ = res.WriteString(`{"error":"Forbidden","message":"` + reason + `"}`)
 					return
@@ -111,6 +112,7 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 				}
 				res.Body.Reset()
 				res.Header.Set("Content-Type", "application/json")
+				res.Header.Set("Connection", "close")
 
 				if protoErr == ErrHeaderValueTooLong || protoErr == ErrQueryTooLong || protoErr == ErrParamTooLong {
 					res.SetStatus(413)
@@ -154,6 +156,7 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 
 				res.SetStatus(403)
 				res.Header.Set("Content-Type", "application/json")
+				res.Header.Set("Connection", "close")
 
 				body := FormatBlockedResponse(score, matched)
 				if res.Body == nil {

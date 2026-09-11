@@ -806,3 +806,76 @@ func (w *concurrentSafeBuffer) Write(p []byte) (n int, err error) {
 	defer w.mu.Unlock()
 	return w.buf.Write(p)
 }
+
+// TC-107-01: Verification of Connection: close Header on WAF Rejection Paths
+func TestWAFMiddleware_ConnectionCloseOnSecurityRejection(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Mode = "enforce"
+	cfg.Enabled = true
+	cfg.AllowedIPs = []string{"10.0.0.0/8"}
+	cfg.DeniedIPs = []string{"198.51.100.0/24"}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to init engine: %v", err)
+	}
+
+	mw := NewWAFMiddleware(engine)
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(200)
+		_, _ = res.WriteString("ok")
+	})
+
+	// 1. IP ACL Denial
+	t.Run("IP_ACL_Block", func(t *testing.T) {
+		req := &httpparser.Request{
+			Method:     "GET",
+			Path:       "/api/resource",
+			RemoteAddr: "198.51.100.55:12345",
+		}
+		res := httpparser.NewResponse()
+		handler(req, res)
+		if res.StatusCode != 403 {
+			t.Fatalf("expected 403, got %d", res.StatusCode)
+		}
+		if res.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection: close on IP ACL block, got %q", res.Header.Get("Connection"))
+		}
+	})
+
+	// 2. Protocol Integrity Violation (Null Byte in URI)
+	t.Run("Protocol_Integrity_Block", func(t *testing.T) {
+		req := &httpparser.Request{
+			Method:     "GET",
+			Path:       "/api/test\x00/admin",
+			RemoteAddr: "10.0.0.1:12345",
+		}
+		res := httpparser.NewResponse()
+		handler(req, res)
+		if res.StatusCode != 400 {
+			t.Fatalf("expected 400, got %d", res.StatusCode)
+		}
+		if res.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection: close on protocol violation, got %q", res.Header.Get("Connection"))
+		}
+	})
+
+	// 3. Layer 7 OWASP Threat Block (Path Traversal payload)
+	t.Run("L7_OWASP_Block", func(t *testing.T) {
+		u, _ := url.Parse("http://localhost/api/test?file=../../../../etc/passwd")
+		req := &httpparser.Request{
+			Method:     "GET",
+			Path:       u.Path,
+			URL:        u,
+			RemoteAddr: "10.0.0.1:12345",
+		}
+		res := httpparser.NewResponse()
+		handler(req, res)
+		if res.StatusCode != 403 {
+			t.Fatalf("expected 403, got %d", res.StatusCode)
+		}
+		if res.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection: close on L7 threat block, got %q", res.Header.Get("Connection"))
+		}
+	})
+}

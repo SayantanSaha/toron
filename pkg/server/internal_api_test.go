@@ -3,10 +3,18 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"runtime"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"toron/pkg/httpparser"
 	"toron/pkg/router"
@@ -339,3 +347,736 @@ func TestInternalAPI_SubnetRestriction(t *testing.T) {
 		}
 	})
 }
+
+func TestProxyTest_NormalResponse_UnderLimit(t *testing.T) {
+	upstreamPayload := strings.Repeat("A", 512)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.Header().Set("X-Upstream-Header", "healthy")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(upstreamPayload))
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("failed to parse upstream URL: %v", err)
+	}
+	upstreamPort, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse upstream port: %v", err)
+	}
+
+	cfg := InternalAPIConfig{
+		Port:                  upstreamPort,
+		AllowedProxyTestPaths: []string{"/health"},
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	reqBody := `{"path":"/health","method":"GET"}`
+	req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Body = bytes.NewBufferString(reqBody)
+
+	res := httpparser.NewResponse()
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (body: %s)", res.StatusCode, res.Body.String())
+	}
+
+	var resOut ProxyTestResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &resOut); err != nil {
+		t.Fatalf("failed to parse response JSON: %v", err)
+	}
+
+	if resOut.StatusCode != http.StatusOK {
+		t.Errorf("expected resOut.StatusCode 200, got %d", resOut.StatusCode)
+	}
+	if resOut.StatusText != "OK" {
+		t.Errorf("expected resOut.StatusText OK, got %s", resOut.StatusText)
+	}
+	if resOut.Headers["X-Upstream-Header"] != "healthy" {
+		t.Errorf("expected X-Upstream-Header 'healthy', got %v", resOut.Headers["X-Upstream-Header"])
+	}
+	if len(resOut.Body) != 512 {
+		t.Errorf("expected body length 512, got %d", len(resOut.Body))
+	}
+	if resOut.Body != upstreamPayload {
+		t.Errorf("expected body to match upstream payload")
+	}
+	if resOut.Truncated {
+		t.Errorf("expected Truncated == false, got true")
+	}
+}
+
+func TestProxyTest_OversizedResponse_Truncated(t *testing.T) {
+	const payloadSize = 2500 * 1024 // 2.5 MB
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		buf := make([]byte, 32*1024)
+		for i := range buf {
+			buf[i] = 'X'
+		}
+		written := 0
+		for written < payloadSize {
+			n := len(buf)
+			if payloadSize-written < n {
+				n = payloadSize - written
+			}
+			_, _ = w.Write(buf[:n])
+			written += n
+		}
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("failed to parse upstream URL: %v", err)
+	}
+	upstreamPort, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse upstream port: %v", err)
+	}
+
+	cfg := InternalAPIConfig{
+		Port:                  upstreamPort,
+		AllowedProxyTestPaths: []string{"/health"},
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	reqBody := `{"path":"/health","method":"GET"}`
+	req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Body = bytes.NewBufferString(reqBody)
+
+	res := httpparser.NewResponse()
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (body: %s)", res.StatusCode, res.Body.String())
+	}
+
+	var resOut ProxyTestResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &resOut); err != nil {
+		t.Fatalf("failed to parse response JSON: %v", err)
+	}
+
+	if resOut.StatusCode != http.StatusOK {
+		t.Errorf("expected resOut.StatusCode 200, got %d", resOut.StatusCode)
+	}
+	if !resOut.Truncated {
+		t.Errorf("expected resOut.Truncated == true, got false")
+	}
+	if len(resOut.Body) != 1048576 {
+		t.Errorf("expected clamped body length 1048576 (1 MB), got %d", len(resOut.Body))
+	}
+	if !strings.HasPrefix(resOut.Body, "XXXX") {
+		t.Errorf("expected body to have prefix 'XXXX'")
+	}
+}
+
+func TestProxyTest_InfiniteStream_BoundedTermination(t *testing.T) {
+	serverDone := make(chan struct{})
+	var closeOnce sync.Once
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		flusher, ok := w.(http.Flusher)
+		chunk := bytes.Repeat([]byte("0123456789abcdef"), 4096) // 64 KB chunk
+		for {
+			select {
+			case <-r.Context().Done():
+				closeOnce.Do(func() { close(serverDone) })
+				return
+			default:
+				_, err := w.Write(chunk)
+				if err != nil {
+					closeOnce.Do(func() { close(serverDone) })
+					return
+				}
+				if ok {
+					flusher.Flush()
+				}
+				time.Sleep(1 * time.Millisecond)
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("failed to parse upstream URL: %v", err)
+	}
+	upstreamPort, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse upstream port: %v", err)
+	}
+
+	cfg := InternalAPIConfig{
+		Port:                  upstreamPort,
+		AllowedProxyTestPaths: []string{"/health"},
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	initialGoroutines := runtime.NumGoroutine()
+
+	reqBody := `{"path":"/health","method":"GET"}`
+	req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Body = bytes.NewBufferString(reqBody)
+
+	res := httpparser.NewResponse()
+
+	start := time.Now()
+	r.ServeHTTP(req, res)
+	elapsed := time.Since(start)
+
+	if elapsed > 3*time.Second {
+		t.Errorf("probe took too long (%v), expected termination < 3s", elapsed)
+	}
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (body: %s)", res.StatusCode, res.Body.String())
+	}
+
+	var resOut ProxyTestResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &resOut); err != nil {
+		t.Fatalf("failed to parse response JSON: %v", err)
+	}
+
+	if resOut.StatusCode != http.StatusOK {
+		t.Errorf("expected resOut.StatusCode 200, got %d", resOut.StatusCode)
+	}
+	if !resOut.Truncated {
+		t.Errorf("expected resOut.Truncated == true, got false")
+	}
+	if len(resOut.Body) != 1048576 {
+		t.Errorf("expected clamped body length 1048576 (1 MB), got %d", len(resOut.Body))
+	}
+
+	select {
+	case <-serverDone:
+		// Upstream server successfully detected client termination
+	case <-time.After(3 * time.Second):
+		t.Fatalf("upstream server did not receive socket closure from client")
+	}
+
+	// Wait briefly for goroutine count to settle
+	for i := 0; i < 50; i++ {
+		if runtime.NumGoroutine() <= initialGoroutines+5 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestProxyTest_CustomConfiguredLimit(t *testing.T) {
+	const payloadSize = 500 * 1024 // 500 KB
+	upstreamPayload := strings.Repeat("C", payloadSize)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(upstreamPayload))
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("failed to parse upstream URL: %v", err)
+	}
+	upstreamPort, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse upstream port: %v", err)
+	}
+
+	cfg := InternalAPIConfig{
+		Port:                      upstreamPort,
+		AllowedProxyTestPaths:     []string{"/health"},
+		MaxProxyTestResponseBytes: 256 * 1024, // 256 KB limit
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	reqBody := `{"path":"/health","method":"GET"}`
+	req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.Body = bytes.NewBufferString(reqBody)
+
+	res := httpparser.NewResponse()
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (body: %s)", res.StatusCode, res.Body.String())
+	}
+
+	var resOut ProxyTestResponse
+	if err := json.Unmarshal(res.Body.Bytes(), &resOut); err != nil {
+		t.Fatalf("failed to parse response JSON: %v", err)
+	}
+
+	if resOut.StatusCode != http.StatusOK {
+		t.Errorf("expected resOut.StatusCode 200, got %d", resOut.StatusCode)
+	}
+	if !resOut.Truncated {
+		t.Errorf("expected resOut.Truncated == true, got false")
+	}
+	if len(resOut.Body) != 256*1024 {
+		t.Errorf("expected clamped body length 262144 (256 KB), got %d", len(resOut.Body))
+	}
+}
+
+func TestProxyTest_DefaultFallback_ZeroOrNegativeLimit(t *testing.T) {
+	const payloadSize = 1500 * 1024 // 1.5 MB
+	upstreamPayload := strings.Repeat("D", payloadSize)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(upstreamPayload))
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("failed to parse upstream URL: %v", err)
+	}
+	upstreamPort, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse upstream port: %v", err)
+	}
+
+	testCases := []struct {
+		name  string
+		limit int64
+	}{
+		{"Scenario 5.1: Zero limit defaults to 1 MB", 0},
+		{"Scenario 5.2: Negative -1 defaults to 1 MB", -1},
+		{"Scenario 5.3: Large negative defaults to 1 MB", -1048576},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := InternalAPIConfig{
+				Port:                      upstreamPort,
+				AllowedProxyTestPaths:     []string{"/health"},
+				MaxProxyTestResponseBytes: tc.limit,
+			}
+
+			r := router.New()
+			RegisterInternalAPIRoutes(r, cfg)
+
+			reqBody := `{"path":"/health","method":"GET"}`
+			req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+			if err != nil {
+				t.Fatalf("failed to create request: %v", err)
+			}
+			req.Body = bytes.NewBufferString(reqBody)
+
+			res := httpparser.NewResponse()
+			r.ServeHTTP(req, res)
+
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("expected status 200, got %d (body: %s)", res.StatusCode, res.Body.String())
+			}
+
+			var resOut ProxyTestResponse
+			if err := json.Unmarshal(res.Body.Bytes(), &resOut); err != nil {
+				t.Fatalf("failed to parse response JSON: %v", err)
+			}
+
+			if resOut.StatusCode != http.StatusOK {
+				t.Errorf("expected resOut.StatusCode 200, got %d", resOut.StatusCode)
+			}
+			if !resOut.Truncated {
+				t.Errorf("expected resOut.Truncated == true, got false")
+			}
+			if len(resOut.Body) != 1048576 {
+				t.Errorf("expected clamped body length 1048576 (1 MB), got %d", len(resOut.Body))
+			}
+		})
+	}
+}
+
+func TestProxyTest_OversizedRequestBody_Rejection(t *testing.T) {
+	var upstreamCalls int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt64(&upstreamCalls, 1)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("failed to parse upstream URL: %v", err)
+	}
+	upstreamPort, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse upstream port: %v", err)
+	}
+
+	cfg := InternalAPIConfig{
+		Port:                  upstreamPort,
+		AllowedProxyTestPaths: []string{"/health"},
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	baseJSON := `{"path":"/health","method":"GET"}`
+
+	t.Run("Scenario 6.1: Exactly 64 KB valid JSON accepted", func(t *testing.T) {
+		atomic.StoreInt64(&upstreamCalls, 0)
+		padding := strings.Repeat(" ", 64*1024-len(baseJSON))
+		body := baseJSON + padding
+
+		req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+		req.Body = bytes.NewBufferString(body)
+
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200 for 64 KB body, got %d (body: %s)", res.StatusCode, res.Body.String())
+		}
+		if calls := atomic.LoadInt64(&upstreamCalls); calls != 1 {
+			t.Errorf("expected 1 upstream call, got %d", calls)
+		}
+	})
+
+	t.Run("Scenario 6.2: 64 KB + 1 byte rejected with 400 Bad Request", func(t *testing.T) {
+		atomic.StoreInt64(&upstreamCalls, 0)
+		padding := strings.Repeat(" ", 64*1024+1-len(baseJSON))
+		body := baseJSON + padding
+
+		req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+		req.Body = bytes.NewBufferString(body)
+
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected status 400 for 65537-byte body, got %d", res.StatusCode)
+		}
+		if !strings.Contains(res.Body.String(), "Request body exceeds maximum allowed size of 64KB") {
+			t.Errorf("expected error message to contain 'Request body exceeds maximum allowed size of 64KB', got %s", res.Body.String())
+		}
+		if calls := atomic.LoadInt64(&upstreamCalls); calls != 0 {
+			t.Errorf("expected 0 upstream calls on oversized body, got %d", calls)
+		}
+	})
+
+	t.Run("Scenario 6.3: Massive 1 MB JSON body rejected with 400 Bad Request", func(t *testing.T) {
+		atomic.StoreInt64(&upstreamCalls, 0)
+		padding := strings.Repeat(" ", 1024*1024-len(baseJSON))
+		body := baseJSON + padding
+
+		req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+		req.Body = bytes.NewBufferString(body)
+
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected status 400 for 1 MB body, got %d", res.StatusCode)
+		}
+		if !strings.Contains(res.Body.String(), "Request body exceeds maximum allowed size of 64KB") {
+			t.Errorf("expected error message to contain 'Request body exceeds maximum allowed size of 64KB', got %s", res.Body.String())
+		}
+		if calls := atomic.LoadInt64(&upstreamCalls); calls != 0 {
+			t.Errorf("expected 0 upstream calls, got %d", calls)
+		}
+	})
+
+	t.Run("Scenario 6.4: Empty request body rejected with 400 Bad Request", func(t *testing.T) {
+		atomic.StoreInt64(&upstreamCalls, 0)
+
+		req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+		req.Body = bytes.NewBufferString("")
+
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected status 400 for empty body, got %d", res.StatusCode)
+		}
+		if !strings.Contains(res.Body.String(), "Missing or invalid request body") {
+			t.Errorf("expected error message to contain 'Missing or invalid request body', got %s", res.Body.String())
+		}
+		if calls := atomic.LoadInt64(&upstreamCalls); calls != 0 {
+			t.Errorf("expected 0 upstream calls, got %d", calls)
+		}
+	})
+
+	t.Run("Scenario 6.5: Malformed JSON rejected with 400 Bad Request", func(t *testing.T) {
+		atomic.StoreInt64(&upstreamCalls, 0)
+
+		req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+		req.Body = bytes.NewBufferString(`{"path": /health}`)
+
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusBadRequest {
+			t.Fatalf("expected status 400 for malformed JSON, got %d", res.StatusCode)
+		}
+		if !strings.Contains(res.Body.String(), "Invalid JSON body") {
+			t.Errorf("expected error message to contain 'Invalid JSON body', got %s", res.Body.String())
+		}
+		if calls := atomic.LoadInt64(&upstreamCalls); calls != 0 {
+			t.Errorf("expected 0 upstream calls, got %d", calls)
+		}
+	})
+}
+
+func TestProxyTest_SocketDrainAndConnectionReuse(t *testing.T) {
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport.CloseIdleConnections()
+		defer transport.CloseIdleConnections()
+	}
+
+	var connMutex sync.Mutex
+	activeConns := make(map[string]int)
+	payload := bytes.Repeat([]byte("B"), 1050*1024) // 1.05 MB
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		connMutex.Lock()
+		activeConns[r.RemoteAddr]++
+		connMutex.Unlock()
+		w.Header().Set("Content-Type", "text/plain")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload)
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("failed to parse upstream URL: %v", err)
+	}
+	upstreamPort, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse upstream port: %v", err)
+	}
+
+	cfg := InternalAPIConfig{
+		Port:                  upstreamPort,
+		AllowedProxyTestPaths: []string{"/health"},
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	for i := 0; i < 10; i++ {
+		req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+		if err != nil {
+			t.Fatalf("req %d: failed to create request: %v", i, err)
+		}
+		req.Body = bytes.NewBufferString(`{"path":"/health","method":"GET"}`)
+
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("req %d: expected status 200, got %d (body: %s)", i, res.StatusCode, res.Body.String())
+		}
+
+		var resOut ProxyTestResponse
+		if err := json.Unmarshal(res.Body.Bytes(), &resOut); err != nil {
+			t.Fatalf("req %d: failed to parse response JSON: %v", i, err)
+		}
+
+		if !resOut.Truncated {
+			t.Errorf("req %d: expected Truncated == true, got false", i)
+		}
+		if len(resOut.Body) != 1048576 {
+			t.Errorf("req %d: expected body len 1048576, got %d", i, len(resOut.Body))
+		}
+	}
+
+	connMutex.Lock()
+	distinctConns := len(activeConns)
+	connMutex.Unlock()
+
+	if distinctConns >= 10 {
+		t.Errorf("expected keep-alive connection reuse (< 10 distinct TCP conns), got %d distinct conns", distinctConns)
+	}
+}
+
+func TestProxyTest_ConcurrentProbes_RaceClean(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(strings.Repeat("A", 512)))
+		case "/large":
+			w.Header().Set("Content-Type", "text/plain")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(bytes.Repeat([]byte("B"), 2*1024*1024))
+		case "/stream":
+			w.Header().Set("Content-Type", "application/octet-stream")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(bytes.Repeat([]byte("C"), 1500*1024))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer upstream.Close()
+
+	u, err := url.Parse(upstream.URL)
+	if err != nil {
+		t.Fatalf("failed to parse upstream URL: %v", err)
+	}
+	upstreamPort, err := strconv.Atoi(u.Port())
+	if err != nil {
+		t.Fatalf("failed to parse upstream port: %v", err)
+	}
+
+	cfg := InternalAPIConfig{
+		Port:                  upstreamPort,
+		AllowedProxyTestPaths: []string{"/health", "/large", "/stream"},
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	var wg sync.WaitGroup
+	for worker := 0; worker < 20; worker++ {
+		wg.Add(1)
+		go func(wID int) {
+			defer wg.Done()
+			for iter := 0; iter < 5; iter++ {
+				mode := (wID*5 + iter) % 4
+				switch mode {
+				case 0:
+					// Small body under limit
+					req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+					if err != nil {
+						t.Errorf("worker %d iter %d: failed to create request: %v", wID, iter, err)
+						return
+					}
+					req.Body = bytes.NewBufferString(`{"path":"/health","method":"GET"}`)
+					res := httpparser.NewResponse()
+					r.ServeHTTP(req, res)
+
+					if res.StatusCode != http.StatusOK {
+						t.Errorf("worker %d iter %d: expected 200, got %d", wID, iter, res.StatusCode)
+						return
+					}
+					var out ProxyTestResponse
+					if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+						t.Errorf("worker %d iter %d: failed to unmarshal: %v", wID, iter, err)
+						return
+					}
+					if out.Truncated {
+						t.Errorf("worker %d iter %d: expected Truncated == false", wID, iter)
+					}
+					if len(out.Body) != 512 {
+						t.Errorf("worker %d iter %d: expected body len 512, got %d", wID, iter, len(out.Body))
+					}
+				case 1:
+					// Large 2 MB body
+					req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+					if err != nil {
+						t.Errorf("worker %d iter %d: failed to create request: %v", wID, iter, err)
+						return
+					}
+					req.Body = bytes.NewBufferString(`{"path":"/large","method":"GET"}`)
+					res := httpparser.NewResponse()
+					r.ServeHTTP(req, res)
+
+					if res.StatusCode != http.StatusOK {
+						t.Errorf("worker %d iter %d: expected 200, got %d", wID, iter, res.StatusCode)
+						return
+					}
+					var out ProxyTestResponse
+					if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+						t.Errorf("worker %d iter %d: failed to unmarshal: %v", wID, iter, err)
+						return
+					}
+					if !out.Truncated {
+						t.Errorf("worker %d iter %d: expected Truncated == true", wID, iter)
+					}
+					if len(out.Body) != 1048576 {
+						t.Errorf("worker %d iter %d: expected body len 1048576, got %d", wID, iter, len(out.Body))
+					}
+				case 2:
+					// Stream 1.5 MB body
+					req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+					if err != nil {
+						t.Errorf("worker %d iter %d: failed to create request: %v", wID, iter, err)
+						return
+					}
+					req.Body = bytes.NewBufferString(`{"path":"/stream","method":"GET"}`)
+					res := httpparser.NewResponse()
+					r.ServeHTTP(req, res)
+
+					if res.StatusCode != http.StatusOK {
+						t.Errorf("worker %d iter %d: expected 200, got %d", wID, iter, res.StatusCode)
+						return
+					}
+					var out ProxyTestResponse
+					if err := json.Unmarshal(res.Body.Bytes(), &out); err != nil {
+						t.Errorf("worker %d iter %d: failed to unmarshal: %v", wID, iter, err)
+						return
+					}
+					if !out.Truncated {
+						t.Errorf("worker %d iter %d: expected Truncated == true", wID, iter)
+					}
+					if len(out.Body) != 1048576 {
+						t.Errorf("worker %d iter %d: expected body len 1048576, got %d", wID, iter, len(out.Body))
+					}
+				case 3:
+					// Oversized inbound request (>64 KB)
+					padding := strings.Repeat(" ", 65*1024)
+					reqBody := fmt.Sprintf(`{"path":"/health","method":"GET"}%s`, padding)
+					req, err := httpparser.NewRequest("POST", "/internal/api/proxy-test", "HTTP/1.1")
+					if err != nil {
+						t.Errorf("worker %d iter %d: failed to create request: %v", wID, iter, err)
+						return
+					}
+					req.Body = bytes.NewBufferString(reqBody)
+					res := httpparser.NewResponse()
+					r.ServeHTTP(req, res)
+
+					if res.StatusCode != http.StatusBadRequest {
+						t.Errorf("worker %d iter %d: expected 400, got %d", wID, iter, res.StatusCode)
+					}
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+}
+

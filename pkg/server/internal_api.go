@@ -66,6 +66,7 @@ type InternalAPIConfig struct {
 	AdminSubnets           []string           `json:"admin_subnets"`
 	TrustedProxies         []string           `json:"trusted_proxies"`
 	AllowedProxyTestPaths  []string           `json:"allowed_proxy_test_paths"`
+	MaxProxyTestResponseBytes int64           `json:"max_proxy_test_response_bytes,omitempty"`
 }
 
 // UpstreamNodeHealth describes the health state of an individual upstream service node.
@@ -94,6 +95,7 @@ type ProxyTestResponse struct {
 	LatencyMS  float64           `json:"latency_ms"`
 	Headers    map[string]string `json:"headers"`
 	Body       string            `json:"body"`
+	Truncated  bool              `json:"truncated,omitempty"`
 }
 
 // validateAdminAuth verifies administrative credentials against configured token, API keys, or basic auth.
@@ -517,10 +519,16 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	r.POST("/internal/api/proxy-test", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 
-		bodyBytes, err := io.ReadAll(req.Body)
+		const maxRequestBodyBytes = 64 * 1024 // 64 KB
+		bodyBytes, err := io.ReadAll(io.LimitReader(req.Body, maxRequestBodyBytes+1))
 		if err != nil || len(bodyBytes) == 0 {
 			res.SetStatus(http.StatusBadRequest)
 			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Missing or invalid request body"}`)
+			return
+		}
+		if int64(len(bodyBytes)) > maxRequestBodyBytes {
+			res.SetStatus(http.StatusBadRequest)
+			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Request body exceeds maximum allowed size of 64KB"}`)
 			return
 		}
 
@@ -648,7 +656,19 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		}
 		defer httpResp.Body.Close()
 
-		respBodyBytes, _ := io.ReadAll(httpResp.Body)
+		maxResponseBytes := cfg.MaxProxyTestResponseBytes
+		if maxResponseBytes <= 0 {
+			maxResponseBytes = 1024 * 1024 // 1 MB default
+		}
+
+		respBodyBytes, _ := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes+1))
+		truncated := false
+		if int64(len(respBodyBytes)) > maxResponseBytes {
+			respBodyBytes = respBodyBytes[:maxResponseBytes]
+			truncated = true
+			_, _ = io.Copy(io.Discard, io.LimitReader(httpResp.Body, 64*1024))
+		}
+
 		respHeaders := make(map[string]string)
 		for k, v := range httpResp.Header {
 			if len(v) > 0 {
@@ -662,6 +682,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			LatencyMS:  latency,
 			Headers:    respHeaders,
 			Body:       string(respBodyBytes),
+			Truncated:  truncated,
 		}
 
 		data, _ := json.Marshal(resOut)

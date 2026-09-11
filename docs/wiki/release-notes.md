@@ -1,5 +1,52 @@
 # Release Notes
 
+## 2026-09-11 - Toron v1.5.17 Security Release (SEC-36: Bounded Request Ingestion and Upstream Response Buffering in Internal API Proxy Test Probe)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-36 (`pkg/server/internal_api.go`)**: Successfully resolved Medium-severity memory exhaustion and socket descriptor leak vulnerabilities [`SEC-36`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L501-L509) ([CWE-400](https://cwe.mitre.org/data/definitions/400.html), [CWE-770](https://cwe.mitre.org/data/definitions/770.html), [CWE-775](https://cwe.mitre.org/data/definitions/775.html), [`SR-091 Finding 6`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md#L197-L212), [`SR-098`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-098.md), [`CR-094`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-094.md)) in the control plane `POST /internal/api/proxy-test` endpoint.
+- **Bounded Inbound Request Body Ingestion (64 KB Cap)**: Replaced unbounded `io.ReadAll(req.Body)` with `io.LimitReader(req.Body, maxRequestBodyBytes+1)`. Payloads exceeding 64 KB (`65,536` bytes) are immediately rejected with `HTTP 400 Bad Request` (`{"error":"400 Bad Request","message":"Request body exceeds maximum allowed size of 64KB"}`), permanently preventing heap exhaustion via oversized client requests.
+- **Bounded Upstream Response Buffering & Deterministic Clamping**: Eliminated unbounded `io.ReadAll(httpResp.Body)`. Upstream response bodies are ingested via `io.LimitReader(httpResp.Body, maxResponseBytes+1)`. If the upstream body exceeds `maxResponseBytes`, it is deterministically clamped to the exact limit, preserving HTTP status codes and headers while signaling `"truncated": true` in the output JSON.
+- **Configurable Response Ceiling (`MaxProxyTestResponseBytes`) with Safe 1 MB Default**: Added `MaxProxyTestResponseBytes int64` to `InternalAPIConfig`. If omitted, set to `0`, or configured with a negative value, the engine safely falls back to a 1 MB (`1,048,576` bytes) default ceiling.
+- **Keep-Alive Connection Pool Reuse & Stream Draining (CWE-775 Remediation)**: Remediated file descriptor leaks (`EMFILE`) by safely draining up to 64 KB of residual upstream body data into `io.Discard` (`io.Copy(io.Discard, io.LimitReader(httpResp.Body, 64*1024))`) before deferred socket closure (`httpResp.Body.Close()`). This allows the underlying HTTP/1.1 TCP connection to be returned to Go's transport keep-alive pool for reuse rather than hanging or leaking.
+- **Zero External Dependencies**: Implemented strictly with the Go standard library (`io`, `net/http`, `encoding/json`, `fmt`, `time`, `strings`), keeping `go.mod` and `go.sum` with 0 diffs.
+- **Comprehensive Automated Verification Suite (`TC-098`)**: Validated via unit and integration test cases TC-098-01 through TC-098-08 in `pkg/server/internal_api_test.go`, covering sub-limit responses, oversized response truncation, infinite chunked stream termination within memory bounds, custom response limits, zero/negative fallback to 1 MB, inbound request body cap enforcement (boundary, overflow, empty, invalid JSON), keep-alive socket reuse, and concurrent race-free execution under `go test -race` ([`TASK-121`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-121.md), [`TC-098`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-098.md)).
+
+### Fixed
+- **Unbounded Inbound Request Ingestion (`SEC-36`, CWE-400)**: Fixed vulnerability where incoming JSON request bodies on `POST /internal/api/proxy-test` were read into memory without length limits, allowing clients to trigger excessive heap allocations.
+- **Memory Exhaustion via Unbounded Upstream Responses (`SEC-36`, CWE-400, CWE-770)**: Fixed vulnerability where probing an upstream target returning a multi-gigabyte or infinite stream (e.g. `/dev/urandom`, endless SSE) caused unbounded memory expansion until the OS Out-Of-Memory (OOM) killer aborted the Toron gateway.
+- **Socket Descriptor Leaks & Connection Hangs (`SEC-36`, CWE-775)**: Fixed failure to drain residual bytes on truncated upstream responses, which previously prevented HTTP/1.1 transport connection recycling and caused `EMFILE` socket exhaustion.
+
+### Changed
+- **Internal API Proxy Test Probe (`pkg/server/internal_api.go`)**:
+  - Implemented 64 KB limit reader on `req.Body` with `400 Bad Request` early rejection.
+  - Implemented bounded reader on `httpResp.Body` constrained by `maxResponseBytes`.
+  - Added deterministic clamping and residual stream discard draining.
+- **Internal API Configuration (`pkg/server/internal_api.go`)**:
+  - Extended `InternalAPIConfig` with `MaxProxyTestResponseBytes int64 `yaml:"max_proxy_test_response_bytes" json:"max_proxy_test_response_bytes"``.
+- **Proxy Test Response Schema (`pkg/server/internal_api.go`)**:
+  - Extended `ProxyTestResponse` with `Truncated bool `json:"truncated,omitempty"``.
+
+### Added
+- **Configuration Option (`max_proxy_test_response_bytes`)**: Added configurable byte ceiling for proxy test probe upstream response buffering.
+- **Automated Verification Suite (`pkg/server/internal_api_test.go`)**:
+  - `TestProxyTest_NormalResponse_UnderLimit` (TC-098-01): Verifies normal response under limit returns full body with `truncated: false`.
+  - `TestProxyTest_OversizedResponse_Truncated` (TC-098-02): Verifies 5 MB response clamped to 1 MB default with `truncated: true`.
+  - `TestProxyTest_InfiniteStream_BoundedTermination` (TC-098-03): Verifies infinite chunked stream is terminated cleanly within memory ceiling.
+  - `TestProxyTest_CustomConfiguredLimit` (TC-098-04): Verifies custom limit (e.g. 2 KB) clamping.
+  - `TestProxyTest_DefaultFallback_ZeroOrNegativeLimit` (TC-098-05): Verifies `<= 0` config falls back safely to 1 MB default.
+  - `TestProxyTest_OversizedRequestBody_Rejection` (TC-098-06): Verifies 64 KB inbound cap enforcement, boundary handling, and rejection.
+  - `TestProxyTest_SocketDrainAndConnectionReuse` (TC-098-07): Verifies TCP socket reuse after truncated response via stream draining.
+  - `TestProxyTest_ConcurrentProbes_RaceClean` (TC-098-08): High-concurrency test running 20 parallel workers clean under `go test -race`.
+
+### Related Tasks & Requirements
+- [`TASK-121`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-121.md): Bounded Request Ingestion and Upstream Response Buffering in Internal API Proxy Test Probe
+- [`REQ-098`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-098.md): Bounded Inbound and Upstream Body Ingestion in Internal API Proxy Test Probe
+- [`ADR-098`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-098.md): Bounded Request and Response Ingestion in Internal API Proxy Test Probe
+- [`TC-098`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-098.md): Verification of Bounded Request Ingestion and Upstream Response Buffering in Internal API Proxy Test Probe
+- [`CR-094`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-094.md): Code Review of Bounded Request Ingestion and Upstream Response Buffering in Internal API Proxy Test Probe (SEC-36)
+- [`SR-098`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-098.md): Security Review and Vulnerability Assessment of SEC-36 Remediation
+- [`SEC-36`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L501-L509): Memory Exhaustion via Unbounded Upstream Response Buffering in Internal API Proxy Test Probe
+
 ## 2026-09-11 - Toron v1.5.16 Security Release (SEC-35: Strict Sidecar Client TLS Certificate Validation and Explicit InsecureSkipVerify Opt-In)
 
 ### Milestone Summary

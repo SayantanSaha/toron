@@ -463,6 +463,7 @@ type ProxyOptions struct {
 	TLS                 ProxyTLSConfig
 	InsecureSkipVerify  bool
 	TLSCACertPool       *x509.CertPool
+	TLSClientConfig     *tls.Config
 	TrustedProxies      []string
 }
 
@@ -516,6 +517,10 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 			InsecureSkipVerify: insecureSkipVerify,
 			RootCAs:            caPool,
 		},
+	}
+
+	if opts.TLSClientConfig != nil {
+		tr.TLSClientConfig = opts.TLSClientConfig
 	}
 
 	client := &http.Client{
@@ -592,10 +597,15 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 	}, nil
 }
 
-// Close stops active background health checks.
+// Close stops active background health checks and closes all idle transport connections.
 func (p *ReverseProxy) Close() {
 	if p.Balancer != nil {
 		p.Balancer.Stop()
+	}
+	if p.Client != nil {
+		if tr, ok := p.Client.Transport.(*http.Transport); ok {
+			tr.CloseIdleConnections()
+		}
 	}
 }
 

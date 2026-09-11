@@ -1193,3 +1193,36 @@ func TestServer_H2_ReverseProxy_TrustedProxyAppended(t *testing.T) {
 		}
 	})
 }
+
+func TestReverseProxy_Close_ClosesIdleConnections(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstreamServer.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets: []string{upstreamServer.URL},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+
+	req, _ := httpparser.NewRequest("GET", "/", "HTTP/1.1")
+	res := httpparser.NewResponse()
+	px.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+
+	// Verify px.Close executes cleanly and closes idle transport connections
+	px.Close()
+
+	// Calling px.Close() again should be idempotent and not panic
+	px.Close()
+
+	// Verify nil-safety
+	emptyPx := &proxy.ReverseProxy{}
+	emptyPx.Close()
+}

@@ -11,7 +11,7 @@
 
 This security audit report reflects the state of the Toron Web Server and Edge Gateway codebase following the complete remediation, testing, code review, and merging of all 30 prior security tasks (`TASK-061` through `TASK-110`, resolving `SEC-01` through `SEC-30`).
 
-A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 36 previously identified vulnerabilities (`SEC-01` through `SEC-36`) remain 100% verified and resolved. **2 remaining findings** (`SEC-37` through `SEC-38`) have been identified across peripheral and extended subsystem surfaces and are tracked below for remediation.
+A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 37 previously identified vulnerabilities (`SEC-01` through `SEC-37`) remain 100% verified and resolved. **1 remaining finding** (`SEC-38`) has been identified across peripheral and extended subsystem surfaces and is tracked below for remediation.
 
 ---
 
@@ -55,7 +55,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 | **P2** | **SEC-34** | Premature Route Deletion & Load-Balancing Failure Across Multi-Replica Containers in OCI Discovery Engine | **Medium** | CWE-400, CWE-284, CWE-662, CWE-775 | **Resolved** | [`TASK-118`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-118.md) | `TC-095 / SR-095, CR-091` | Verified |
 | **P1** | **SEC-35** | Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration | **High** | CWE-295 | **Resolved** | [`TASK-120`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md) | `TC-097 / SR-097, CR-093` | Verified |
 | **P2** | **SEC-36** | Memory Exhaustion via Unbounded Upstream Response Buffering in Internal API Proxy Test Probe | **Medium** | CWE-400, CWE-770, CWE-775 | **Resolved** | [`TASK-121`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-121.md) | `TC-098 / SR-098, CR-094` | Verified |
-| **P2** | **SEC-37** | Unbounded HTTP Client & Transport Allocation per Request in Service Mesh Sidecar Proxy | **Medium** | CWE-400, CWE-772 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
+| **P2** | **SEC-37** | Unbounded HTTP Client & Transport Allocation per Request in Service Mesh Sidecar Proxy | **Medium** | CWE-400, CWE-772 | **Resolved** | [`TASK-122`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-122.md) | `TC-099 / SR-099, CR-095` | Verified |
 | **P3** | **SEC-38** | Missing Token Syntax and Length Validation in ACME HTTP-01 Challenge Handler | **Low** | CWE-20, CWE-703 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
 
 ---
@@ -519,12 +519,22 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 
 #### SEC-37: Unbounded HTTP Client & Transport Allocation per Request in Service Mesh Sidecar Proxy
 - **Severity**: **Medium** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H - Score 7.5)
-- **Location**: [`pkg/sidecar/proxy.go:L192-L202`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L192-L202)
+- **Location**: [`pkg/sidecar/proxy.go:L192-L202`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L192-L202), [`pkg/proxy/proxy.go:L596-L600`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L596-L600)
 - **CWE**: CWE-400, CWE-772
+- **Status**: **Resolved**
+- **Mapped Requirement**: [`REQ-099: Thread-Safe ReverseProxy Caching, Transport Teardown, and Client mTLS Lifecycle Management in Service Mesh Sidecar Proxy`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-099.md)
+- **Mapped Task**: [`TASK-122: Thread-Safe ReverseProxy Caching, Transport Teardown, and Client mTLS Lifecycle Management in Service Mesh Sidecar Proxy`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-122.md)
 - **Root Cause**:  
-  `ProxyEngine.proxyToURL` calls `proxy.NewProxyWithOptions` on every single incoming HTTP request, allocating a new `*http.Transport` and connection pool that is never closed or reused.
-- **Impact**: Socket descriptor exhaustion (EMFILE) and memory leaks under sustained sidecar request traffic.
-- **Remediation**: Cache and reuse `ReverseProxy` and `http.Transport` instances across requests in `ProxyEngine`.
+  `ProxyEngine.proxyToURL` called `proxy.NewProxyWithOptions` on every incoming egress HTTP request, allocating a new `*proxy.ReverseProxy`, `*http.Client`, and `*http.Transport` with an unmanaged connection pool. These transports were never reused across requests or closed after completion. Additionally, `ReverseProxy.Close()` failed to call `tr.CloseIdleConnections()`, and `proxyToURL` omitted client TLS configurations.
+- **Impact**: Under production loads, thousands of open TCP sockets accumulated without connection pooling, causing socket descriptor exhaustion (`EMFILE`), memory bloat, GC thrashing, and gateway crash. Egress HTTPS traffic dropped client mTLS configurations.
+- **Remediation**: Implement thread-safe origin-keyed `ReverseProxy` caching in `ProxyEngine` with canonical origin normalization (`scheme://host[:port]`), close idle transport connections in `ReverseProxy.Close()` and `ProxyEngine.Stop()`, and propagate client mTLS settings via `ProxyOptions.TLSClientConfig`.
+- **Resolution Details**: Fully resolved under [`REQ-099`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-099.md), [`ADR-099`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-099.md), and [`TASK-122`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-122.md):
+  1. *Thread-Safe ReverseProxy Caching (CWE-400 / CWE-772 Elimination)*: Implemented `ProxyEngine.proxies` map (`map[string]*proxy.ReverseProxy`) protected by a `sync.RWMutex` with double-checked locking in `getOrCreateProxy`. In-flight requests targeting cached origins proceed with lock-free read performance.
+  2. *Canonical Origin Normalization ($O(U)$ Bounded Memory)*: Implemented `normalizeTargetOrigin(rawURL)` to map target URLs to canonical `scheme://host[:port]` keys, stripping paths, queries, and fragments, strictly bounding cache memory to $O(U)$ services and eliminating cache key explosion.
+  3. *HTTP Keep-Alive Socket Pooling & Reuse*: Persistent TCP connections are reused across sequential and concurrent requests to identical upstreams, bounding active sockets ($\le 2$ per backend under steady traffic) and eliminating connection allocation overhead.
+  4. *Idle Transport Socket Teardown*: Extended `ReverseProxy.Close()` to invoke `tr.CloseIdleConnections()` on `p.Client.Transport.(*http.Transport)`. Updated `ProxyEngine.Stop()` to iterate through and close all cached proxies upon engine shutdown, releasing all file descriptors and preventing `EMFILE` leaks.
+  5. *Client mTLS Propagation*: Extended `ProxyOptions` with `TLSClientConfig *tls.Config`, passing pre-compiled `p.clientTLS` to new reverse proxies, ensuring outbound egress requests authenticate with configured client certificates and validate custom CA bundles.
+  Verified by comprehensive automated test suite [`TC-099`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-099.md) (`TC-099-01` through `TC-099-07`), approved in [`CR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-095.md) and [`SR-099`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-099.md).
 
 #### SEC-38: Missing Token Syntax and Length Validation in ACME HTTP-01 Challenge Handler
 - **Severity**: **Low** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L - Score 3.7)
@@ -581,14 +591,14 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
   4. [x] Aggregate multi-replica upstreams and prevent premature route deletion in OCI Discovery (`SEC-34`) - **COMPLETED** (`TASK-118`, `TC-095`, `SR-095`, `CR-091`).
   5. [x] Remove insecure default `InsecureSkipVerify = true` in Sidecar Client TLS (`SEC-35`) - **COMPLETED** (`TASK-120`, `TC-097`, `SR-097`, `CR-093`).
   6. [x] Bound response body ingestion in `/internal/api/proxy-test` probe (`SEC-36`) - **COMPLETED** (`TASK-121`, `TC-098`, `SR-098`, `CR-094`).
-  7. [ ] Pool and reuse `http.Transport` instances in Service Mesh Sidecar Proxy (`SEC-37`).
+  7. [x] Pool and reuse `http.Transport` instances in Service Mesh Sidecar Proxy (`SEC-37`) - **COMPLETED** (`TASK-122`, `TC-099`, `SR-099`, `CR-095`).
   8. [ ] Enforce RFC 8555 base64url token syntax validation in ACME challenge handler (`SEC-38`).
 
 ---
 
 ## 5. Remediation Status & Verification Summary
 
-36 security vulnerabilities (`SEC-01` through `SEC-36`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
+37 security vulnerabilities (`SEC-01` through `SEC-37`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 - **`SEC-23`**: Verified in `TC-084` (`TASK-084`..`086`, `defc678`).
@@ -605,7 +615,8 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 - **`SEC-34`**: Verified in `TC-095` (`TASK-118`, `SR-095`, `CR-091`).
 - **`SEC-35`**: Verified in `TC-097` (`TASK-120`, `SR-097`, `CR-093`).
 - **`SEC-36`**: Verified in `TC-098` (`TASK-121`, `SR-098`, `CR-094`).
+- **`SEC-37`**: Verified in `TC-099` (`TASK-122`, `SR-099`, `CR-095`).
 
-All 36 vulnerabilities (`SEC-01` through `SEC-36`) remain 100% verified and resolved. **2 remaining findings** (`SEC-37` through `SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems are tracked below for remediation.
+All 37 vulnerabilities (`SEC-01` through `SEC-37`) remain 100% verified and resolved. **1 remaining finding** (`SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems is tracked below for remediation.
 
 

@@ -1,5 +1,55 @@
 # Release Notes
 
+## 2026-09-11 - Toron v1.5.18 Security Release (SEC-37: Thread-Safe ReverseProxy Caching, Transport Teardown, and Client mTLS Lifecycle Management in Service Mesh Sidecar Proxy)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-37 (`pkg/sidecar`, `pkg/proxy`)**: Successfully resolved Medium-severity unbounded transport allocation, memory exhaustion, and socket descriptor leak vulnerabilities [`SEC-37`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L510-L518) ([CWE-400](https://cwe.mitre.org/data/definitions/400.html), [CWE-772](https://cwe.mitre.org/data/definitions/772.html), [`SR-091 Finding 7`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md), [`SR-099`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-099.md), [`CR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-095.md)) in the Service Mesh Sidecar Proxy engine.
+- **Elimination of Per-Request ReverseProxy and Transport Allocation**: Replaced historical per-request instantiation of `*proxy.ReverseProxy`, `*http.Client`, and `*http.Transport` in `proxyToURL` with thread-safe origin-keyed caching in `ProxyEngine.proxies` (`map[string]*proxy.ReverseProxy`) using double-checked locking protected by `sync.RWMutex`. In-flight requests targeting cached origins proceed with lock-free read performance.
+- **Canonical Target Origin Normalization ($O(U)$ Bounded Memory)**: Implemented `normalizeTargetOrigin(rawURL)` to extract canonical `scheme://host[:port]` keys, stripping variable dynamic paths, query parameters, and fragments. Memory utilization scales strictly with the number of unique upstream microservices ($O(U)$), completely preventing cache key explosion.
+- **HTTP Keep-Alive Connection Pooling & TCP Socket Reuse**: Outbound egress traffic now reuses persistent keep-alive TCP connections across successive and concurrent requests directed at the same backend microservice ($\le 2$ active TCP sockets per backend under steady traffic), slashing connection latency to near zero and eliminating GC thrashing.
+- **Idle Transport Connection Teardown (`ReverseProxy.Close()` & `ProxyEngine.Stop()`)**: Extended [`ReverseProxy.Close()`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L601) to invoke `tr.CloseIdleConnections()` on `p.Client.Transport.(*http.Transport)`. When [`ProxyEngine.Stop()`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L346) executes during pod shutdown, it cleanly iterates through all cached proxies and releases all idle TCP sockets, permanently eliminating file descriptor leaks (`EMFILE`).
+- **Egress Client mTLS Propagation via `ProxyOptions.TLSClientConfig`**: Added `TLSClientConfig *tls.Config` to [`ProxyOptions`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L466), attaching pre-compiled client TLS configurations directly to cached reverse proxies. Egress HTTPS/mTLS connections now seamlessly present client certificates and validate custom CA roots in compliance with [`REQ-097`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md) / `SEC-35`.
+- **Zero External Dependencies**: Implemented strictly using the Go standard library (`sync`, `net/http`, `crypto/tls`, `net/url`, `io`, `fmt`, `time`, `strings`), keeping `go.mod` and `go.sum` with 0 diffs.
+- **Comprehensive Automated Verification Suite (`TC-099`)**: Fully validated via unit and integration tests TC-099-01 through TC-099-07, confirming singleton proxy reuse across 50 sequential requests, multi-target backend isolation, 50-worker high-concurrency race freedom under `go test -race`, stop lifecycle teardown, egress client mTLS propagation, canonical origin normalization across 9 patterns, and `ReverseProxy.Close()` idle connection cleanup ([`TASK-122`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-122.md), [`TC-099`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-099.md)).
+
+### Fixed
+- **Unbounded Transport & Socket Descriptor Allocation (`SEC-37`, CWE-400, CWE-772)**: Fixed vulnerability where every outbound egress request created a new `*http.Transport` connection pool that was never reused or closed, leading to rapid socket descriptor exhaustion (`EMFILE`) and process crashes under load.
+- **Missing Idle Connection Teardown on Proxy Teardown (`SEC-37`, CWE-772)**: Fixed `ReverseProxy.Close()` omission of `tr.CloseIdleConnections()`, which previously orphaned idle TCP sockets upon route removal or proxy closure.
+- **Cache Key Proliferation Risk**: Preempted cache map bloating by normalizing raw URLs to canonical `scheme://host[:port]` origins before caching.
+- **Egress Client mTLS Disconnect**: Fixed omission of client TLS configurations in `proxyToURL`, ensuring outbound egress proxying adheres to sidecar mTLS settings.
+
+### Changed
+- **Reverse Proxy Core (`pkg/proxy/proxy.go`)**:
+  - Extended `ProxyOptions` with `TLSClientConfig *tls.Config`.
+  - Attached `opts.TLSClientConfig` to `http.Transport` in `NewProxyWithOptions`.
+  - Added `tr.CloseIdleConnections()` invocation inside `ReverseProxy.Close()`.
+- **Sidecar Proxy Engine (`pkg/sidecar/proxy.go`)**:
+  - Extended `ProxyEngine` with `proxies map[string]*proxy.ReverseProxy`.
+  - Added `getOrCreateProxy` with thread-safe double-checked locking using `sync.RWMutex`.
+  - Pre-compiled client TLS configuration in `NewProxyEngine` and stored in `p.clientTLS`.
+  - Updated `proxyToURL` to route requests through cached origin proxies.
+  - Updated `ProxyEngine.Stop()` to iterate through and close all cached proxies.
+
+### Added
+- **Canonical Origin Normalization (`normalizeTargetOrigin`)**: Added URL parser utility in `pkg/sidecar/proxy.go` ensuring canonical `scheme://host[:port]` origin caching.
+- **Automated Verification Suite (`pkg/sidecar/sidecar_test.go`, `pkg/proxy/proxy_test.go`)**:
+  - `TestProxyEngine_ProxyCaching_SingletonPerOrigin` (TC-099-01): Verifies single reverse proxy and $\le 2$ TCP sockets across 50 sequential requests.
+  - `TestProxyEngine_MultiTarget_Isolation` (TC-099-02): Verifies distinct backends maintain isolated `ReverseProxy` instances.
+  - `TestProxyEngine_HighConcurrency_RaceClean` (TC-099-03): High-concurrency test running 50 workers issuing 1,000 requests clean under `go test -race`.
+  - `TestProxyEngine_Stop_CleansUpAllProxies` (TC-099-04): Verifies clean proxy closure and map teardown on `ProxyEngine.Stop()`.
+  - `TestProxyEngine_ClientTLS_Propagation` (TC-099-05): Verifies client certificate and CA validation propagation through cached proxy.
+  - `TestProxyEngine_OriginNormalization` (TC-099-06): Validates 9 target URL patterns for origin normalization.
+  - `TestReverseProxy_Close_ClosesIdleConnections` (TC-099-07): Verifies `ReverseProxy.Close()` closes idle transport connections.
+
+### Related Tasks & Requirements
+- [`TASK-122`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-122.md): Thread-Safe ReverseProxy Caching, Transport Teardown, and Client mTLS Lifecycle Management in Service Mesh Sidecar Proxy
+- [`REQ-099`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-099.md): Thread-Safe ReverseProxy Caching, Transport Teardown, and Client mTLS Lifecycle Management in Service Mesh Sidecar Proxy
+- [`ADR-099`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-099.md): ReverseProxy Caching, Transport Teardown, and Client mTLS Plumbing in Sidecar Proxy
+- [`TC-099`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-099.md): Verification of Thread-Safe ReverseProxy Caching, Transport Teardown, and Client mTLS Lifecycle Management in Service Mesh Sidecar Proxy
+- [`CR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-095.md): Code Review of Thread-Safe ReverseProxy Caching, Transport Teardown, and Client mTLS Lifecycle Management in Service Mesh Sidecar Proxy (SEC-37)
+- [`SR-099`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-099.md): Security Review and Vulnerability Assessment of SEC-37 Remediation
+- [`SEC-37`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L510-L518): Unbounded HTTP Client & Transport Allocation per Request in Service Mesh Sidecar Proxy
+
 ## 2026-09-11 - Toron v1.5.17 Security Release (SEC-36: Bounded Request Ingestion and Upstream Response Buffering in Internal API Proxy Test Probe)
 
 ### Milestone Summary

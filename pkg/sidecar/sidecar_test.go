@@ -1475,3 +1475,404 @@ func TestSidecar_EgressTLS_ConcurrentRouting_RaceClean(t *testing.T) {
 	}
 }
 
+func generateSignedClientCert(t *testing.T, caCert *x509.Certificate, caKey *rsa.PrivateKey) ([]byte, []byte, tls.Certificate) {
+	t.Helper()
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("failed to generate client private key: %v", err)
+	}
+
+	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		t.Fatalf("failed to generate serial number: %v", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serialNumber,
+		Subject: pkix.Name{
+			Organization: []string{"Toron Test Client"},
+			CommonName:   "client",
+		},
+		NotBefore:             time.Now().Add(-1 * time.Hour),
+		NotAfter:              time.Now().Add(24 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+	}
+
+	derBytes, err := x509.CreateCertificate(rand.Reader, &template, caCert, &priv.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("failed to sign client cert: %v", err)
+	}
+
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: derBytes})
+	keyBytes := x509.MarshalPKCS1PrivateKey(priv)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: keyBytes})
+
+	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
+	if err != nil {
+		t.Fatalf("failed to load client tls keypair: %v", err)
+	}
+	return certPEM, keyPEM, tlsCert
+}
+
+func TestProxyEngine_ProxyCaching_SingletonPerOrigin(t *testing.T) {
+	var mu sync.Mutex
+	remoteAddrs := make(map[string]int)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		remoteAddrs[r.RemoteAddr]++
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer upstream.Close()
+
+	cfg := config.SidecarConfig{
+		Enabled:    true,
+		Mode:       "egress",
+		EgressPort: 0,
+	}
+	engine, err := NewProxyEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	defer engine.Stop()
+
+	for i := 0; i < 50; i++ {
+		targetURL := fmt.Sprintf("%s/resource/%d?param=%d", upstream.URL, i, i*2)
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", targetURL, nil)
+		engine.proxyToURL(rec, req, targetURL)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("request %d failed with status %d", i, rec.Code)
+		}
+	}
+
+	canonicalOrigin, err := normalizeTargetOrigin(upstream.URL)
+	if err != nil {
+		t.Fatalf("normalizeTargetOrigin failed: %v", err)
+	}
+
+	engine.mu.RLock()
+	proxiesCount := len(engine.proxies)
+	px := engine.proxies[canonicalOrigin]
+	engine.mu.RUnlock()
+
+	if proxiesCount != 1 {
+		t.Errorf("expected exactly 1 cached proxy, got %d", proxiesCount)
+	}
+	if px == nil {
+		t.Fatalf("expected cached proxy for origin %s, got nil", canonicalOrigin)
+	}
+
+	mu.Lock()
+	distinctConns := len(remoteAddrs)
+	mu.Unlock()
+
+	if distinctConns > 2 {
+		t.Errorf("expected keep-alive connection reuse (<= 2 distinct remote addrs), got %d distinct addrs for 50 requests", distinctConns)
+	}
+}
+
+func TestProxyEngine_MultiOrigin_Isolation(t *testing.T) {
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-1"))
+	}))
+	defer srv1.Close()
+
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-2"))
+	}))
+	defer srv2.Close()
+
+	srv3 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-3"))
+	}))
+	defer srv3.Close()
+
+	cfg := config.SidecarConfig{Enabled: true, Mode: "egress"}
+	engine, err := NewProxyEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	defer engine.Stop()
+
+	servers := []struct {
+		url      string
+		expected string
+	}{
+		{srv1.URL, "backend-1"},
+		{srv2.URL, "backend-2"},
+		{srv3.URL, "backend-3"},
+	}
+
+	for _, s := range servers {
+		for i := 0; i < 10; i++ {
+			targetURL := fmt.Sprintf("%s/api/v1/item/%d", s.url, i)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", targetURL, nil)
+			engine.proxyToURL(rec, req, targetURL)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("request to %s failed with status %d", targetURL, rec.Code)
+			}
+			if rec.Body.String() != s.expected {
+				t.Errorf("expected body %q, got %q", s.expected, rec.Body.String())
+			}
+		}
+	}
+
+	engine.mu.RLock()
+	defer engine.mu.RUnlock()
+
+	if len(engine.proxies) != 3 {
+		t.Fatalf("expected exactly 3 cached proxies, got %d", len(engine.proxies))
+	}
+
+	o1, _ := normalizeTargetOrigin(srv1.URL)
+	o2, _ := normalizeTargetOrigin(srv2.URL)
+	o3, _ := normalizeTargetOrigin(srv3.URL)
+
+	px1 := engine.proxies[o1]
+	px2 := engine.proxies[o2]
+	px3 := engine.proxies[o3]
+
+	if px1 == nil || px2 == nil || px3 == nil {
+		t.Fatalf("expected all 3 proxies to be non-nil")
+	}
+
+	if px1 == px2 || px2 == px3 || px1 == px3 {
+		t.Errorf("expected separate isolated ReverseProxy instances per origin")
+	}
+}
+
+func TestProxyEngine_HighConcurrency_RaceClean(t *testing.T) {
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("srv1-ok"))
+	}))
+	defer srv1.Close()
+
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("srv2-ok"))
+	}))
+	defer srv2.Close()
+
+	cfg := config.SidecarConfig{Enabled: true, Mode: "egress"}
+	engine, err := NewProxyEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	defer engine.Stop()
+
+	var wg sync.WaitGroup
+	workers := 50
+	requestsPerWorker := 20
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for i := 0; i < requestsPerWorker; i++ {
+				target := srv1.URL
+				expected := "srv1-ok"
+				if (workerID+i)%2 == 0 {
+					target = srv2.URL
+					expected = "srv2-ok"
+				}
+				targetURL := fmt.Sprintf("%s/path/%d/%d?token=xyz", target, workerID, i)
+				rec := httptest.NewRecorder()
+				req := httptest.NewRequest("GET", targetURL, nil)
+				engine.proxyToURL(rec, req, targetURL)
+
+				if rec.Code != http.StatusOK {
+					t.Errorf("worker %d request %d failed: status %d", workerID, i, rec.Code)
+					return
+				}
+				if rec.Body.String() != expected {
+					t.Errorf("worker %d request %d: expected %q, got %q", workerID, i, expected, rec.Body.String())
+					return
+				}
+			}
+		}(w)
+	}
+
+	wg.Wait()
+
+	engine.mu.RLock()
+	cachedCount := len(engine.proxies)
+	engine.mu.RUnlock()
+
+	if cachedCount != 2 {
+		t.Errorf("expected exactly 2 cached proxies under concurrent load, got %d", cachedCount)
+	}
+}
+
+func TestProxyEngine_Stop_CleansUpAllProxies(t *testing.T) {
+	srv1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok-1"))
+	}))
+	defer srv1.Close()
+
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok-2"))
+	}))
+	defer srv2.Close()
+
+	cfg := config.SidecarConfig{Enabled: true, Mode: "egress"}
+	engine, err := NewProxyEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	rec1 := httptest.NewRecorder()
+	req1 := httptest.NewRequest("GET", srv1.URL+"/test", nil)
+	engine.proxyToURL(rec1, req1, srv1.URL+"/test")
+
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest("GET", srv2.URL+"/test", nil)
+	engine.proxyToURL(rec2, req2, srv2.URL+"/test")
+
+	engine.mu.RLock()
+	if len(engine.proxies) != 2 {
+		t.Fatalf("expected 2 cached proxies before stop, got %d", len(engine.proxies))
+	}
+	engine.mu.RUnlock()
+
+	// Invoke Stop
+	engine.Stop()
+
+	engine.mu.RLock()
+	remaining := len(engine.proxies)
+	engine.mu.RUnlock()
+
+	if remaining != 0 {
+		t.Errorf("expected 0 cached proxies after Stop(), got %d", remaining)
+	}
+
+	// Idempotent Stop
+	engine.Stop()
+}
+
+func TestProxyEngine_ClientTLS_Propagation(t *testing.T) {
+	tmpDir := t.TempDir()
+	caPEM, caCert, caKey := generateTestCA(t)
+	caPath := filepath.Join(tmpDir, "ca.pem")
+	if err := os.WriteFile(caPath, caPEM, 0644); err != nil {
+		t.Fatalf("failed to write CA PEM: %v", err)
+	}
+
+	_, _, serverTLSCert := generateSignedServerCert(t, caCert, caKey, "127.0.0.1", "localhost")
+	clientCertPEM, clientKeyPEM, _ := generateSignedClientCert(t, caCert, caKey)
+	clientCertPath := filepath.Join(tmpDir, "client.crt")
+	clientKeyPath := filepath.Join(tmpDir, "client.key")
+	if err := os.WriteFile(clientCertPath, clientCertPEM, 0644); err != nil {
+		t.Fatalf("failed to write client cert: %v", err)
+	}
+	if err := os.WriteFile(clientKeyPath, clientKeyPEM, 0600); err != nil {
+		t.Fatalf("failed to write client key: %v", err)
+	}
+
+	caPool := x509.NewCertPool()
+	caPool.AppendCertsFromPEM(caPEM)
+
+	upstream := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
+			http.Error(w, "missing client certificate", http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("mtls-authenticated"))
+	}))
+	upstream.TLS = &tls.Config{
+		Certificates: []tls.Certificate{serverTLSCert},
+		ClientAuth:   tls.RequireAndVerifyClientCert,
+		ClientCAs:    caPool,
+	}
+	upstream.StartTLS()
+	defer upstream.Close()
+
+	cfg := config.SidecarConfig{
+		Enabled:            true,
+		Mode:               "egress",
+		CAFile:             caPath,
+		CertFile:           clientCertPath,
+		KeyFile:            clientKeyPath,
+		InsecureSkipVerify: false,
+	}
+
+	engine, err := NewProxyEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+	defer engine.Stop()
+
+	if engine.clientTLS == nil {
+		t.Fatalf("expected engine.clientTLS != nil")
+	}
+	if engine.clientTLS.RootCAs == nil {
+		t.Fatalf("expected engine.clientTLS.RootCAs != nil")
+	}
+	if len(engine.clientTLS.Certificates) != 1 {
+		t.Fatalf("expected 1 client certificate loaded, got %d", len(engine.clientTLS.Certificates))
+	}
+	if engine.clientTLS.InsecureSkipVerify {
+		t.Errorf("expected InsecureSkipVerify == false")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", upstream.URL+"/secure", nil)
+	engine.proxyToURL(rec, req, upstream.URL+"/secure")
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status 200 OK, got %d (body: %s)", rec.Code, rec.Body.String())
+	}
+	if rec.Body.String() != "mtls-authenticated" {
+		t.Errorf("expected body 'mtls-authenticated', got %q", rec.Body.String())
+	}
+}
+
+func TestProxyEngine_OriginNormalization(t *testing.T) {
+	testCases := []struct {
+		name        string
+		input       string
+		expected    string
+		expectError bool
+	}{
+		{"Scenario 6.1: Strip path", "http://order-svc:8080/orders/101", "http://order-svc:8080", false},
+		{"Scenario 6.2: Strip query & fragment", "http://order-svc:8080/orders/202?query=1&sort=desc#section", "http://order-svc:8080", false},
+		{"Scenario 6.3: Lowercase scheme & host", "HTTP://ORDER-SVC:8080/items", "http://order-svc:8080", false},
+		{"Scenario 6.4: Scheme default (http://)", "order-svc:8080/api/v1", "http://order-svc:8080", false},
+		{"Scenario 6.5: HTTPS preserved", "https://payment-gateway:9443/checkout", "https://payment-gateway:9443", false},
+		{"Scenario 6.6: Standard port implicit", "http://localhost/", "http://localhost", false},
+		{"Scenario 6.7: Whitespace trimming", "   http://trimmed-svc:3000/path   ", "http://trimmed-svc:3000", false},
+		{"Scenario 6.8: Empty target error", "", "", true},
+		{"Scenario 6.9: Missing host error", "http:///missing-host", "", true},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			normalized, err := normalizeTargetOrigin(tc.input)
+			if tc.expectError {
+				if err == nil {
+					t.Errorf("expected error for input %q, got nil (result: %q)", tc.input, normalized)
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error for input %q: %v", tc.input, err)
+				}
+				if normalized != tc.expected {
+					t.Errorf("expected %q, got %q", tc.expected, normalized)
+				}
+			}
+		})
+	}
+}
+

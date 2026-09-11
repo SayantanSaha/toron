@@ -9,6 +9,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -25,6 +26,8 @@ type ProxyEngine struct {
 	cfg             config.SidecarConfig
 	router          *router.Router
 	splitters       map[string]*WeightedSplitter // prefix -> splitter
+	proxies         map[string]*proxy.ReverseProxy // origin -> *proxy.ReverseProxy
+	clientTLS       *tls.Config
 	ingressServer   *http.Server
 	egressServer    *http.Server
 	ingressListener net.Listener
@@ -34,7 +37,12 @@ type ProxyEngine struct {
 }
 
 // NewProxyEngine constructs a Service Mesh Sidecar ProxyEngine instance.
-func NewProxyEngine(cfg config.SidecarConfig, r *router.Router) (*ProxyEngine, error) {
+func NewProxyEngine(cfg config.SidecarConfig, routers ...*router.Router) (*ProxyEngine, error) {
+	var r *router.Router
+	if len(routers) > 0 {
+		r = routers[0]
+	}
+
 	if cfg.IngressPort <= 0 {
 		cfg.IngressPort = 15006
 	}
@@ -46,6 +54,11 @@ func NewProxyEngine(cfg config.SidecarConfig, r *router.Router) (*ProxyEngine, e
 	}
 	if cfg.MaxBodyBytes <= 0 {
 		cfg.MaxBodyBytes = 10 * 1024 * 1024
+	}
+
+	clientTLS, err := BuildClientTLSConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("sidecar client tls config failed: %w", err)
 	}
 
 	splitters := make(map[string]*WeightedSplitter)
@@ -70,6 +83,8 @@ func NewProxyEngine(cfg config.SidecarConfig, r *router.Router) (*ProxyEngine, e
 		cfg:       cfg,
 		router:    r,
 		splitters: splitters,
+		proxies:   make(map[string]*proxy.ReverseProxy),
+		clientTLS: clientTLS,
 	}, nil
 }
 
@@ -189,12 +204,80 @@ func (p *ProxyEngine) startEgressListener(ctx context.Context) error {
 	return nil
 }
 
-func (p *ProxyEngine) proxyToURL(w http.ResponseWriter, r *http.Request, targetURL string) {
-	opts := proxy.ProxyOptions{
-		Targets: []string{targetURL},
+// normalizeTargetOrigin normalizes a raw target URL to a canonical origin scheme://host[:port],
+// stripping any paths, query strings, and fragments, and converting scheme and host to lowercase.
+func normalizeTargetOrigin(rawURL string) (string, error) {
+	targetURL := strings.TrimSpace(rawURL)
+	if targetURL == "" {
+		return "", fmt.Errorf("empty target URL")
 	}
 
-	px, err := proxy.NewProxyWithOptions(opts)
+	lower := strings.ToLower(targetURL)
+	if strings.HasPrefix(targetURL, "//") {
+		targetURL = "http:" + targetURL
+	} else if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+		targetURL = "http://" + targetURL
+	}
+
+	u, err := url.Parse(targetURL)
+	if err != nil {
+		return "", fmt.Errorf("invalid target URL: %w", err)
+	}
+
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Host)
+
+	if host == "" {
+		return "", fmt.Errorf("missing host in target URL: %s", rawURL)
+	}
+
+	return fmt.Sprintf("%s://%s", scheme, host), nil
+}
+
+// getOrCreateProxy retrieves an existing ReverseProxy for the canonical origin,
+// or instantiates and caches a new one using thread-safe double-checked locking.
+func (p *ProxyEngine) getOrCreateProxy(targetURL string) (*proxy.ReverseProxy, error) {
+	origin, err := normalizeTargetOrigin(targetURL)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fast path: read lock
+	p.mu.RLock()
+	px, ok := p.proxies[origin]
+	p.mu.RUnlock()
+	if ok && px != nil {
+		return px, nil
+	}
+
+	// Slow path: write lock
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	// Double-checked locking
+	if px, ok = p.proxies[origin]; ok && px != nil {
+		return px, nil
+	}
+
+	opts := proxy.ProxyOptions{
+		Targets:         []string{origin},
+		TLSClientConfig: p.clientTLS,
+	}
+
+	newPx, err := proxy.NewProxyWithOptions(opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if p.proxies == nil {
+		p.proxies = make(map[string]*proxy.ReverseProxy)
+	}
+	p.proxies[origin] = newPx
+	return newPx, nil
+}
+
+func (p *ProxyEngine) proxyToURL(w http.ResponseWriter, r *http.Request, targetURL string) {
+	px, err := p.getOrCreateProxy(targetURL)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("Sidecar proxy error: %v", err), http.StatusBadGateway)
 		return
@@ -202,6 +285,15 @@ func (p *ProxyEngine) proxyToURL(w http.ResponseWriter, r *http.Request, targetU
 
 	// Adapt stdlib http.Request to Toron Request
 	toronReq := httpparser.NewRequestFromStd(r)
+	if targetParsed, err := url.Parse(targetURL); err == nil {
+		if (toronReq.Path == "" || toronReq.Path == "/") && targetParsed.Path != "" && targetParsed.Path != "/" {
+			toronReq.Path = targetParsed.Path
+		}
+		if toronReq.URL != nil && toronReq.URL.RawQuery == "" && targetParsed.RawQuery != "" {
+			toronReq.URL.RawQuery = targetParsed.RawQuery
+		}
+	}
+
 	maxBody := p.cfg.MaxBodyBytes
 	if maxBody <= 0 {
 		maxBody = 10 * 1024 * 1024
@@ -250,18 +342,26 @@ func (p *ProxyEngine) proxyToURL(w http.ResponseWriter, r *http.Request, targetU
 	_, _ = w.Write(toronRes.Body.Bytes())
 }
 
-// Stop terminates active sidecar proxy servers.
+// Stop terminates active sidecar proxy servers and cleans up all cached reverse proxies.
 func (p *ProxyEngine) Stop() {
 	p.mu.Lock()
-	if !p.running {
-		p.mu.Unlock()
-		return
-	}
+	wasRunning := p.running
 	p.running = false
 	if p.cancel != nil {
 		p.cancel()
 	}
+
+	for _, px := range p.proxies {
+		if px != nil {
+			px.Close()
+		}
+	}
+	p.proxies = make(map[string]*proxy.ReverseProxy)
 	p.mu.Unlock()
+
+	if !wasRunning {
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()

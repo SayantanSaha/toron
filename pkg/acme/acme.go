@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -113,6 +114,13 @@ func (m *ACMEManager) GetHTTP01Challenge(token string) (string, bool) {
 	return keyAuth, exists
 }
 
+// RemoveHTTP01Challenge removes an HTTP-01 challenge token from the registry.
+func (m *ACMEManager) RemoveHTTP01Challenge(token string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.http01Tokens, token)
+}
+
 // SetTLSALPN01Challenge registers a TLS-ALPN-01 challenge certificate for a domain.
 func (m *ACMEManager) SetTLSALPN01Challenge(domain string, cert *tls.Certificate) {
 	m.mu.Lock()
@@ -189,22 +197,68 @@ func (m *ACMEManager) GetCertificate(clientHello *tls.ClientHelloInfo) (*tls.Cer
 	return nil, fmt.Errorf("acme: no valid certificate available for domain %q", domain)
 }
 
-// ServeHTTP01Handler handles incoming GET /.well-known/acme-challenge/{token} requests.
-func (m *ACMEManager) ServeHTTP01Handler(req *httpparser.Request, res *httpparser.Response) {
-	token := strings.TrimPrefix(req.Path, "/.well-known/acme-challenge/")
-	token = strings.TrimSpace(token)
+// IsValidACMEToken reports whether token conforms strictly to RFC 8555 §8.3 base64url alphabet without padding.
+// Valid tokens must satisfy 1 <= len(token) <= 128 and contain only characters [a-zA-Z0-9_-].
+func IsValidACMEToken(token string) bool {
+	n := len(token)
+	if n < 1 || n > 128 {
+		return false
+	}
+	for i := 0; i < n; i++ {
+		b := token[i]
+		if (b >= 'a' && b <= 'z') ||
+			(b >= 'A' && b <= 'Z') ||
+			(b >= '0' && b <= '9') ||
+			b == '-' || b == '_' {
+			continue
+		}
+		return false
+	}
+	return true
+}
 
+// ServeHTTP01Handler handles incoming GET and HEAD /.well-known/acme-challenge/{token} requests.
+// It enforces strict RFC 8555 token syntax, length constraints, and HTTP method restrictions.
+func (m *ACMEManager) ServeHTTP01Handler(req *httpparser.Request, res *httpparser.Response) {
+	// 1. Method restriction (only GET and HEAD permitted)
+	if req.Method != "GET" && req.Method != "HEAD" {
+		res.SetStatus(http.StatusMethodNotAllowed)
+		res.Header.Set("Allow", "GET, HEAD")
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("405 Method Not Allowed: Only GET and HEAD methods are permitted")
+		return
+	}
+
+	// 2. Token extraction without silent whitespace trimming
+	token := strings.TrimPrefix(req.Path, "/.well-known/acme-challenge/")
+
+	// 3. Fail-fast syntax and length validation before map lookup or lock acquisition
+	if !IsValidACMEToken(token) {
+		res.SetStatus(http.StatusBadRequest)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("400 Bad Request: Invalid ACME Challenge Token")
+		return
+	}
+
+	// 4. Token challenge lookup
 	keyAuth, exists := m.GetHTTP01Challenge(token)
 	if !exists {
 		res.SetStatus(http.StatusNotFound)
 		res.Header.Set("Content-Type", "text/plain")
-		_, _ = res.WriteString("404 ACME Challenge Token Not Found")
+		if req.Method == "GET" {
+			_, _ = res.WriteString("404 ACME Challenge Token Not Found")
+		}
 		return
 	}
 
+	// 5. Success response (RFC 7231 HEAD vs GET handling)
 	res.SetStatus(http.StatusOK)
 	res.Header.Set("Content-Type", "text/plain")
-	_, _ = res.WriteString(keyAuth)
+	res.Header.Set("Content-Length", strconv.Itoa(len(keyAuth)))
+
+	if req.Method == "GET" {
+		_, _ = res.WriteString(keyAuth)
+	}
 }
 
 func loadOrGenerateAccountKey(keyPath string) (*ecdsa.PrivateKey, error) {

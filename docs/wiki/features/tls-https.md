@@ -4,15 +4,21 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-12
-updated: 2026-08-12
+updated: 2026-09-11
 
 depends_on:
   - REQ-023
+  - REQ-033
+  - REQ-100
   - TASK-023
+  - TASK-033
+  - TASK-123
 
 derived_from:
   - REQ-023
   - ADR-018
+  - ADR-100
+  - SEC-38
 
 documents:
   - TLS-HTTPS-GUIDE
@@ -91,3 +97,56 @@ routes:
 * `require_any_client_cert`: Requires the client to present a certificate without verifying against a CA.
 * `verify_client_cert_if_given`: Verifies client certificate against `ca_file` only if provided.
 * `require_and_verify`: Strictly mandates and validates client certificates signed by the configured `ca_file` (mTLS).
+
+---
+
+## 🛡️ ACME Zero-Touch SSL & Hardened HTTP-01 Challenge Responder ([SEC-38])
+
+Toron provides automated, zero-touch certificate issuance and background renewal via ACME ([RFC 8555](https://datatracker.ietf.org/doc/html/rfc8555), e.g. Let's Encrypt). The gateway automatically registers endpoints, proves domain ownership via the HTTP-01 challenge responder (`/.well-known/acme-challenge/<token>`), and hot-reloads issued certificates into the TLS runtime.
+
+### HTTP-01 Protocol Hardening & Validation Standards ([SEC-38])
+
+Prior to [`SEC-38`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L539-L561) ([`REQ-100`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-100.md), [`ADR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-100.md), [`TASK-123`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-123.md)), incoming challenge validation requests (`/.well-known/acme-challenge/<token>`) were processed without strict input validation, allowing arbitrary string payloads to query internal challenge tables under lock contention.
+
+The hardened ACME challenge responder enforces six security and protocol compliance guarantees:
+
+1. **RFC 8555 §8.3 Base64URL Token Validation**:
+   All tokens are strictly validated via the public zero-allocation validator [`IsValidACMEToken`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go#L202-L218). Tokens must consist strictly of characters from the unpadded base64url alphabet (`[a-zA-Z0-9_-]`). Padding characters (`=`), directory traversal patterns (`..`), path separators (`/`, `\`), control characters, and high-order Unicode bytes are strictly rejected with `400 Bad Request`.
+2. **Strict Length Boundary Enforcement**:
+   Tokens are strictly bounded to $1 \le \text{len}(token) \le 128$ bytes. Empty tokens (`/.well-known/acme-challenge/`) or oversized tokens (>128 bytes) fail fast with `400 Bad Request`.
+3. **Elimination of Silent Whitespace Trimming**:
+   Unlike permissive implementations, Toron eliminates silent `strings.TrimSpace(token)`. Tokens with leading, trailing, or embedded whitespace strictly trigger `400 Bad Request`.
+4. **HTTP Method Hardening (RFC 7231 §6.5.5 Compliance)**:
+   The HTTP-01 challenge responder permits only `GET` and `HEAD` methods. Disallowed methods (`POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `CONNECT`, `TRACE`) immediately receive `405 Method Not Allowed` with mandatory headers `Allow: GET, HEAD` and `Content-Type: text/plain`.
+5. **Fail-Fast Lock Isolation (CWE-20 / CWE-400 Protection)**:
+   Method, syntax, and length validations execute before querying the challenge registry, ensuring invalid or malicious requests never acquire reader locks (`m.mu.RLock()`) or trigger hash computations on the gateway's token registry.
+6. **RFC 7231 §4.3.2 HEAD Semantics**:
+   Automated CA validation probes issuing `HEAD` requests receive `200 OK`, `Content-Type: text/plain`, and exact `Content-Length: len(keyAuth)`, while the response body is strictly omitted (`res.Body.Len() == 0`). Valid unregistered tokens return `404 Not Found` (with empty body on `HEAD`).
+
+### ACME Challenge Validation Flow
+
+```mermaid
+flowchart TD
+    Req(["HTTP Request to /.well-known/acme-challenge/*"]) --> MethodCheck{"Method in [GET, HEAD]?"}
+    
+    MethodCheck -- No --> MethodReject["405 Method Not Allowed<br/>Header: Allow: GET, HEAD<br/>Header: Content-Type: text/plain"]
+    MethodReject --> End405(["Return HTTP 405 (Lock Never Acquired)"])
+    
+    MethodCheck -- Yes --> TokenExtract["Extract raw token segment<br/>(No silent whitespace trimming)"]
+    TokenExtract --> TokenValid{"IsValidACMEToken(token)?<br/>- 1 <= len <= 128<br/>- Alphabet: [a-zA-Z0-9_-]"}
+    
+    TokenValid -- No --> BadReq["400 Bad Request:<br/>'Invalid ACME Challenge Token'"]
+    BadReq --> End400(["Return HTTP 400 (Lock Never Acquired)"])
+    
+    TokenValid -- Yes --> LockAcquire["m.GetHTTP01Challenge(token)<br/>(Acquires m.mu.RLock())"]
+    LockAcquire --> TokenExists{"Token registered in<br/>m.http01Tokens?"}
+    
+    TokenExists -- No --> NotFound["404 Not Found<br/>(Write body on GET; empty on HEAD)"]
+    NotFound --> End404(["Return HTTP 404"])
+    
+    TokenExists -- Yes --> FormatResp["Status: 200 OK<br/>Content-Type: text/plain<br/>Content-Length: len(keyAuth)"]
+    FormatResp --> IsHead{"Method == HEAD?"}
+    IsHead -- Yes --> HeadResp["Omit response body<br/>(RFC 7231 §4.3.2 compliant)"] --> End200(["Return HTTP 200 OK"])
+    IsHead -- No --> GetResp["Write keyAuth to body"] --> End200
+```
+

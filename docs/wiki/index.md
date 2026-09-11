@@ -63,6 +63,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [HTTP/2 Engine](./features/http2.md) – Cleartext `h2c` prior-knowledge and stream multiplexing.
 - [HTTP/3 QUIC Protocol Engine](./features/http3.md) – HTTP/3 over QUIC (UDP), concurrent listener, and Alt-Svc upgrade advertising.
 - [HTTPS TLS & Auto Dev Certs](./features/tls-https.md) – TLS 1.2/1.3 encryption and ECDSA dev certificate generation.
+- [ACME Zero-Touch Production SSL & Protocol Hardening](./features/acme.md) – Automated Let's Encrypt SSL issuance, HTTP-01 & TLS-ALPN-01 challenge responders, and RFC 8555 token validation.
 - [WebSocket Tunneling](./features/websocket.md) – RFC 6455 and RFC 8441 Extended CONNECT bi-directional stream tunneling.
 - [Static File Serving](./features/static-file-serving.md) – Hosting web apps, MIME resolution, and directory index handling.
 

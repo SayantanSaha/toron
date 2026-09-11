@@ -11,7 +11,7 @@
 
 This security audit report reflects the state of the Toron Web Server and Edge Gateway codebase following the complete remediation, testing, code review, and merging of all 30 prior security tasks (`TASK-061` through `TASK-110`, resolving `SEC-01` through `SEC-30`).
 
-A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 37 previously identified vulnerabilities (`SEC-01` through `SEC-37`) remain 100% verified and resolved. **1 remaining finding** (`SEC-38`) has been identified across peripheral and extended subsystem surfaces and is tracked below for remediation.
+A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) was conducted across all subsystems—including HTTP/1.1, HTTP/2 multiplexing, HTTP/3 QUIC, Layer 4 TCP/UDP proxies, WAF inspection engines, IP access control lists, authentication schemes, CORS policies, reverse proxies, Kubernetes Ingress controllers, container auto-discovery, service mesh sidecars, gRPC transcoders, ACME zero-touch certificates, structured logging, and internal management APIs. All 38 identified vulnerabilities (`SEC-01` through `SEC-38`) are now 100% verified and resolved! **Zero open findings remain** across the entire Toron Web Server and Edge Gateway codebase.
 
 ---
 
@@ -56,7 +56,7 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 | **P1** | **SEC-35** | Insecure Default InsecureSkipVerify in Sidecar Client TLS Configuration | **High** | CWE-295 | **Resolved** | [`TASK-120`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md) | `TC-097 / SR-097, CR-093` | Verified |
 | **P2** | **SEC-36** | Memory Exhaustion via Unbounded Upstream Response Buffering in Internal API Proxy Test Probe | **Medium** | CWE-400, CWE-770, CWE-775 | **Resolved** | [`TASK-121`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-121.md) | `TC-098 / SR-098, CR-094` | Verified |
 | **P2** | **SEC-37** | Unbounded HTTP Client & Transport Allocation per Request in Service Mesh Sidecar Proxy | **Medium** | CWE-400, CWE-772 | **Resolved** | [`TASK-122`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-122.md) | `TC-099 / SR-099, CR-095` | Verified |
-| **P3** | **SEC-38** | Missing Token Syntax and Length Validation in ACME HTTP-01 Challenge Handler | **Low** | CWE-20, CWE-703 | **Open** | Pending | [`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md) | Pending |
+| **P3** | **SEC-38** | Missing Token Syntax and Length Validation in ACME HTTP-01 Challenge Handler | **Low** | CWE-20, CWE-703 | **Resolved** | [`TASK-123`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-123.md) | `TC-100 / SR-100, CR-096` | Verified |
 
 ---
 
@@ -538,12 +538,23 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 
 #### SEC-38: Missing Token Syntax and Length Validation in ACME HTTP-01 Challenge Handler
 - **Severity**: **Low** (CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:L - Score 3.7)
-- **Location**: [`pkg/acme/acme.go:L193-L208`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go#L193-L208)
-- **CWE**: CWE-20, CWE-703
+- **Location**: [`pkg/acme/acme.go:L200-L262`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go#L200-L262)
+- **CWE**: CWE-20, CWE-400, CWE-703
+- **Status**: **Resolved**
+- **Mapped Requirement**: [`REQ-100: RFC 8555 Token Syntax & Length Validation and HTTP Method Hardening in ACME HTTP-01 Challenge Handler`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-100.md)
+- **Mapped Task**: [`TASK-123: RFC 8555 Token Syntax & Length Validation and HTTP Method Hardening in ACME HTTP-01 Challenge Handler`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-123.md)
 - **Root Cause**:  
-  `ACMEManager.ServeHTTP01Handler` strips path prefix and directly looks up the token in the challenge map without validating RFC 8555 §8.3 base64url characters or token length bounds.
-- **Impact**: Unvalidated user input queries internal token map; potential cache pollution and RFC non-compliance.
-- **Remediation**: Enforce RFC 8555 base64url regex (`^[a-zA-Z0-9_-]+$`) and reasonable length limits (<= 128 bytes) on ACME challenge tokens, returning HTTP 400 on invalid input.
+  `ACMEManager.ServeHTTP01Handler` extracted the token segment from `req.Path`, silently trimmed whitespace with `strings.TrimSpace`, and directly queried `m.GetHTTP01Challenge(token)` without validating RFC 8555 §8.3 unpadded base64url characters or string length boundaries. Furthermore, arbitrary HTTP verbs were accepted instead of restricting access to `GET` and `HEAD`, and `HEAD` requests erroneously wrote response bodies in violation of RFC 7231 §4.3.2.
+- **Impact**: Unvalidated external inputs triggered map hashing and reader lock (`m.mu.RLock()`) contention; malformed tokens bypassed validation via whitespace trimming; arbitrary HTTP methods leaked challenge responses; and non-compliant HEAD responses disrupted automated ACME CA validation probes.
+- **Remediation**: Implement a zero-allocation validator `IsValidACMEToken` enforcing $1 \le \text{len} \le 128$ and base64url characters `[a-zA-Z0-9_-]`; restrict HTTP methods to `GET` and `HEAD` returning 405 Method Not Allowed with `Allow: GET, HEAD` on others; eliminate silent whitespace trimming; enforce fail-fast 400 Bad Request before map locking; implement RFC 7231 HEAD semantics (`Content-Length` set, empty body); and return clean 404 responses for unregistered tokens.
+- **Resolution Details**: Fully resolved under [`REQ-100`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-100.md), [`ADR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-100.md), and [`TASK-123`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-123.md):
+  1. *Zero-Allocation RFC 8555 Base64URL Validator (`IsValidACMEToken`)*: Added public validator performing an in-place single-pass byte scan over the token without heap allocations, enforcing $1 \le \text{len} \le 128$ and strictly characters `[a-zA-Z0-9_-]`, rejecting padding (`=`), path separators, traversal dots, whitespace, and non-ASCII bytes.
+  2. *Removal of Silent Whitespace Trimming*: Completely eliminated `strings.TrimSpace(token)`. Tokens containing leading, trailing, or internal whitespace fail validation and are rejected with `400 Bad Request`.
+  3. *HTTP Method Hardening (RFC 7231 §6.5.5 Compliance)*: Evaluated as the first operation in `ServeHTTP01Handler`; non-`GET` and non-`HEAD` methods (`POST`, `PUT`, `DELETE`, etc.) immediately return `405 Method Not Allowed` with mandatory headers `Allow: GET, HEAD` and `Content-Type: text/plain`.
+  4. *Fail-Fast Lock Isolation*: Syntax, length, and method validations execute before invoking `m.GetHTTP01Challenge(token)`, ensuring malformed or oversized payloads never acquire `m.mu.RLock()` or trigger map hash computations.
+  5. *RFC 7231 §4.3.2 Compliant HEAD Semantics*: `HEAD` requests return `200 OK`, `Content-Type: text/plain`, and exact `Content-Length: len(keyAuth)` while strictly omitting the response body (`res.Body.Len() == 0`).
+  6. *Clean 404 Not Found Handling*: Valid unregistered tokens return `404 Not Found` with an explanatory error body for `GET` and an empty body for `HEAD`.
+  Verified by comprehensive automated test suite [`TC-100`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-100.md) (`TC-100-01` through `TC-100-09`), approved in [`CR-096`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-096.md) and [`SR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-100.md).
 
 ---
 
@@ -592,13 +603,13 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
   5. [x] Remove insecure default `InsecureSkipVerify = true` in Sidecar Client TLS (`SEC-35`) - **COMPLETED** (`TASK-120`, `TC-097`, `SR-097`, `CR-093`).
   6. [x] Bound response body ingestion in `/internal/api/proxy-test` probe (`SEC-36`) - **COMPLETED** (`TASK-121`, `TC-098`, `SR-098`, `CR-094`).
   7. [x] Pool and reuse `http.Transport` instances in Service Mesh Sidecar Proxy (`SEC-37`) - **COMPLETED** (`TASK-122`, `TC-099`, `SR-099`, `CR-095`).
-  8. [ ] Enforce RFC 8555 base64url token syntax validation in ACME challenge handler (`SEC-38`).
+  8. [x] Enforce RFC 8555 base64url token syntax validation in ACME challenge handler (`SEC-38`) - **COMPLETED** (`TASK-123`, `TC-100`, `SR-100`, `CR-096`).
 
 ---
 
 ## 5. Remediation Status & Verification Summary
 
-37 security vulnerabilities (`SEC-01` through `SEC-37`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
+38 security vulnerabilities (`SEC-01` through `SEC-38`) have been fully remediated, verified under `go test -count=1 -race ./...`, security reviewed, and code reviewed:
 - **`SEC-01`..`SEC-12`**: Merged in commits `b148b7d` through `ee4d29d`.
 - **`SEC-13`..`SEC-22`**: Merged in commits `06301d6` through `b48848e`.
 - **`SEC-23`**: Verified in `TC-084` (`TASK-084`..`086`, `defc678`).
@@ -616,7 +627,8 @@ A fresh comprehensive codebase security audit ([`SR-091`](file:///Users/sneha/De
 - **`SEC-35`**: Verified in `TC-097` (`TASK-120`, `SR-097`, `CR-093`).
 - **`SEC-36`**: Verified in `TC-098` (`TASK-121`, `SR-098`, `CR-094`).
 - **`SEC-37`**: Verified in `TC-099` (`TASK-122`, `SR-099`, `CR-095`).
+- **`SEC-38`**: Verified in `TC-100` (`TASK-123`, `SR-100`, `CR-096`).
 
-All 37 vulnerabilities (`SEC-01` through `SEC-37`) remain 100% verified and resolved. **1 remaining finding** (`SEC-38`) from the comprehensive audit ([`SR-091`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md)) across peripheral and extended subsystems is tracked below for remediation.
+All 38 vulnerabilities (`SEC-01` through `SEC-38`) are 100% verified and resolved. **Zero open findings remain** across the entire Toron Web Server and Edge Gateway codebase.
 
 

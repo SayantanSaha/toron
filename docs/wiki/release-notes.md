@@ -1,5 +1,51 @@
 # Release Notes
 
+## 2026-09-11 - Toron v1.5.19 Security Release (SEC-38: RFC 8555 Token Syntax & Length Validation and HTTP Method Hardening in ACME HTTP-01 Challenge Handler)
+
+### Milestone Summary
+- **Remediation of Security Vulnerability SEC-38 (`pkg/acme/acme.go`)**: Successfully resolved Low-severity input validation, lock contention, and RFC non-compliance vulnerabilities [`SEC-38`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L539-L561) ([CWE-20](https://cwe.mitre.org/data/definitions/20.html), [CWE-400](https://cwe.mitre.org/data/definitions/400.html), [CWE-703](https://cwe.mitre.org/data/definitions/703.html), [`SR-091 Finding 8`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-091.md#L235-L251), [`SR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-100.md), [`CR-096`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-096.md)) in Toron's ACME HTTP-01 challenge responder.
+- **Zero-Allocation RFC 8555 §8.3 Base64URL Validator (`IsValidACMEToken`)**: Implemented high-performance zero-allocation byte scanner enforcing $1 \le \text{len} \le 128$ and strictly the unpadded base64url character set (`[a-zA-Z0-9_-]`). Disallows padding (`=`), path separators (`/`, `\`), path traversal dots (`..`), whitespace, control characters, and non-ASCII bytes.
+- **Fail-Fast Lock Isolation & DoS Elimination (CWE-20, CWE-400)**: Syntax and length validations execute prior to challenge registry lookup, preventing malformed, oversized, or adversarial request paths from acquiring `m.mu.RLock()` or triggering map hashing.
+- **Elimination of Silent Whitespace Trimming**: Removed `strings.TrimSpace(token)`, ensuring tokens containing leading, trailing, or embedded whitespace strictly trigger `HTTP 400 Bad Request`.
+- **HTTP Method Hardening (RFC 7231 §6.5.5 Compliance)**: Restricted `ServeHTTP01Handler` strictly to `GET` and `HEAD` methods. Disallowed methods (`POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `CONNECT`, `TRACE`) immediately yield `405 Method Not Allowed` with mandatory headers `Allow: GET, HEAD` and `Content-Type: text/plain`.
+- **RFC 7231 §4.3.2 Compliant HEAD Semantics**: Automated CA validation probes issuing `HEAD` requests receive `200 OK`, `Content-Type: text/plain`, and exact `Content-Length: len(keyAuth)` while strictly omitting the response body (`res.Body.Len() == 0`).
+- **Clean 404 Response on Unregistered Valid Tokens**: Valid tokens not registered in the challenge table return `404 Not Found` with an explanatory error body for `GET` and an empty body for `HEAD`.
+- **Zero External Dependencies**: Implemented strictly using the Go standard library (`crypto/*`, `net/http`, `strconv`, `strings`, `sync`, `time`) and internal `httpparser`.
+- **Comprehensive Automated Verification Suite (`TC-100`)**: Verified across all 9 automated test scenarios in `pkg/acme/acme_test.go` (`TC-100-01` through `TC-100-09`) including high-concurrency race freedom under `go test -race` ([`TASK-123`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-123.md), [`TC-100`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-100.md)).
+
+### Fixed
+- **Unvalidated Token Map Queries & Core Lock Contention (`SEC-38`, CWE-20, CWE-400)**: Fixed vulnerability where external callers could query arbitrary paths against internal token map under read locks without validation.
+- **Permissive HTTP Method Acceptance (`SEC-38`, RFC 8555)**: Fixed endpoint accepting non-idempotent or arbitrary HTTP verbs, now rejecting them with `405 Method Not Allowed`.
+- **Missing RFC 7231 HEAD Method Support (`SEC-38`)**: Fixed handler writing response bodies on `HEAD` requests, ensuring body is omitted while `Content-Length` is preserved.
+- **Silent Whitespace Forgiveness (`SEC-38`, CWE-20)**: Fixed handler masking invalid whitespace characters via `strings.TrimSpace`.
+
+### Changed
+- **ACME Core (`pkg/acme/acme.go`)**:
+  - Added public `IsValidACMEToken(token string) bool`.
+  - Updated `ServeHTTP01Handler` to validate method (`GET` and `HEAD` only), remove whitespace trimming, validate token syntax and length, guard response body for `HEAD`, and return appropriate status codes (`400`, `404`, `405`).
+
+### Added
+- **Automated Verification Suite (`pkg/acme/acme_test.go`)**:
+  - `TestACME_HTTP01_ValidToken_GET_Success` (TC-100-01)
+  - `TestACME_HTTP01_EmptyToken_Rejection` (TC-100-02)
+  - `TestACME_HTTP01_TokenLengthBoundary` (TC-100-03)
+  - `TestACME_HTTP01_InvalidCharacters_Rejection` (TC-100-04)
+  - `TestACME_HTTP01_PathTraversal_Rejection` (TC-100-05)
+  - `TestACME_HTTP01_MethodValidation_405MethodNotAllowed` (TC-100-06)
+  - `TestACME_HTTP01_HEAD_Semantics` (TC-100-07)
+  - `TestACME_HTTP01_NonExistentToken_404NotFound` (TC-100-08)
+  - `TestACME_HTTP01_HighConcurrency_RaceSafety` (TC-100-09)
+  - `TestACME_IsValidACMEToken` (Unit test)
+
+### Related Tasks & Requirements
+- [`TASK-123`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-123.md): RFC 8555 Token Syntax & Length Validation and HTTP Method Hardening in ACME HTTP-01 Challenge Handler
+- [`REQ-100`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-100.md): RFC 8555 Token Syntax & Length Validation and HTTP Method Hardening in ACME HTTP-01 Challenge Handler
+- [`ADR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-100.md): RFC 8555 Token Syntax & Length Validation and HTTP Method Hardening in ACME HTTP-01 Challenge Handler
+- [`TC-100`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-100.md): Automated Verification Suite for RFC 8555 Token Syntax Validation and Method Hardening in ACME Handler
+- [`CR-096`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-096.md): Code Review of RFC 8555 Token Syntax & Length Validation and HTTP Method Hardening in ACME HTTP-01 Challenge Handler (SEC-38)
+- [`SR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-100.md): Security Review and Vulnerability Assessment of SEC-38 Remediation
+- [`SEC-38`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L539-L561): Missing Token Syntax and Length Validation in ACME HTTP-01 Challenge Handler
+
 ## 2026-09-11 - Toron v1.5.18 Security Release (SEC-37: Thread-Safe ReverseProxy Caching, Transport Teardown, and Client mTLS Lifecycle Management in Service Mesh Sidecar Proxy)
 
 ### Milestone Summary

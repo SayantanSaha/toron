@@ -85,6 +85,13 @@ Transmits raw TCP byte streams containing deliberate RFC protocol violations, de
 5. **Heap Allocation Bounding (CWE-400)**:
    - Oversized request headers (>8KB).
    - Oversized single query parameters (>2KB).
+6. **RFC 7234 Shared Cache Session Boundary Isolation (CWE-524, CWE-384)**:
+   - Multi-stage sequential request execution evaluating cross-session cache isolation.
+   - `CACHE-001`: Web Cache Deception prevention (unauthenticated probe cannot retrieve private cached content; asserts `X-Cache: MISS`).
+   - `CACHE-002`: `Set-Cookie` and `Set-Cookie2` header stripping prior to shared cache storage and emission (`X-Cache: HIT` without cookie leakage).
+   - `CACHE-003`: `Authorization` refusal (requests with `Authorization` are refused storage unless explicitly marked `Cache-Control: public`).
+7. **RFC Conformance Baseline (`BASELINE-001`)**:
+   - Standard valid HTTP/1.1 request formatted canonically as `200 OK` in generated Markdown and JSON reports via dynamic RFC status resolution.
 
 ### Running the Fuzzer
 ```bash

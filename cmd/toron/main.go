@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
@@ -328,6 +329,40 @@ func main() {
 	r.GET("/api/status", func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
 		_, _ = res.WriteString(fmt.Sprintf(`{"server":"Toron","version":%q,"uptime":"healthy","engine":"event-driven"}`, version.Get()))
+	})
+
+	// Cache Invariant Test Endpoints (RFC 7234 Verification)
+	r.GET("/cache/private-profile", func(req *httpparser.Request, res *httpparser.Response) {
+		res.Header.Set("Content-Type", "application/json")
+		res.Header.Set("Cache-Control", "private, max-age=60")
+		if req.Header.Get("Authorization") != "" {
+			res.Header.Set("X-Private-Token", "secret-payload")
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString(`{"user":"authenticated-profile"}`)
+			return
+		}
+		res.SetStatus(http.StatusUnauthorized)
+		_, _ = res.WriteString(`{"error":"unauthorized"}`)
+	})
+
+	r.GET("/cache/cookie-resource", func(req *httpparser.Request, res *httpparser.Response) {
+		res.Header.Set("Content-Type", "application/json")
+		res.Header.Set("Cache-Control", "public, max-age=60")
+		res.Header.Set("Set-Cookie", "session=secret_token_value; HttpOnly; Path=/")
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString(`{"data":"cookie-resource"}`)
+	})
+
+	r.GET("/cache/protected-resource", func(req *httpparser.Request, res *httpparser.Response) {
+		res.Header.Set("Content-Type", "application/json")
+		if req.Header.Get("Authorization") != "" {
+			res.Header.Set("X-User-Data", "confidential")
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString(`{"data":"protected-data"}`)
+			return
+		}
+		res.SetStatus(http.StatusUnauthorized)
+		_, _ = res.WriteString(`{"error":"unauthorized"}`)
 	})
 
 	// Initialize SNIRegistry for dynamic per-host TLS & mTLS dispatching

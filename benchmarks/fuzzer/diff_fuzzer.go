@@ -8,36 +8,44 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
 )
 
 type TestCase struct {
-	ID             string   `json:"id"`
-	Category       string   `json:"category"`
-	Name           string   `json:"name"`
-	CWE            string   `json:"cwe"`
-	RawPayload     string   `json:"raw_payload"`
-	ExpectedStatus []int    `json:"expected_status"`
-	ExpectClose    bool     `json:"expect_close"`
-	Description    string   `json:"description"`
+	ID                       string            `json:"id"`
+	Category                 string            `json:"category"`
+	Name                     string            `json:"name"`
+	CWE                      string            `json:"cwe"`
+	RawPayload               string            `json:"raw_payload,omitempty"`
+	SequentialPayloads       []string          `json:"sequential_payloads,omitempty"`
+	ForbiddenResponseHeaders []string          `json:"forbidden_response_headers,omitempty"`
+	RequiredResponseHeaders  map[string]string `json:"required_response_headers,omitempty"`
+	ExpectedStatus           []int             `json:"expected_status"`
+	ExpectClose              bool              `json:"expect_close"`
+	Description              string            `json:"description"`
 }
 
 type TestResult struct {
-	TestCaseID      string        `json:"test_case_id"`
-	Category        string        `json:"category"`
-	Name            string        `json:"name"`
-	CWE             string        `json:"cwe"`
-	ActualStatus    int           `json:"actual_status"`
-	StatusLine      string        `json:"status_line"`
-	ConnectionClose bool          `json:"connection_closed"`
-	LatencyUs       int64         `json:"latency_us"`
-	Passed          bool          `json:"passed"`
-	FailureReason   string        `json:"failure_reason,omitempty"`
-	BaselineStatus  int           `json:"baseline_status,omitempty"`
-	BaselineVulnerable bool       `json:"baseline_vulnerable,omitempty"`
+	TestCaseID         string            `json:"test_case_id"`
+	Category           string            `json:"category"`
+	Name               string            `json:"name"`
+	CWE                string            `json:"cwe"`
+	ExpectedStatus     []int             `json:"expected_status"`
+	ExpectedStatusStr  string            `json:"expected_status_str"`
+	ActualStatus       int               `json:"actual_status"`
+	StatusLine         string            `json:"status_line"`
+	ResponseHeaders    map[string]string `json:"response_headers,omitempty"`
+	ConnectionClose    bool              `json:"connection_closed"`
+	LatencyUs          int64             `json:"latency_us"`
+	Passed             bool              `json:"passed"`
+	FailureReason      string            `json:"failure_reason,omitempty"`
+	BaselineStatus     int               `json:"baseline_status,omitempty"`
+	BaselineVulnerable bool              `json:"baseline_vulnerable,omitempty"`
 }
 
 type DifferentialReport struct {
@@ -232,7 +240,163 @@ func getTestCases() []TestCase {
 			ExpectClose: false,
 			Description: "Valid RFC 7230 request must be accepted with 200 OK",
 		},
+
+		// --- 7. RFC 7234 Shared Cache Session Boundary Isolation (CWE-524, CWE-384) ---
+		{
+			ID:          "CACHE-001",
+			Category:    "Cache Session Boundary",
+			Name:        "Web Cache Deception (Private Cache-Control)",
+			CWE:         "CWE-524",
+			SequentialPayloads: []string{
+				// Stage 1: Authenticated client fetches private resource
+				"GET /cache/private-profile HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer secret-session-token\r\nCache-Control: private\r\n\r\n",
+				// Stage 2: Unauthenticated probe requests the same resource
+				"GET /cache/private-profile HTTP/1.1\r\nHost: localhost\r\n\r\n",
+			},
+			ExpectedStatus: []int{200, 401},
+			RequiredResponseHeaders: map[string]string{
+				"X-Cache": "MISS",
+			},
+			ForbiddenResponseHeaders: []string{
+				"X-Private-Token",
+			},
+			ExpectClose: false,
+			Description: "RFC 7234 §3: Responses with Cache-Control: private must never be cached or served to unauthenticated probe",
+		},
+		{
+			ID:          "CACHE-002",
+			Category:    "Cache Session Boundary",
+			Name:        "Shared Cache Set-Cookie Header Stripping",
+			CWE:         "CWE-384",
+			SequentialPayloads: []string{
+				// Stage 1: Client triggers resource that sets session cookie
+				"GET /cache/cookie-resource HTTP/1.1\r\nHost: localhost\r\n\r\n",
+				// Stage 2: Subsequent client fetches cached entry
+				"GET /cache/cookie-resource HTTP/1.1\r\nHost: localhost\r\n\r\n",
+			},
+			ExpectedStatus: []int{200},
+			RequiredResponseHeaders: map[string]string{
+				"X-Cache": "HIT",
+			},
+			ForbiddenResponseHeaders: []string{
+				"Set-Cookie",
+				"Set-Cookie2",
+			},
+			ExpectClose: false,
+			Description: "RFC 7234 §8: Shared cache must strip Set-Cookie and Set-Cookie2 before caching and serving",
+		},
+		{
+			ID:          "CACHE-003",
+			Category:    "Cache Session Boundary",
+			Name:        "Authorization Refusal Invariant in Shared Cache",
+			CWE:         "CWE-524",
+			SequentialPayloads: []string{
+				// Stage 1: Authenticated request lacking Cache-Control: public
+				"GET /cache/protected-resource HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer user-auth-key\r\n\r\n",
+				// Stage 2: Subsequent unauthenticated probe
+				"GET /cache/protected-resource HTTP/1.1\r\nHost: localhost\r\n\r\n",
+			},
+			ExpectedStatus: []int{200, 401},
+			RequiredResponseHeaders: map[string]string{
+				"X-Cache": "MISS",
+			},
+			ForbiddenResponseHeaders: []string{
+				"X-User-Data",
+			},
+			ExpectClose: false,
+			Description: "RFC 7234 §3.2: Shared cache must refuse caching requests with Authorization header unless response has Cache-Control: public",
+		},
 	}
+}
+
+// formatExpectedStatus formats status codes canonically with RFC status text or slash delimitation.
+func formatExpectedStatus(expected []int) string {
+	if len(expected) == 0 {
+		return "N/A"
+	}
+	if len(expected) == 1 {
+		code := expected[0]
+		text := http.StatusText(code)
+		if text != "" {
+			return fmt.Sprintf("%d %s", code, text)
+		}
+		return strconv.Itoa(code)
+	}
+	strs := make([]string, len(expected))
+	for i, code := range expected {
+		strs[i] = strconv.Itoa(code)
+	}
+	return strings.Join(strs, "/")
+}
+
+// parseResponseHeaders parses HTTP response headers from a bufio.Reader.
+func parseResponseHeaders(reader *bufio.Reader) http.Header {
+	headers := make(http.Header)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		colonIdx := strings.Index(line, ":")
+		if colonIdx > 0 {
+			key := strings.TrimSpace(line[:colonIdx])
+			val := strings.TrimSpace(line[colonIdx+1:])
+			headers.Add(key, val)
+		}
+	}
+	return headers
+}
+
+// getHeader performs case-insensitive header lookup returning comma-joined values.
+func getHeader(h http.Header, key string) string {
+	for k, vals := range h {
+		if strings.EqualFold(k, key) {
+			return strings.Join(vals, ", ")
+		}
+	}
+	return ""
+}
+
+// hasHeader checks case-insensitively whether a header is present in the response.
+func hasHeader(h http.Header, key string) (bool, string) {
+	for k, vals := range h {
+		if strings.EqualFold(k, key) {
+			return true, strings.Join(vals, ", ")
+		}
+	}
+	return false, ""
+}
+
+// sendAndDrain sends a preparatory raw payload and drains response bytes.
+func sendAndDrain(targetHost, payload string, timeout time.Duration) error {
+	conn, err := net.DialTimeout("tcp", targetHost, timeout)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(timeout))
+	if _, err := conn.Write([]byte(payload)); err != nil {
+		return err
+	}
+
+	reader := bufio.NewReader(conn)
+	// Read status line
+	if _, err := reader.ReadString('\n'); err != nil {
+		return err
+	}
+	// Drain headers
+	_ = parseResponseHeaders(reader)
+
+	// Bounded drain of response body
+	_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	buf := make([]byte, 4096)
+	_, _ = reader.Read(buf)
+	return nil
 }
 
 // isConnectionClosedErr returns true if the error indicates peer closure, reset, or broken pipe.
@@ -294,12 +458,31 @@ func verifySocketClosed(conn net.Conn, reader *bufio.Reader) bool {
 
 func executeRawTest(targetHost string, tc TestCase) TestResult {
 	result := TestResult{
-		TestCaseID: tc.ID,
-		Category:   tc.Category,
-		Name:       tc.Name,
-		CWE:        tc.CWE,
+		TestCaseID:        tc.ID,
+		Category:          tc.Category,
+		Name:              tc.Name,
+		CWE:               tc.CWE,
+		ExpectedStatus:    tc.ExpectedStatus,
+		ExpectedStatusStr: formatExpectedStatus(tc.ExpectedStatus),
 	}
 
+	payloads := tc.SequentialPayloads
+	if len(payloads) == 0 {
+		payloads = []string{tc.RawPayload}
+	}
+
+	// For multi-stage payloads, execute preparatory requests first
+	for i := 0; i < len(payloads)-1; i++ {
+		if err := sendAndDrain(targetHost, payloads[i], 3*time.Second); err != nil {
+			result.Passed = false
+			result.FailureReason = fmt.Sprintf("Preparatory request %d failed: %v", i+1, err)
+			return result
+		}
+		// Brief pause to allow backend cache settlement
+		time.Sleep(15 * time.Millisecond)
+	}
+
+	finalPayload := payloads[len(payloads)-1]
 	start := time.Now()
 	conn, err := net.DialTimeout("tcp", targetHost, 3*time.Second)
 	if err != nil {
@@ -313,7 +496,7 @@ func executeRawTest(targetHost string, tc TestCase) TestResult {
 	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
 
 	// Send raw byte sequence
-	_, err = conn.Write([]byte(tc.RawPayload))
+	_, err = conn.Write([]byte(finalPayload))
 	if err != nil {
 		result.LatencyUs = time.Since(start).Microseconds()
 		result.Passed = false
@@ -354,6 +537,13 @@ func executeRawTest(targetHost string, tc TestCase) TestResult {
 	}
 	result.ActualStatus = code
 
+	// Parse response headers
+	headers := parseResponseHeaders(reader)
+	result.ResponseHeaders = make(map[string]string)
+	for k := range headers {
+		result.ResponseHeaders[k] = getHeader(headers, k)
+	}
+
 	// Check if status code matches expected set
 	statusMatch := false
 	for _, expected := range tc.ExpectedStatus {
@@ -369,13 +559,35 @@ func executeRawTest(targetHost string, tc TestCase) TestResult {
 	if !statusMatch {
 		result.Passed = false
 		result.FailureReason = fmt.Sprintf("Received status %d, expected one of %v", code, tc.ExpectedStatus)
-	} else if tc.ExpectClose && !result.ConnectionClose {
-		result.Passed = false
-		result.FailureReason = fmt.Sprintf("Received status %d, but connection remained open (expected physical teardown)", code)
-	} else {
-		result.Passed = true
+		return result
 	}
 
+	if tc.ExpectClose && !result.ConnectionClose {
+		result.Passed = false
+		result.FailureReason = fmt.Sprintf("Received status %d, but connection remained open (expected physical teardown)", code)
+		return result
+	}
+
+	// Verify required headers
+	for reqKey, reqVal := range tc.RequiredResponseHeaders {
+		actualVal := getHeader(headers, reqKey)
+		if !strings.EqualFold(actualVal, reqVal) {
+			result.Passed = false
+			result.FailureReason = fmt.Sprintf("Required header %q: expected %q, got %q", reqKey, reqVal, actualVal)
+			return result
+		}
+	}
+
+	// Verify forbidden headers
+	for _, forbKey := range tc.ForbiddenResponseHeaders {
+		if exists, actualVal := hasHeader(headers, forbKey); exists {
+			result.Passed = false
+			result.FailureReason = fmt.Sprintf("Forbidden header %q was present with value %q", forbKey, actualVal)
+			return result
+		}
+	}
+
+	result.Passed = true
 	return result
 }
 
@@ -515,9 +727,9 @@ func main() {
 			if r.ConnectionClose {
 				connIcon = "Closed"
 			}
-			expectedStr := "400/501"
-			if r.TestCaseID == "BASELINE-001" {
-				expectedStr = "200"
+			expectedStr := r.ExpectedStatusStr
+			if expectedStr == "" {
+				expectedStr = formatExpectedStatus(r.ExpectedStatus)
 			}
 			md.WriteString(fmt.Sprintf("| `%s` | %s | %s | `%s` | `%d` | `%s` | `%d µs` | %s |\n",
 				r.TestCaseID, r.Name, r.CWE, expectedStr, r.ActualStatus, connIcon, r.LatencyUs, statusIcon))

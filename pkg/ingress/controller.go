@@ -3,6 +3,7 @@ package ingress
 import (
 	"context"
 	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -12,6 +13,57 @@ import (
 	"toron/pkg/proxy"
 	"toron/pkg/router"
 )
+
+// CompositeRouteKey partitions discovered routes multi-dimensionally by Host, Prefix, Method, and CanonicalHeaders.
+type CompositeRouteKey struct {
+	Host             string
+	Prefix           string
+	Method           string
+	CanonicalHeaders string
+}
+
+func canonicalizeHeaders(headers map[string]string) string {
+	if len(headers) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(headers))
+	for k := range headers {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		return strings.ToLower(keys[i]) < strings.ToLower(keys[j])
+	})
+	parts := make([]string, len(keys))
+	for i, k := range keys {
+		parts[i] = strings.ToLower(k) + "=" + headers[k]
+	}
+	return strings.Join(parts, "&")
+}
+
+// CanonicalizeHeaders is an exported helper for deterministic header serialization.
+func CanonicalizeHeaders(headers map[string]string) string {
+	return canonicalizeHeaders(headers)
+}
+
+func makeCompositeKey(r *discovery.DiscoveredRoute) CompositeRouteKey {
+	cleanHost := strings.ToLower(strings.TrimSpace(r.Host))
+	cleanPrefix := "/" + strings.Trim(r.Prefix, "/")
+	if cleanPrefix == "/" {
+		cleanPrefix = ""
+	}
+	cleanMethod := strings.ToUpper(strings.TrimSpace(r.Method))
+	return CompositeRouteKey{
+		Host:             cleanHost,
+		Prefix:           cleanPrefix,
+		Method:           cleanMethod,
+		CanonicalHeaders: canonicalizeHeaders(r.Headers),
+	}
+}
+
+// MakeCompositeKey is an exported alias for makeCompositeKey.
+func MakeCompositeKey(r *discovery.DiscoveredRoute) CompositeRouteKey {
+	return makeCompositeKey(r)
+}
 
 // Controller manages Kubernetes Ingress resources and synchronizes upstreams into Toron Router.
 type Controller struct {
@@ -140,16 +192,14 @@ func (c *Controller) syncIngresses(ctx context.Context) {
 		}
 	}
 
-	type routeKey struct {
-		host   string
-		prefix string
-	}
-
-	// Rebuild route map and aggregate pod target URLs by (Host, CleanPrefix)
+	// Rebuild route map and aggregate pod target URLs by CompositeRouteKey
 	newRoutes := make(map[string]*discovery.DiscoveredRoute)
-	var keyOrder []routeKey
-	targetsByKey := make(map[routeKey][]string)
-	seenTarget := make(map[routeKey]map[string]bool)
+	var keyOrder []CompositeRouteKey
+	targetsByKey := make(map[CompositeRouteKey][]string)
+	headersByKey := make(map[CompositeRouteKey]map[string]string)
+	seenTarget := make(map[CompositeRouteKey]map[string]bool)
+	healthCheckPathByKey := make(map[CompositeRouteKey]string)
+	healthCheckIntervalByKey := make(map[CompositeRouteKey]time.Duration)
 
 	for _, ing := range ingList {
 		routes, ok := TranslateIngress(ing, c.cfg.IngressClass, endpointsMap)
@@ -159,37 +209,49 @@ func (c *Controller) syncIngresses(ctx context.Context) {
 		for _, r := range routes {
 			newRoutes[r.ContainerID] = r
 
-			cleanPrefix := "/" + strings.Trim(r.Prefix, "/")
-			if cleanPrefix == "/" {
-				cleanPrefix = ""
-			}
-			host := strings.TrimSpace(r.Host)
-			k := routeKey{host: host, prefix: cleanPrefix}
+			k := makeCompositeKey(r)
 			targetURL := r.TargetURL()
 
 			if seenTarget[k] == nil {
 				seenTarget[k] = make(map[string]bool)
 				keyOrder = append(keyOrder, k)
+				headersByKey[k] = r.Headers
 			}
 			if !seenTarget[k][targetURL] {
 				seenTarget[k][targetURL] = true
 				targetsByKey[k] = append(targetsByKey[k], targetURL)
+			}
+			if healthCheckPathByKey[k] == "" && r.HealthCheckPath != "" {
+				healthCheckPathByKey[k] = r.HealthCheckPath
+			}
+			if healthCheckIntervalByKey[k] == 0 && r.HealthCheckInterval > 0 {
+				healthCheckIntervalByKey[k] = r.HealthCheckInterval
 			}
 		}
 	}
 
 	specs := make([]router.PrefixRouteSpec, 0, len(keyOrder))
 	for _, k := range keyOrder {
-		specs = append(specs, router.PrefixRouteSpec{
+		sort.Strings(targetsByKey[k])
+
+		spec := router.PrefixRouteSpec{
 			TargetType: router.RouteTypeUpstream,
-			Host:       k.host,
-			Prefix:     k.prefix,
+			Host:       k.Host,
+			Prefix:     k.Prefix,
+			Method:     k.Method,
+			Headers:    headersByKey[k],
 			Opts: proxy.ProxyOptions{
-				Targets:   targetsByKey[k],
-				Algorithm: proxy.AlgorithmRoundRobin,
+				Targets:             targetsByKey[k],
+				Algorithm:           proxy.AlgorithmRoundRobin,
+				HealthCheckPath:     healthCheckPathByKey[k],
+				HealthCheckInterval: healthCheckIntervalByKey[k],
 			},
-		})
+		}
+		specs = append(specs, spec)
 	}
+
+	// Specificity sort (ADR-005, ADR-096, REQ-096-AC-07)
+	router.SortPrefixRouteSpecs(specs)
 
 	if c.router != nil {
 		if err := c.router.ReplacePrefixRoutesBySource("k8s-ingress", specs); err != nil {

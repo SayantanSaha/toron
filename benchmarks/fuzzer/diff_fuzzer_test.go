@@ -2,8 +2,10 @@ package main
 
 import (
 	"bufio"
+	"math"
 	"net"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -678,4 +680,216 @@ func TestExecuteRawTest_HeaderAssertionOracles(t *testing.T) {
 		}
 	})
 }
+
+// TC-106-01: Verification of Equation 7 Timing Isolation
+func TestExecuteRawTest_Equation7_TimingIsolation(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	// Server handles 1 prep request (with 50ms artificial delay) and 1 probe request (instant)
+	go func() {
+		// Prep connection
+		c1, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c1.Close()
+		buf := make([]byte, 1024)
+		_, _ = c1.Read(buf)
+		time.Sleep(50 * time.Millisecond) // Artificial prep delay
+		_, _ = c1.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"))
+
+		// Probe connection
+		c2, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer c2.Close()
+		_, _ = c2.Read(buf)
+		// Instant response
+		_, _ = c2.Write([]byte("HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n"))
+	}()
+
+	tc := TestCase{
+		ID:                 "EQ7-ISOLATION-001",
+		Category:           "Timing",
+		Name:               "Equation 7 Timing Isolation Test",
+		SequentialPayloads: []string{
+			"GET /prep HTTP/1.1\r\nHost: localhost\r\n\r\n",
+			"GET /probe HTTP/1.1\r\nHost: localhost\r\n\r\n",
+		},
+		ExpectedStatus:     []int{400},
+	}
+
+	res := executeRawTest(ln.Addr().String(), tc)
+	if !res.Passed {
+		t.Fatalf("expected test to pass, failed: %s", res.FailureReason)
+	}
+	// Measured rejection latency MUST be strictly isolated from the 50ms prep stage
+	if res.Distribution.MeanLatencyUs >= 30000.0 {
+		t.Errorf("expected MeanLatencyUs < 30,000 µs (isolated from 50ms prep delay), got %.2f µs", res.Distribution.MeanLatencyUs)
+	}
+}
+
+// TC-106-02: Verification of Statistical Distribution Precision
+func TestComputeDistribution_StatisticalPrecision(t *testing.T) {
+	samples := []float64{10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0}
+	dist := computeDistribution(samples, 5)
+
+	if dist.Trials != 10 {
+		t.Errorf("expected Trials=10, got %d", dist.Trials)
+	}
+	if dist.WarmupRuns != 5 {
+		t.Errorf("expected WarmupRuns=5, got %d", dist.WarmupRuns)
+	}
+	if math.Abs(dist.MeanLatencyUs-55.0) > 0.01 {
+		t.Errorf("expected Mean 55.0, got %.4f", dist.MeanLatencyUs)
+	}
+	if math.Abs(dist.MedianLatencyUs-55.0) > 0.01 {
+		t.Errorf("expected Median 55.0, got %.4f", dist.MedianLatencyUs)
+	}
+	// Sample standard deviation (Bessel's correction N-1): sqrt(8250 / 9) ≈ 30.2765
+	if math.Abs(dist.StdDevLatencyUs-30.2765) > 0.01 {
+		t.Errorf("expected StdDev 30.2765, got %.4f", dist.StdDevLatencyUs)
+	}
+	// Nearest-rank p90: ceil(0.9 * 10) - 1 = 8 -> 90.0
+	if math.Abs(dist.P90LatencyUs-90.0) > 0.01 {
+		t.Errorf("expected P90 90.0, got %.4f", dist.P90LatencyUs)
+	}
+	// Nearest-rank p99: ceil(0.99 * 10) - 1 = 9 -> 100.0
+	if math.Abs(dist.P99LatencyUs-100.0) > 0.01 {
+		t.Errorf("expected P99 100.0, got %.4f", dist.P99LatencyUs)
+	}
+	// CI 95 margin: 1.96 * (30.2765 / sqrt(10)) ≈ 18.7656
+	expectedMargin := 1.96 * (dist.StdDevLatencyUs / math.Sqrt(10))
+	if math.Abs(dist.CI95MarginUs-expectedMargin) > 0.01 {
+		t.Errorf("expected CI95Margin %.4f, got %.4f", expectedMargin, dist.CI95MarginUs)
+	}
+	if math.Abs(dist.CI95LowerUs-(55.0-expectedMargin)) > 0.01 {
+		t.Errorf("expected CI95Lower %.4f, got %.4f", 55.0-expectedMargin, dist.CI95LowerUs)
+	}
+	if math.Abs(dist.CI95UpperUs-(55.0+expectedMargin)) > 0.01 {
+		t.Errorf("expected CI95Upper %.4f, got %.4f", 55.0+expectedMargin, dist.CI95UpperUs)
+	}
+}
+
+// TC-106-03: Multi-Trial Execution & Warm-up Verification
+func TestExecuteRawTest_RepeatedTrials_Warmup(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	var requestCount int64
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				atomic.AddInt64(&requestCount, 1)
+				buf := make([]byte, 1024)
+				_, _ = conn.Read(buf)
+				_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nOK"))
+			}(c)
+		}
+	}()
+
+	tc := TestCase{
+		ID:             "REPEAT-001",
+		Category:       "Baseline",
+		Name:           "Repeated Trials Verification",
+		RawPayload:     "GET / HTTP/1.1\r\nHost: localhost\r\n\r\n",
+		ExpectedStatus: []int{200},
+	}
+
+	trials := 10
+	warmup := 3
+	res := executeRawTest(ln.Addr().String(), tc, trials, warmup)
+
+	if !res.Passed {
+		t.Fatalf("expected test to pass, failed: %s", res.FailureReason)
+	}
+	if res.Distribution.Trials != trials {
+		t.Errorf("expected Trials=%d, got %d", trials, res.Distribution.Trials)
+	}
+	if res.Distribution.WarmupRuns != warmup {
+		t.Errorf("expected WarmupRuns=%d, got %d", warmup, res.Distribution.WarmupRuns)
+	}
+	if len(res.Distribution.RawSamples) != trials {
+		t.Errorf("expected len(RawSamples)=%d, got %d", trials, len(res.Distribution.RawSamples))
+	}
+	totalExpected := int64(trials + warmup)
+	if atomic.LoadInt64(&requestCount) != totalExpected {
+		t.Errorf("expected server to receive %d requests (%d warmup + %d trials), got %d",
+			totalExpected, warmup, trials, atomic.LoadInt64(&requestCount))
+	}
+}
+
+// TC-106-04: Multi-Stage Cache Vector Repeatability under Multiple Trials
+func TestExecuteRawTest_MultiStage_RepeatedTrials(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	var totalConns int64
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				atomic.AddInt64(&totalConns, 1)
+				buf := make([]byte, 1024)
+				n, _ := conn.Read(buf)
+				req := string(buf[:n])
+				if strings.Contains(req, "Authorization:") {
+					// Prep request
+					_, _ = conn.Write([]byte("HTTP/1.1 200 OK\r\nCache-Control: private\r\nX-Cache: MISS\r\nContent-Length: 7\r\n\r\nprivate"))
+				} else {
+					// Probe request
+					_, _ = conn.Write([]byte("HTTP/1.1 401 Unauthorized\r\nX-Cache: MISS\r\nContent-Length: 12\r\n\r\nunauthorized"))
+				}
+			}(c)
+		}
+	}()
+
+	testCases := getTestCases()
+	var cache001 TestCase
+	for _, tc := range testCases {
+		if tc.ID == "CACHE-001" {
+			cache001 = tc
+			break
+		}
+	}
+	if cache001.ID == "" {
+		t.Fatalf("CACHE-001 test case not found")
+	}
+
+	trials := 5
+	warmup := 2
+	res := executeRawTest(ln.Addr().String(), cache001, trials, warmup)
+	if !res.Passed {
+		t.Fatalf("expected multi-stage repeated trials to pass, failed: %s", res.FailureReason)
+	}
+	if res.Distribution.Trials != trials {
+		t.Errorf("expected Trials=%d, got %d", trials, res.Distribution.Trials)
+	}
+	// Total connections = (warmup + trials) * 2 (1 prep + 1 probe per iteration)
+	expectedConns := int64((trials + warmup) * 2)
+	if atomic.LoadInt64(&totalConns) != expectedConns {
+		t.Errorf("expected %d total connections, got %d", expectedConns, atomic.LoadInt64(&totalConns))
+	}
+}
+
 

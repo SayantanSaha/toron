@@ -95,12 +95,25 @@ Transmits raw TCP byte streams containing deliberate RFC protocol violations, de
 
 ### Running the Fuzzer
 ```bash
-# Run against Toron
+# Rapid CI Invariant Verification (single probe per test vector)
 bash benchmarks/fuzzer/run_fuzzer.sh -t 127.0.0.1:8080
 
+# Empirical Statistical Evaluation (K=1,000 repeated trials, W=50 discarded warm-up runs)
+bash benchmarks/fuzzer/run_fuzzer.sh -t 127.0.0.1:8080 -k 1000 -w 50
+
 # Run in Differential Mode comparing Toron against a baseline (e.g. NGINX on :8081)
-bash benchmarks/fuzzer/run_fuzzer.sh -t 127.0.0.1:8080 -b 127.0.0.1:8081
+bash benchmarks/fuzzer/run_fuzzer.sh -t 127.0.0.1:8080 -b 127.0.0.1:8081 -k 1000 -w 50
 ```
+
+### Statistical Evaluation Methodology & Equation 7 Alignment
+To ensure peer-reviewed scientific reproducibility (`BMK-01`, `BMK-02`):
+1. **Equation 7 Timing Isolation**: The fuzzer strictly adheres to Equation 7 ($T_{\text{rejection}} = t_{\text{status\_line\_read}} - t_{\text{socket\_write\_start}}$). Operating system TCP loopback connection establishment (`net.DialTimeout`) and multi-stage cache setup requests (`sendAndDrain`) execute strictly outside the timing window. The clock starts immediately before the probe bytes are written to the wire (`conn.Write`), capturing pure proxy state machine rejection latency.
+2. **Warm-up Phase ($W=50$)**: Configured via `-w <runs>` / `-warmup <runs>`, the fuzzer performs preliminary discarded iterations to warm operating system socket tables and JIT/branch predictors before recording empirical measurements.
+3. **Repeated Statistical Trials ($K \ge 1,000$)**: Configured via `-k <trials>` / `-trials <trials>`, each vector is probed $K$ times to derive comprehensive statistical dispersion metrics:
+   - Sample Mean ($\bar{x}$)
+   - Sample Standard Deviation ($s = \sqrt{\frac{1}{K-1} \sum_{i=1}^K (x_i - \bar{x})^2}$, applying Bessel's correction)
+   - Median ($p50$) and Tail Percentiles ($p90, p99, p99.9$) via deterministic nearest-rank indexing ($I_p = \lceil p \cdot K \rceil - 1$)
+   - 95% Confidence Interval ($\left[ \bar{x} - 1.96 \cdot \frac{s}{\sqrt{K}}, \; \bar{x} + 1.96 \cdot \frac{s}{\sqrt{K}} \right]$)
 
 ## 📈 3. In-Process HTTP Parser Microbenchmarks (`pkg/httpparser/`)
 

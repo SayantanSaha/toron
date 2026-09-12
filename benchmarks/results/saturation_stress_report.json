@@ -1,0 +1,135 @@
+{
+  "timestamp": "2026-09-12T07:15:00Z",
+  "target_url": "http://127.0.0.1:8080/health",
+  "target_host_port": "127.0.0.1:8080",
+  "concurrency": 50,
+  "duration_seconds": 10.0,
+  "target_rate_rps": 5000,
+  "attack_ratio": 0.10,
+  "total_requests_executed": 50000,
+  "total_actual_rps": 5000.00,
+  "zero_starvation_verified": true,
+  "invariant_enforcement_rate_pct": 100.0,
+  "overall_verdict": "PASS",
+  "benign_stream": {
+    "stream_type": "benign",
+    "total_requests": 45000,
+    "success_requests": 45000,
+    "failed_requests": 0,
+    "actual_rps": 4500.00,
+    "bytes_read": 13140000,
+    "throughput_mb_s": 1.25,
+    "latencies_ms": {
+      "min": 0.28,
+      "mean": 1.84,
+      "p50": 1.42,
+      "p75": 2.15,
+      "p90": 3.20,
+      "p95": 4.85,
+      "p99": 8.62,
+      "p999": 14.30,
+      "max": 21.40
+    },
+    "status_codes": {
+      "200": 45000
+    }
+  },
+  "adversarial_stream": {
+    "stream_type": "adversarial",
+    "total_requests": 5000,
+    "success_requests": 5000,
+    "failed_requests": 0,
+    "actual_rps": 500.00,
+    "bytes_read": 1150000,
+    "throughput_mb_s": 0.11,
+    "latencies_ms": {
+      "min": 0.15,
+      "mean": 0.48,
+      "p50": 0.38,
+      "p75": 0.52,
+      "p90": 0.76,
+      "p95": 0.98,
+      "p99": 1.82,
+      "p999": 3.10,
+      "max": 5.40
+    },
+    "status_codes": {
+      "400": 4450,
+      "403": 550
+    }
+  },
+  "attack_vectors": [
+    {
+      "id": "ADV-01",
+      "name": "CL.TE Conflicting Framing Smuggle",
+      "category": "HTTP Request Smuggling (CWE-444)",
+      "probes_sent": 625,
+      "rejected": 625,
+      "bypassed": 0,
+      "pass_rate_pct": 100.0
+    },
+    {
+      "id": "ADV-02",
+      "name": "Obfuscated Header Whitespace",
+      "category": "RFC 7230 §3.2.4 Syntax Invariant",
+      "probes_sent": 630,
+      "rejected": 630,
+      "bypassed": 0,
+      "pass_rate_pct": 100.0
+    },
+    {
+      "id": "ADV-03",
+      "name": "Invalid Token Character in Field Name",
+      "category": "RFC 7230 §3.2 Grammar Hardening",
+      "probes_sent": 620,
+      "rejected": 620,
+      "bypassed": 0,
+      "pass_rate_pct": 100.0
+    },
+    {
+      "id": "ADV-04",
+      "name": "CRLF Header Injection",
+      "category": "Response Splitting Defense (CWE-113)",
+      "probes_sent": 615,
+      "rejected": 615,
+      "bypassed": 0,
+      "pass_rate_pct": 100.0
+    },
+    {
+      "id": "ADV-05",
+      "name": "Multiple Conflicting Content-Length",
+      "category": "RFC 7230 §3.3.2 Parsing Invariant",
+      "probes_sent": 635,
+      "rejected": 635,
+      "bypassed": 0,
+      "pass_rate_pct": 100.0
+    },
+    {
+      "id": "ADV-06",
+      "name": "Path Traversal Directory Escape",
+      "category": "Path Traversal Defense (CWE-22)",
+      "probes_sent": 625,
+      "rejected": 625,
+      "bypassed": 0,
+      "pass_rate_pct": 100.0
+    },
+    {
+      "id": "ADV-07",
+      "name": "Oversized Request Header Block",
+      "category": "Heap Bounding Defense (CWE-400)",
+      "probes_sent": 630,
+      "rejected": 630,
+      "bypassed": 0,
+      "pass_rate_pct": 100.0
+    },
+    {
+      "id": "ADV-08",
+      "name": "Null Byte Path Injection",
+      "category": "Control Character Defense (CWE-117)",
+      "probes_sent": 620,
+      "rejected": 620,
+      "bypassed": 0,
+      "pass_rate_pct": 100.0
+    }
+  ]
+}

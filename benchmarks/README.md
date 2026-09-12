@@ -61,10 +61,13 @@ bash benchmarks/wrk2/run_wrk2.sh -u http://127.0.0.1:8080/health --sweep
 
 # POST ingestion benchmark with custom Lua script
 bash benchmarks/wrk2/run_wrk2.sh -u http://127.0.0.1:8080/health -s benchmarks/wrk2/scripts/post_payload.lua
+
+# High-Concurrency Saturation & Adversarial Stress Testing (BMK-04, 5,000+ RPS, 10% attack injection)
+bash benchmarks/wrk2/run_saturation_stress.sh -r 5000 -c 50 -d 10s -a 0.10
 ```
 
 ### Zero-Dependency Fallback
-If `wrk2` or `wrk` is not installed on the evaluator's system, the harness seamlessly runs `loadgen.go` (pure Go standard library). It implements token-bucket rate pacing and microsecond monotonic latency tracking to reproduce coordinated-omission-free tail latency metrics without requiring C compiler toolchains.
+If `wrk2` or `wrk` is not installed on the evaluator's system, the harness seamlessly runs `loadgen.go` (pure Go standard library). It implements token-bucket rate pacing, decoupled dual-stream telemetry (benign service vs. fast-fail attack rejection), and microsecond monotonic latency tracking to reproduce coordinated-omission-free tail latency metrics without requiring C compiler toolchains.
 
 ---
 
@@ -184,4 +187,6 @@ Results are automatically saved in `benchmarks/results/`:
 - `differential_fuzz_report.md`: Formatted Markdown table comparing invariant conformance.
 - `multihop_report.json`: Full telemetry from the heterogeneous multi-hop testbed (30 scenarios, 3 runtimes).
 - `multihop_report.md`: Publication-grade cross-runtime evaluation matrix.
+- `saturation_stress_report.json`: High-concurrency saturation stress telemetry (5,000+ RPS with 10% adversarial injection).
+- `saturation_stress_report.md`: Publication-grade dual-stream tail latency and active defense verification report.
 

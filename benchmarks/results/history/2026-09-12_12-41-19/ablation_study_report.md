@@ -1,6 +1,6 @@
 # 10-Task Controlled Ablation Experiment Report (BMK-05)
 
-**Generated At**: `2026-09-12T07:11:36Z` (UTC)  
+**Generated At**: `2026-09-12T07:11:21Z` (UTC)  
 **Status**: Verified  
 **Target Cohort**: `TASK-061` through `TASK-070` ($N=10$ Tasks)  
 

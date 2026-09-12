@@ -1,5 +1,71 @@
 # Release Notes
 
+## 2026-09-12 - Toron v1.5.23 Benchmark Release (Historical Benchmark Result Retention and Manifest Architecture - REQ-119 / TASK-142)
+
+### Milestone Summary
+- **Historical Benchmark Result Retention & Structured Manifest Architecture (REQ-119, TASK-142, ADR-119, TC-119, CR-115, SR-119)**: Implemented an automated dual-path retention and manifest cataloging system across all six benchmark subsystems in Toron.
+- **Dual-Path Retention Model**: Every benchmark execution session creates an immutable historical directory under `benchmarks/results/history/<timestamp>/` (`YYYY-MM-DD_HH-MM-SS`) containing all generated artifacts and `session_meta.json`, while simultaneously synchronizing canonical latest files in `benchmarks/results/` for 100% backward compatibility with academic paper citations, Markdown links, and automated CI pipelines.
+- **Central Structured Index (`benchmarks/results/history/manifest.json`)**: Machine-readable JSON catalog recording every benchmark execution session, including run ID, timestamp, suite, command, git commit, git branch, Go runtime version, duration, parameter dictionary, exit status, and generated artifact file list.
+- **Atomic Concurrency Protection (CWE-362 / CWE-377)**: Implemented atomic manifest and metadata updates using temporary file writes and atomic POSIX renames (`os.Rename`), completely preventing partial file writes, data loss, or JSON corruption during concurrent runs or process termination.
+- **Master Orchestrator Consolidation (`benchmarks/run_all.sh`)**: Integrated session inheritance across all six evaluation stages (microbenchmarks, wrk2, saturation stress, differential fuzzer, multi-hop testbed, and controlled ablation), bundling all generated artifacts into a unified historical session archive and registering a consolidated suite entry in `manifest.json`.
+- **Standalone Runner Independence**: Extended individual benchmark scripts (`run_wrk2.sh`, `run_saturation_stress.sh`, `run_fuzzer.sh`, `run_multihop.sh`, `run_ablation.sh`) to support independent timestamp directory creation and manifest registration when executed outside `run_all.sh`.
+- **CLI Configurability**: Added universal support for `--no-history` (bypassing historical writes for ephemeral passes), `--session-name <name>` (custom naming suffixes), and `--session-dir <dir>` (explicit destination directories).
+- **Zero Third-Party Dependencies & Race-Free Concurrency**: Preserved zero third-party dependencies using exclusively the Go standard library and POSIX shell utilities. Passed full race detection verification under `go test -race -count=1 ./benchmarks/...`.
+
+### Added
+- **`benchmarks/retention/retention.go`**: Core retention engine providing timestamp formatting, collision handling, dual-path artifact replication, atomic manifest updates, and git metadata extraction.
+- **`benchmarks/retention/cmd/main.go`**: Command-line interface supporting `init`, `archive`, and `record` actions.
+- **`benchmarks/retention/retention_test.go`**: Unit tests verifying timestamp formatting, directory creation, collision avoidance, artifact replication, and concurrent manifest update safety.
+- **`benchmarks/retention/integration_test.go`**: End-to-end integration test validating full CLI workflow, artifact parity, and multi-run append behavior.
+- **`benchmarks/archive_run.sh`**: POSIX shell helper library for session initialization, artifact replication, and manifest registration.
+- **`benchmarks/results/history/manifest.json`**: Central historical manifest index.
+
+### Changed
+- **`benchmarks/run_all.sh`**: Integrated master session provisioning, child stage export, stage artifact replication, and master manifest registration.
+- **`benchmarks/wrk2/run_wrk2.sh`**: Added dual-path retention and manifest registration.
+- **`benchmarks/wrk2/run_saturation_stress.sh`**: Added dual-path retention and manifest registration.
+- **`benchmarks/fuzzer/run_fuzzer.sh`**: Added dual-path retention and manifest registration.
+- **`benchmarks/multihop/run_multihop.sh`**: Added dual-path retention and manifest registration.
+- **`benchmarks/ablation/run_ablation.sh`**: Added dual-path retention and manifest registration.
+- **`docs/wiki/features/benchmarking.md`**: Updated documentation detailing the dual-path retention architecture, directory structure, manifest schema, and CLI options.
+
+### Related Tasks & Requirements
+- [`REQ-119`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-119.md): Benchmark Result Retention and Historical Run Manifest Architecture
+- [`TASK-142`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-142.md): Implement Historical Benchmark Result Retention and Manifest Architecture (REQ-119)
+- [`ADR-119`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-119.md): Dual-Path Benchmark Result Retention and Atomic Manifest Architecture (REQ-119)
+- [`TC-119`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-119.md): Verification of Benchmark Result Retention, Directory Isolation, and Manifest Integrity (REQ-119)
+- [`CR-115`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-115.md): Code Review for Benchmark Result Retention and Historical Run Manifest Architecture
+- [`SR-119`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-119.md): Security & Operational Resilience Review for Benchmark Retention Architecture
+
+---
+
+## 2026-09-12 - Toron v1.5.22 Benchmark Release (Latency Distributional Metric Calibration in Differential Fuzzer - HARN-02 / TASK-141 / REQ-118)
+
+### Milestone Summary
+- **Latency Distributional Metric Calibration (HARN-02, TASK-141, REQ-118, BMK-02)**: Completely resolved distributional reporting ambiguities and percentile conflation in Toron's Differential Protocol Security Fuzzer ([`benchmarks/fuzzer/diff_fuzzer.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/fuzzer/diff_fuzzer.go), [`ADR-118`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-118.md), [`CR-114`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-114.md), [`SR-118`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-118.md), [`TC-118`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-118.md)).
+- **Disaggregation of Fail-Fast Rejections from Baseline Traffic**: Partitioned the 19 invariant vectors into two distinct analytical cohorts:
+  1. **Fail-Fast Defense Latency ($N=18$ Adversarial Vectors)**: Mean, Median ($p50$), 90th Percentile ($p90$), and Max Rejection Latency, isolating active security defense from benign traffic.
+  2. **Cross-Vector Comprehensive Latency ($N=19$ Vectors, incl. `BASELINE-001` 200 OK)**: Mean, Median ($p50$), 90th Percentile ($p90$), 99th Percentile ($p99$), and Max Latency across the entire test suite.
+- **Unconditional Percentile Reporting Across Execution Modes**: Eliminated conditional suppression of percentiles, ensuring $p50$, $p90$, and $p99$ are output distinctly in terminal stdout summaries, JSON reports, and Markdown reports across both single-shot ($K=1$) and repeated statistical trial ($K > 1$) modes.
+- **Elimination of Ambiguity Between p90 and p99**: Explicitly decoupled $p90$ ($712.08\ \mu\text{s}$) from $p99$ ($2,378.00\ \mu\text{s}$), resolving reviewer critiques in `AER-001.md`, `MSR-001.md`, and `AR-001.md` and providing ground truth alignment for Paper 1 Section 5.2 (REV-02).
+- **Backwards-Compatible JSON Telemetry Serialization**: Augmented `DifferentialReport` with nested `fail_fast_defense` and `comprehensive_suite` of type `CohortMetrics` while preserving top-level `average_latency_us`, `median_latency_us`, `p90_latency_us`, and `p99_latency_us`.
+- **Zero Race Verification & Zero External Dependencies**: Preserved zero third-party dependencies and verified race-clean execution under `go test -race -count=1 ./benchmarks/fuzzer/...`.
+
+### Fixed
+- **Single-Shot Percentile Suppression**: Resolved logic in `diff_fuzzer.go` that previously withheld $p50$, $p90$, and $p99$ when executing in single-shot mode ($K=1$).
+- **Conflation of Rejection and Baseline Traffic**: Resolved aggregated reporting that previously mixed benign $200\text{ OK}$ payload transfer with fail-fast socket teardown.
+- **Ambiguous Combined Report Header**: Replaced combined `Tail Latency (p90 / p99)` line with distinct, structured metric rows.
+
+### Changed
+- **`benchmarks/fuzzer/diff_fuzzer.go`**: Added `CohortMetrics`, `calculateCohortMetrics`, disaggregated cohort calculations, updated terminal summary, and updated Markdown report generator.
+- **`benchmarks/fuzzer/diff_fuzzer_test.go`**: Added `TestCalculateCohortMetrics` and `TestDifferentialReport_JSONSerialization`.
+- **Artifacts**: Regenerated `benchmarks/results/differential_fuzz_report.json` and `benchmarks/results/differential_fuzz_report.md`.
+
+### Added
+- **`docs/wiki/features/differential-fuzzer-metrics.md`**: New user documentation covering metric cohort architecture, CLI options, and artifact schemas.
+
+---
+
 ## 2026-09-12 - Toron v1.5.21 Benchmark Release (Disaggregated Adversarial Status Classification and Route-Miss Separation in Load Generator - HARN-01 / TASK-140 / REQ-117)
 
 ### Milestone Summary

@@ -1,0 +1,15 @@
+{
+  "run_id": "run_2026-09-12_12-41-41",
+  "timestamp": "2026-09-12T12:41:43+05:30",
+  "suite": "multihop",
+  "command": "/Users/sneha/Developer/toron-research/toron/benchmarks/multihop/run_multihop.sh ",
+  "git_commit": "1637ed28b5eac04591644a152dbce784ef07d78a",
+  "git_branch": "master",
+  "go_version": "go1.26.6",
+  "status": "success",
+  "duration_seconds": 2,
+  "artifacts": [
+    "multihop_report.json",
+    "multihop_report.md"
+  ]
+}

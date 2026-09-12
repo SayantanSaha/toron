@@ -1,0 +1,39 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-09-12T12:41:43+05:30",
+  "total_runs": 2,
+  "runs": [
+    {
+      "run_id": "run_2026-09-12_12-41-19",
+      "timestamp": "2026-09-12T12:41:21+05:30",
+      "directory": "benchmarks/results/history/2026-09-12_12-41-19",
+      "suite": "ablation",
+      "command": "/Users/sneha/Developer/toron-research/toron/benchmarks/ablation/run_ablation.sh ",
+      "git_commit": "1637ed28b5eac04591644a152dbce784ef07d78a",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 2,
+      "artifacts": [
+        "ablation_study_report.json",
+        "ablation_study_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-12_12-41-41",
+      "timestamp": "2026-09-12T12:41:43+05:30",
+      "directory": "benchmarks/results/history/2026-09-12_12-41-41",
+      "suite": "multihop",
+      "command": "/Users/sneha/Developer/toron-research/toron/benchmarks/multihop/run_multihop.sh ",
+      "git_commit": "1637ed28b5eac04591644a152dbce784ef07d78a",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 2,
+      "artifacts": [
+        "multihop_report.json",
+        "multihop_report.md"
+      ]
+    }
+  ]
+}

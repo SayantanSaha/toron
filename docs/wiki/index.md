@@ -89,6 +89,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Multi-Scheme Authentication](./features/authentication.md) – JWT (HS256), API Key, and HTTP Basic authentication.
 - [Native Go Benchmarking](./features/benchmarking.md) – Performance benchmarks and allocation metrics.
 - [High-Concurrency Saturation Stress Benchmark & Status Classification](./features/saturation-stress-benchmark.md) – Dual-stream saturation testing, four-tier status classification taxonomy, and Table 6 metrics (BMK-04, HARN-01).
+- [Heterogeneous Multi-Hop Origin Testbed](./features/multihop-testbed.md) – Dual-mode (standalone & Docker Compose) evaluation across Node.js (llhttp), Python (uvicorn/h11), and Go (net/http) origins, wire-level protocol adapters, and zero-desync canary validation (BMK-03, REQ-120).
 - [Dummy Microservices Suite](./features/dummy-services.md) – Cluster of 10 test microservices.
 
 ### 📖 References

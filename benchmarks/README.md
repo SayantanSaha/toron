@@ -415,18 +415,216 @@ bash benchmarks/fuzzer/run_fuzzer.sh -t 127.0.0.1:8080 -b 127.0.0.1:8081 -k 1000
 
 ## 🌐 5. Heterogeneous Multi-Hop Backend Origin Testbed (`benchmarks/multihop/run_multihop.sh`)
 
-### Overview (`BMK-03`)
-Directly resolving the "multi-hop blindspot" critique (`AER-002` Issue 6, `AR-002` Alternative Explanation 3), this testbed evaluates Toron fronting three live, distinct backend HTTP runtime parsing engines:
-1. **Node.js 20 LTS**: C-based `llhttp` parser engine (`/node`).
-2. **Python 3.11**: ASGI `uvicorn` / `h11` parser engine (`/python`).
-3. **Go 1.24**: Standard library `net/http` parser engine (`/go`).
+### Overview (`BMK-03`, `REQ-120`, `TASK-143`, `ADR-120`)
+Directly resolving the "multi-hop ecological blindspot" critique (`AER-002` Issue 6, `AR-002` Alternative Explanation 3), this testbed evaluates Toron acting as an edge gateway fronting three live, distinct production backend HTTP runtime parsing engines across persistent upstream connection pools:
+1. **Node.js 20 LTS**: C-based `llhttp` parser engine (`/node/*` $\rightarrow$ port `9101`).
+2. **Python 3.11**: ASGI `uvicorn` / `h11` parser engine (`/python/*` $\rightarrow$ port `9102`).
+3. **Go 1.24**: Canonical standard library `net/http` parser engine (`/go/*` $\rightarrow$ port `9103`).
+
+The testbed verifies that Toron's edge protocol validation, RFC 7540 / RFC 9113 compliance, and HTTP/2-to-HTTP/1.1 translation layer completely prevent cross-protocol request smuggling, pseudo-header leakage, upstream connection pool poisoning, and backend desynchronization.
+
+---
+
+### Dual Execution Modes (`--standalone` vs. `--docker`)
+
+The multi-hop benchmark runner ([`benchmarks/multihop/runner.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go)) supports two unified, schema-identical execution modes:
+
+```
++-----------------------------------------------------------------------------------------+
+|                                    Toron Multi-Hop Harness                              |
+|                              (benchmarks/multihop/runner.go)                            |
++-----------------------------------------------------------------------------------------+
+       |                                                                   |
+       | Standalone In-Process Mode                                        | Live Docker Mode
+       | (--standalone)                                                    | (--docker / -standalone=false)
+       v                                                                   v
++-----------------------------+                           +-------------------------------+
+| In-Process Simulated Origins|                           | Docker Compose Bridge Network |
+| - Node.js mock (llhttp)     |                           | (docker-compose.multihop.yml) |
+| - Python mock (uvicorn/h11) |                           |                               |
+| - Go mock (net/http)        |                           |  +-------------------------+  |
++-----------------------------+                           |  | toron-edge-multihop     |  |
+               ^                                          |  | (Port 8080, h2c / HTTP) |  |
+               |                                          |  +-------------------------+  |
++-----------------------------+                           |         |      |      |       |
+| In-Process Toron Gateway    |                           |         v      v      v       |
+| (Dynamic Loopback Listener) |                           |      +------+ +----+ +----+   |
++-----------------------------+                           |      | Node | | Py | | Go |   |
+               ^                                          |      +------+ +----+ +----+   |
+               |                                          +-------------------------------+
+               +-----------------------+                                  ^
+                                       |                                  |
+                                       v                                  v
+                        +----------------------------------------------------+
+                        |       Wire-Level Protocol Execution Engine         |
+                        |   - HTTP/1.1 TCP Raw Socket Stream & FIN Check     |
+                        |   - HTTP/2 Cleartext (h2c) Prior Knowledge Client  |
+                        |   - Raw HTTP/2 HPACK Wire Frame Injection Adapter  |
+                        |   - Response Body & Upstream Echo JSON Parser      |
+                        +----------------------------------------------------+
+                                                 |
+                                                 v
+                        +----------------------------------------------------+
+                        |         Empirical Telemetry & Report Engine        |
+                        |   - benchmarks/results/multihop_report.json        |
+                        |   - benchmarks/results/multihop_report.md          |
+                        |   - benchmarks/results/history/<timestamp>/        |
+                        |   - manifest.json (REQ-119 Retention Tracking)     |
+                        +----------------------------------------------------+
+```
+
+1. **Standalone In-Process Mode (`--standalone`)**:
+   - Pure Go standard library execution requiring **zero external dependencies** and zero container runtimes.
+   - Invokes [`SetupStandaloneTestbed()`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L343) to launch an in-process Toron Edge Gateway on a dynamic loopback listener (`127.0.0.1:0`) and spins up 3 in-process HTTP mock servers simulating Node.js, Python, and Go origin responses.
+   - Ideal for rapid local development, automated unit/integration tests (`go test ./benchmarks/multihop/...`), and headless CI pipelines.
+   - Report execution mode: `"Standalone In-Process (Pure Go)"`.
+
+2. **Live Multi-Container Mode (`--docker`)**:
+   - Production container cluster execution orchestrating 4 services across the isolated Docker bridge network `multihop-net` via [`docker-compose.multihop.yml`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/docker-compose.multihop.yml).
+   - The testbed runner executes outside the cluster, targeting the Toron Edge Gateway exposed on host port `127.0.0.1:8080`.
+   - Directly exercises live production parser engines:
+     - **Node.js origin (`toron-node-origin`)**: Node.js 20 LTS executing `llhttp` parser on port `9101`.
+     - **Python origin (`toron-python-origin`)**: Python 3.11 executing ASGI `uvicorn` / `h11` on port `9102`.
+     - **Go origin (`toron-go-origin`)**: Go 1.24 executing canonical `net/http` on port `9103`.
+   - Report execution mode: `"Live Multi-Container (Docker Compose)"`.
+
+---
+
+### Live Testbed Architecture (`SetupLiveTestbed`)
+
+In live mode, the harness initializes the test environment via [`SetupLiveTestbed(edgeAddr)`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L408-L428):
+
+- **Explicit Backend Target Descriptors**: Constructs non-nil [`SimulatedBackend`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L89) descriptors for `NodeBackend`, `PyBackend`, and `GoBackend`, fully populating metadata (`Runtime`, `ParserEngine`, `Prefix`) with `Server: nil`. This guarantees that scenario loops in [`RunAllScenarios`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L922) iterate across all three targets without nil pointer dereferences.
+- **Upstream Route Mapping**: Toron Edge routes incoming requests via [`routes.multihop.yaml`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/routes.multihop.yaml) using prefix stripping (`strip_prefix: true`):
+  - `http://127.0.0.1:8080/node/*` $\longrightarrow$ `http://node-origin:9101/*`
+  - `http://127.0.0.1:8080/python/*` $\longrightarrow$ `http://python-origin:9102/*`
+  - `http://127.0.0.1:8080/go/*` $\longrightarrow$ `http://go-origin:9103/*`
+- **Safe Teardown & Lifecycle Guards**: In live mode, backend process lifecycles are managed externally by Docker Compose. Both [`sb.Close()`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L106) and [`env.Teardown()`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L431) guard against unstarted in-process servers (`if sb != nil && sb.Server != nil`), ensuring clean, idempotent cleanup.
+
+---
+
+### Wire-Level Protocol Execution Adapters
+
+To guarantee high empirical fidelity over physical network sockets, all direct in-memory handler dispatches (`HTTP2AdapterHandler().ServeHTTP`) were eliminated from the live testbed path. Scenarios execute through dedicated wire-level protocol adapters:
+
+1. **Cleartext HTTP/2 (Prior Knowledge `h2c`) Adapter ([`executeH2CRequest`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L878))**:
+   - Uses `golang.org/x/net/http2.Transport` configured with `AllowHTTP: true` and a custom cleartext dialer (`net.Dialer{Timeout: 2*time.Second}`).
+   - Transmits HTTP/2 requests directly over unencrypted TCP to `env.EdgeAddr`, exercising Toron's connection accept loop, HTTP/2 connection preface handler, frame multiplexer, and stream worker pools.
+   - Enforces strict 3-second bounded deadlines (`context.WithTimeout`) and defers `tr.CloseIdleConnections()`.
+
+2. **Raw HTTP/2 Wire Framing Adapter ([`executeH2WireProbe`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L800))**:
+   - For attack vectors where standard HTTP client libraries perform client-side header sanitization or refuse to serialize malformed headers, the harness directly transmits raw HTTP/2 byte frames over a raw TCP connection:
+     1. Sends the 24-byte client connection preface (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`).
+     2. Exchanges initial `SETTINGS` frames via `http2.NewFramer`.
+     3. Serializes raw header blocks using `golang.org/x/net/http2/hpack` without client normalization, injecting forbidden headers (`Transfer-Encoding: chunked`), duplicate `Content-Length`, length mismatches, and CRLF byte sequences (`\r\n`).
+     4. Emits `HEADERS` and `DATA` frames onto the TCP stream.
+     5. Reads response frames, mapping `400 Bad Request`, `RST_STREAM`, `GOAWAY`, or protocol-level socket drops to active defense successes (`Stage1EdgeStatus = 400`, `Stage1Passed = true`).
+
+3. **Raw TCP Socket Stream Probing ([`executeRawSocketProbe`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L715))**:
+   - Evaluates HTTP/1.1 smuggling vectors (`VECTOR-04` [H1-CL.TE], `VECTOR-05` [H1-TE.CL whitespace obfuscation], `VECTOR-06` [H1 pipelined smuggling prefix]).
+   - Validates status codes (`400 Bad Request` or `501 Not Implemented`) and verifies fail-fast transport socket teardown (`FIN`/`RST`) via [`verifySocketClosed`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L297) to prevent pipeline buffer reuse.
+
+---
+
+### Upstream Header Isolation Verification (`VECTOR-08`)
+
+To verify RFC 7540 §8.1.2.1 compliance (prohibiting HTTP/2 pseudo-headers in forwarded HTTP/1.1 requests), the harness avoids in-memory struct inspection in favor of end-to-end response payload verification over the wire:
+
+```mermaid
+flowchart LR
+    H2C_REQ["H2C Request<br/>POST /prefix/echo<br/>:protocol: websocket<br/>:custom-pseudo: invisible"] -->|h2c Wire| TORON["Toron Edge Gateway<br/>(RFC 7540 Stripping)"]
+    TORON -->|Forward Clean HTTP/1.1| ORIGIN["Backend Origin<br/>(/echo Handler)"]
+    ORIGIN -->|JSON Echo Body| RESP["HTTP 200 Response<br/>{'headers': {...}}"]
+    RESP -->|Wire Response Body| PARSER["parseAndValidateEchoHeaders()<br/>(runner.go)"]
+    PARSER --> CHECK{"Any key starts<br/>with ':' ?"}
+    CHECK -->|Yes| FAIL["Stage1Passed = false<br/>FailureReason = 'pseudo-header leaked'"]
+    CHECK -->|No| PASS["Stage1Passed = true<br/>Header Isolation Invariant Upheld"]
+```
+
+- **Origin `/echo` Contract**: All three containerized backends ([`node/server.js`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/backends/node/server.js), [`python/server.py`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/backends/python/server.py), [`go/main.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/backends/go/main.go)) and the standalone mock implement `POST /echo`, serializing all received upstream headers into a JSON object under the `"headers"` key.
+- **Wire Payload Validation ([`parseAndValidateEchoHeaders`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L783))**:
+  - Unmarshals the JSON response body and scans all header keys.
+  - Verifies that **zero keys start with `:` (colon)** (such as `:protocol`, `:custom-pseudo`, `:authority`, or `:path`).
+  - If any colon-prefixed header is present, the scenario immediately fails with an explicit diagnostic message (`pseudo-header leaked to upstream: <key>`).
+
+---
 
 ### Two-Stage Desynchronization Protocol ($r_{\text{poison}} \,\|\, r_{\text{benign}}$)
-For each vector across all three runtimes ($10 \times 3 = 30$ scenarios):
+
+For each vector across all three runtimes ($10 \times 3 = 30$ scenarios), the harness executes a mandatory two-stage verification sequence:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Runner as Testbed Runner (runner.go)
+    participant Edge as Toron Edge Gateway (127.0.0.1:8080)
+    participant Origin as Backend Origin (Node / Python / Go)
+
+    Note over Runner,Edge: STAGE 1: Attack or Baseline Probe (r_poison)
+    alt HTTP/2 Vector (VECTOR-01, 02, 03, 07, 08)
+        Runner->>Edge: Cleartext h2c Wire Frame Stream (Preface + SETTINGS + HEADERS)
+        alt Malformed Attack Vector (H2.TE / H2.CL-Duplicate / CRLF)
+            Edge-->>Runner: 400 Bad Request / RST_STREAM (Active Defense)
+        else Pseudo-Header Isolation Vector (VECTOR-08)
+            Edge->>Edge: Strip Pseudo-Headers (:protocol, :custom-pseudo)
+            Edge->>Origin: Forward Clean HTTP/1.1 POST /echo
+            Origin-->>Edge: 200 OK {"headers": {...}}
+            Edge-->>Runner: 200 OK {"headers": {...}}
+            Runner->>Runner: parseAndValidateEchoHeaders() -> 0 colon headers
+        end
+    else HTTP/1.1 Smuggling Vector (VECTOR-04, 05, 06)
+        Runner->>Edge: Raw TCP Bytes (CL.TE / Obfuscated TE / Pipelined Smuggle)
+        Edge-->>Runner: 400 Bad Request + Socket FIN/RST Teardown
+    else Baseline Reference Vector (VECTOR-09, 10)
+        Runner->>Edge: Standard GET /health or POST /echo
+        Edge->>Origin: Forward Valid Request
+        Origin-->>Edge: 200 OK
+        Edge-->>Runner: 200 OK
+    end
+
+    Note over Runner,Origin: STAGE 2: Benign Canary Verification (r_benign)
+    Runner->>Edge: HTTP/1.1 GET /<prefix>/canary (Over Persistent Pool)
+    Edge->>Origin: Forward GET /canary
+    Origin-->>Edge: 200 OK {"status": "canary_ok"}
+    Edge-->>Runner: 200 OK {"status": "canary_ok"}
+    Runner->>Runner: Assert Canary Passed; Desynchronization == false; PoolIntegrity == true
+```
+
 - **Stage 1 ($r_{\text{poison}}$)**: Transmits crafted smuggling vectors (H2.TE, H2.CL duplicate/mismatch, H1-CL.TE, H1-TE.CL whitespace obfuscation, pipelining buffer eviction, CRLF header injection, pseudo-header isolation, and benign baselines).
-- **Stage 2 ($r_{\text{benign}}$)**: Immediately issues a benign canary request (`GET /canary`) over the connection session to prove that:
+- **Stage 2 ($r_{\text{benign}}$)**: Immediately issues a benign canary request (`GET /canary`) over the persistent connection pool to prove that:
   - Edge security rejections physically tear down transport sockets without leaking residual bytes into backend pools.
   - Forwarded traffic maintains 100% connection pool integrity without response poisoning or desynchronization.
+  - Assertions: `res.Stage2CanaryStatus == 200`, body contains `"canary_ok"`, `res.Desynchronization == false`, `res.PoolIntegrity == true`.
+
+---
+
+### Evaluated Attack & Conformance Vectors (10 Vectors $\times$ 3 Backends = 30 Scenarios)
+
+| Vector ID | Vector Name | Protocol | Stage 1 Payload / Technique | Expected Defense Behavior |
+| :--- | :--- | :---: | :--- | :--- |
+| **`VECTOR-01`** | `H2.TE` | HTTP/2 (h2c) | Request containing forbidden `Transfer-Encoding: chunked` header | Edge rejects with `400 Bad Request` or `RST_STREAM`; dropped before backend |
+| **`VECTOR-02`** | `H2.CL-Duplicate` | HTTP/2 (h2c) | Conflicting duplicate `Content-Length` headers (`5` and `10`) | Edge rejects with `400 Bad Request` or `RST_STREAM` (`PROTOCOL_ERROR`) |
+| **`VECTOR-03`** | `H2.CL-Mismatch` | HTTP/2 (h2c) | Declares `Content-Length: 50` but transmits only 5 payload bytes | Edge rejects with `400 Bad Request` or `RST_STREAM` on early `END_STREAM` |
+| **`VECTOR-04`** | `H1-CL.TE` | HTTP/1.1 (TCP) | Ambiguous dual-framing with both `Content-Length` and `Transfer-Encoding` | Edge rejects with `400 Bad Request` and tears down socket (`FIN`/`RST`) |
+| **`VECTOR-05`** | `H1-TE.CL-Obfuscated` | HTTP/1.1 (TCP) | Whitespace-obfuscated header colon (`Transfer-Encoding : chunked`) | Edge rejects with `400 Bad Request` (RFC 7230 §3.2.4 violation) + socket closure |
+| **`VECTOR-06`** | `H1-Pipelined-Smuggle` | HTTP/1.1 (TCP) | Pipelined prefix attempting pipeline buffer eviction | Edge rejects with `400 Bad Request` and closes socket before pipeline execution |
+| **`VECTOR-07`** | `CRLF-Header-Injection` | HTTP/2 (h2c) | Header value embedding carriage return and newline (`val\r\nEvil: injected`) | Edge rejects with `400 Bad Request` (RFC 7540 §10.3 violation) |
+| **`VECTOR-08`** | `Pseudo-Header-Isolation` | HTTP/2 (h2c) | Valid request with pseudo-headers (`:protocol`, `:custom-pseudo`) to `/echo` | Edge strips `:` pseudo-headers; origin `/echo` response contains zero colon headers |
+| **`VECTOR-09`** | `Baseline-Standard-GET` | HTTP/1.1 | Standard benign `GET /<prefix>/health` | Edge proxies to origin; returns `200 OK` |
+| **`VECTOR-10`** | `Baseline-Standard-POST` | HTTP/1.1 | Standard benign `POST /<prefix>/echo` with JSON payload | Edge proxies to origin; returns `200 OK` |
+
+---
+
+### Result Retention & Historical Manifest Architecture (`REQ-119`)
+
+In compliance with [`REQ-119`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-119.md) and [`ADR-119`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-119.md), every execution of `run_multihop.sh` (both `--standalone` and `--docker`):
+1. Updates the canonical latest report files in `benchmarks/results/`:
+   - `benchmarks/results/multihop_report.json`
+   - `benchmarks/results/multihop_report.md`
+2. Archives an immutable timestamped snapshot in `benchmarks/results/history/<timestamp>/`.
+3. Atomically updates the central run catalog in `benchmarks/results/history/manifest.json`.
+
+---
 
 ### CLI Options Table
 
@@ -442,6 +640,8 @@ For each vector across all three runtimes ($10 \times 3 = 30$ scenarios):
 | `--session-dir` | `<dir>` | Explicit destination session directory | Auto-generated |
 | `-h`, `--help` | *None* | Display usage help message | N/A |
 
+---
+
 ### Example Commands
 
 ```bash
@@ -453,6 +653,9 @@ bash benchmarks/multihop/run_multihop.sh --docker
 
 # 3. Direct Go test runner execution with race detection
 go test -v -race -count=1 ./benchmarks/multihop/...
+
+# 4. Master benchmark suite orchestrator with live Docker cluster
+./benchmarks/run_all.sh --auto-start --docker
 ```
 
 ---

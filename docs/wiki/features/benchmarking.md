@@ -132,10 +132,15 @@ Each individual benchmark script operates standalone or as part of the master su
   ```bash
   bash benchmarks/fuzzer/run_fuzzer.sh -t "127.0.0.1:8080" -k 1000 -w 50
   ```
-- **Multi-Hop Origin Testbed (BMK-03)**:
+- **Multi-Hop Origin Testbed (BMK-03 / REQ-120 / TASK-143)**:
   ```bash
+  # Standalone in-process mode (zero Docker dependency, pure Go)
   bash benchmarks/multihop/run_multihop.sh --standalone
+
+  # Live multi-container cluster mode (Docker Compose)
+  bash benchmarks/multihop/run_multihop.sh --docker
   ```
+  See dedicated architecture in [Heterogeneous Multi-Hop Backend Origin Testbed Architecture](./multihop-testbed.md).
 - **Controlled Ablation Experiment (BMK-05)**:
   ```bash
   bash benchmarks/ablation/run_ablation.sh

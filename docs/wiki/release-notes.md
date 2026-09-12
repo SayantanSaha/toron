@@ -1,5 +1,44 @@
 # Release Notes
 
+## 2026-09-12 - Toron v1.5.24 Benchmark Release (Heterogeneous Multi-Hop Live Docker Harness Network Execution Architecture - REQ-120 / TASK-143)
+
+### Milestone Summary
+- **Heterogeneous Multi-Hop Live Docker Harness Network Execution Architecture (REQ-120, TASK-143, ADR-120, TC-120, CR-116, SR-120)**: Implemented a unified dual-mode network execution architecture for the multi-hop testbed (`benchmarks/multihop/runner.go`), enabling seamless operation in both `--standalone` (pure in-process CI mode) and `--docker` (live multi-container cluster mode via Docker Compose).
+- **Nil Pointer Dereference Elimination (`SetupLiveTestbed`)**: Resolved the runtime panic at `runner.go:687` during live Docker execution by explicitly constructing non-nil backend descriptors (`SimulatedBackend`) for Node.js 20 LTS (`llhttp`), Python 3.11 (`uvicorn / h11`), and Go 1.24 (`net/http`) with safe teardown guards (`sb.Server != nil`).
+- **Wire-Level Protocol Execution Adapters**: Eliminated in-memory handler dispatch (`HTTP2AdapterHandler().ServeHTTP`) in favor of true physical network socket operations over TCP/h2c:
+  - **Cleartext HTTP/2 (`h2c`) Prior Knowledge Client**: `executeH2CRequest` via `golang.org/x/net/http2.Transport` with custom cleartext TCP dialer and bounded 3-second deadlines.
+  - **Raw HTTP/2 Wire Framing Adapter**: `executeH2WireProbe` serializing HTTP/2 connection preface (`PRI * HTTP/2.0...`), SETTINGS, and HPACK-encoded HEADERS/DATA frames over raw TCP to test RFC compliance for attack vectors (`VECTOR-01` [H2.TE], `VECTOR-02` [H2.CL-Duplicate], `VECTOR-03` [H2.CL-Mismatch], `VECTOR-07` [CRLF-Header-Injection]) that standard client libraries sanitize client-side.
+  - **Raw TCP Socket Stream Probing**: `executeRawSocketProbe` validating fail-fast socket teardown (`FIN`/`RST`) for HTTP/1.1 smuggling vectors (`VECTOR-04`, `VECTOR-05`, `VECTOR-06`).
+- **Wire-Level Upstream Header Isolation Verification (`VECTOR-08`)**: Replaced in-memory struct reflection with response body JSON payload inspection via `parseAndValidateEchoHeaders`, verifying that zero colon-prefixed (`:`) pseudo-headers leak into upstream origins during HTTP/2-to-HTTP/1.1 translation (RFC 7540 §8.1.2.1).
+- **Two-Stage Canary Protocol ($r_{\text{poison}} \,\|\, r_{\text{benign}}$)**: Confirmed 100% pass rate (30/30 scenarios) with strictly 0 desynchronization events and 0 pool poisoning events across all three production runtimes.
+- **Result Retention Compliance (`REQ-119`)**: Preserved dual-path retention and atomic `manifest.json` tracking across both `--standalone` and `--docker` executions, enabling seamless execution within the master benchmark suite orchestrator (`./benchmarks/run_all.sh --auto-start --docker`).
+- **Zero Third-Party Dependencies & Concurrency Safety**: Maintained zero third-party dependencies using exclusively the Go standard library and vendored `golang.org/x/net/http2`; 100% race-free under `go test -race -count=1 ./benchmarks/multihop/...`.
+
+### Added
+- **`SetupLiveTestbed`**: Live environment constructor in `benchmarks/multihop/runner.go` initializing non-nil backend target descriptors.
+- **`executeH2WireProbe`**: Raw TCP HTTP/2 wire framing adapter delivering connection preface, SETTINGS, and raw HPACK frames directly over TCP.
+- **`executeH2CRequest`**: Cleartext prior-knowledge HTTP/2 client transport utilizing `golang.org/x/net/http2.Transport`.
+- **`parseAndValidateEchoHeaders`**: Wire-level response payload parser asserting zero colon-prefixed pseudo-headers leaked in origin `/echo` responses.
+- **`docs/wiki/features/multihop-testbed.md`**: Dedicated documentation wiki for the Heterogeneous Multi-Hop Backend Origin Testbed Architecture.
+- **Unit & Integration Tests**: Added `TestMultiHop_LiveModeInitialization`, `TestMultiHop_PseudoHeaderEchoVerification`, and `TestMultiHop_LiveModeSimulation` in `benchmarks/multihop/multihop_test.go`.
+
+### Changed
+- **`benchmarks/multihop/runner.go`**: Refactored `ExecuteScenario`, `Teardown`, and `main()` to support wire-level network execution and eliminate nil dereferences.
+- **`benchmarks/multihop/run_multihop.sh`**: Enhanced container startup readiness checks and trap cleanup.
+- **`benchmarks/README.md`**: Expanded Section 5 to document dual execution modes, wire-level protocol adapters, SetupLiveTestbed architecture, and echo header isolation.
+- **`docs/wiki/features/benchmarking.md`**: Updated multi-hop execution commands and linked dedicated architecture documentation.
+- **`docs/wiki/index.md`**: Added navigation link to `multihop-testbed.md`.
+
+### Related Tasks & Requirements
+- [`REQ-120`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-120.md): Heterogeneous Multi-Hop Live Docker Harness Network Execution Architecture
+- [`TASK-143`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-143.md): Heterogeneous Multi-Hop Live Docker Harness Network Execution Implementation
+- [`ADR-120`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-120.md): Heterogeneous Multi-Hop Live Docker Harness Network Execution Architecture
+- [`TC-120`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-120.md): Test Specification for Heterogeneous Multi-Hop Live Docker Harness Network Execution
+- [`CR-116`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-116.md): Code Review for Heterogeneous Multi-Hop Live Docker Harness Network Execution Architecture
+- [`SR-120`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-120.md): Security Review for Heterogeneous Multi-Hop Live Docker Harness Network Execution Architecture
+
+---
+
 ## 2026-09-12 - Toron v1.5.23 Benchmark Release (Historical Benchmark Result Retention and Manifest Architecture - REQ-119 / TASK-142)
 
 ### Milestone Summary

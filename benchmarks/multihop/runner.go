@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,11 +15,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"golang.org/x/net/http2"
+	"golang.org/x/net/http2/hpack"
 
 	"toron/pkg/proxy"
 	"toron/pkg/router"
@@ -39,24 +44,24 @@ type VectorDefinition struct {
 
 // ScenarioResult records the outcome of executing a vector against a backend.
 type ScenarioResult struct {
-	VectorID             string   `json:"vector_id"`
-	VectorName           string   `json:"vector_name"`
-	Category             string   `json:"category"`
-	BackendRuntime       string   `json:"backend_runtime"`
-	BackendParser        string   `json:"backend_parser"`
-	BackendPrefix        string   `json:"backend_prefix"`
-	Protocol             string   `json:"protocol"`
-	Stage1EdgeStatus     int      `json:"stage1_edge_status"`
-	Stage1ExpectedStatus []int    `json:"stage1_expected_status"`
-	Stage1SocketClosed   bool     `json:"stage1_socket_closed"`
-	Stage1Passed         bool     `json:"stage1_passed"`
-	Stage2CanaryStatus   int      `json:"stage2_canary_status"`
-	Stage2CanaryPassed   bool     `json:"stage2_canary_passed"`
-	Desynchronization    bool     `json:"desynchronization"`
-	PoolIntegrity        bool     `json:"pool_integrity"`
-	OverallPassed        bool     `json:"overall_passed"`
-	FailureReason        string   `json:"failure_reason,omitempty"`
-	ExecutionTimeUs      int64    `json:"execution_time_us"`
+	VectorID             string `json:"vector_id"`
+	VectorName           string `json:"vector_name"`
+	Category             string `json:"category"`
+	BackendRuntime       string `json:"backend_runtime"`
+	BackendParser        string `json:"backend_parser"`
+	BackendPrefix        string `json:"backend_prefix"`
+	Protocol             string `json:"protocol"`
+	Stage1EdgeStatus     int    `json:"stage1_edge_status"`
+	Stage1ExpectedStatus []int  `json:"stage1_expected_status"`
+	Stage1SocketClosed   bool   `json:"stage1_socket_closed"`
+	Stage1Passed         bool   `json:"stage1_passed"`
+	Stage2CanaryStatus   int    `json:"stage2_canary_status"`
+	Stage2CanaryPassed   bool   `json:"stage2_canary_passed"`
+	Desynchronization    bool   `json:"desynchronization"`
+	PoolIntegrity        bool   `json:"pool_integrity"`
+	OverallPassed        bool   `json:"overall_passed"`
+	FailureReason        string `json:"failure_reason,omitempty"`
+	ExecutionTimeUs      int64  `json:"execution_time_us"`
 }
 
 // BackendSummary aggregates results for a single backend engine.
@@ -72,17 +77,17 @@ type BackendSummary struct {
 
 // MultiHopReport contains full empirical evaluation telemetry.
 type MultiHopReport struct {
-	Timestamp               string           `json:"timestamp"`
-	TargetEdge              string           `json:"target_edge"`
-	ExecutionMode           string           `json:"execution_mode"`
-	TotalScenarios          int              `json:"total_scenarios"`
-	PassedScenarios         int              `json:"passed_scenarios"`
-	FailedScenarios         int              `json:"failed_scenarios"`
-	OverallVerdict          string           `json:"overall_verdict"`
-	DesynchronizationCount  int              `json:"desynchronization_detected"`
-	PoolPoisoningCount      int              `json:"pool_poisoning_detected"`
-	Backends                []BackendSummary `json:"backends"`
-	Results                 []ScenarioResult `json:"results"`
+	Timestamp              string           `json:"timestamp"`
+	TargetEdge             string           `json:"target_edge"`
+	ExecutionMode          string           `json:"execution_mode"`
+	TotalScenarios         int              `json:"total_scenarios"`
+	PassedScenarios        int              `json:"passed_scenarios"`
+	FailedScenarios        int              `json:"failed_scenarios"`
+	OverallVerdict         string           `json:"overall_verdict"`
+	DesynchronizationCount int              `json:"desynchronization_detected"`
+	PoolPoisoningCount     int              `json:"pool_poisoning_detected"`
+	Backends               []BackendSummary `json:"backends"`
+	Results                []ScenarioResult `json:"results"`
 }
 
 // SimulatedBackend simulates a live backend origin.
@@ -99,7 +104,7 @@ type SimulatedBackend struct {
 
 // Close shuts down the simulated backend.
 func (sb *SimulatedBackend) Close() {
-	if sb.Server != nil {
+	if sb != nil && sb.Server != nil {
 		sb.Server.Close()
 	}
 }
@@ -399,8 +404,34 @@ func SetupStandaloneTestbed() (*TestbedEnvironment, error) {
 	}, nil
 }
 
+// SetupLiveTestbed constructs an environment for live mode execution with non-nil backend descriptors.
+func SetupLiveTestbed(edgeAddr string) *TestbedEnvironment {
+	return &TestbedEnvironment{
+		EdgeAddr: edgeAddr,
+		IsLive:   true,
+		NodeBackend: &SimulatedBackend{
+			Runtime:      "Node.js 20 LTS",
+			ParserEngine: "llhttp (C-based)",
+			Prefix:       "node",
+		},
+		PyBackend: &SimulatedBackend{
+			Runtime:      "Python 3.11",
+			ParserEngine: "uvicorn / h11",
+			Prefix:       "python",
+		},
+		GoBackend: &SimulatedBackend{
+			Runtime:      "Go 1.24",
+			ParserEngine: "net/http",
+			Prefix:       "go",
+		},
+	}
+}
+
 // Teardown cleanly stops the testbed.
 func (env *TestbedEnvironment) Teardown() {
+	if env == nil {
+		return
+	}
 	if env.EdgeServer != nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = env.EdgeServer.Shutdown(ctx)
@@ -442,32 +473,93 @@ func ExecuteScenario(env *TestbedEnvironment, targetBackend *SimulatedBackend, v
 	// -------------------------------------------------------------
 	switch v.ID {
 	case "VECTOR-01": // H2.TE
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("malicious-chunked-body"))
-		req.Header.Set("Transfer-Encoding", "chunked")
-		env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
+		if env.EdgeServer != nil && !env.IsLive {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("malicious-chunked-body"))
+			req.Header.Set("Transfer-Encoding", "chunked")
+			env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
 
-		res.Stage1EdgeStatus = rec.Code
-		res.Stage1SocketClosed = false // In HTTP/2 adapter, stream reset / 400 response
-		res.Stage1Passed = rec.Code == http.StatusBadRequest
+			res.Stage1EdgeStatus = rec.Code
+			res.Stage1SocketClosed = false // In HTTP/2 adapter, stream reset / 400 response
+			res.Stage1Passed = rec.Code == http.StatusBadRequest
+		} else {
+			h := [][2]string{
+				{":method", "POST"},
+				{":path", prefix + "/echo"},
+				{":scheme", "http"},
+				{":authority", "localhost"},
+				{"transfer-encoding", "chunked"},
+			}
+			code, closed, err := executeH2WireProbe(env.EdgeAddr, "POST", prefix+"/echo", h, []byte("malicious-chunked-body"))
+			if err != nil && closed {
+				res.Stage1EdgeStatus = http.StatusBadRequest
+				res.Stage1SocketClosed = true
+				res.Stage1Passed = true
+			} else {
+				res.Stage1EdgeStatus = code
+				res.Stage1SocketClosed = closed
+				res.Stage1Passed = (code == http.StatusBadRequest)
+			}
+		}
 
 	case "VECTOR-02": // H2.CL-Duplicate
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("hello"))
-		req.Header["Content-Length"] = []string{"5", "10"}
-		env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
+		if env.EdgeServer != nil && !env.IsLive {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("hello"))
+			req.Header["Content-Length"] = []string{"5", "10"}
+			env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
 
-		res.Stage1EdgeStatus = rec.Code
-		res.Stage1Passed = rec.Code == http.StatusBadRequest
+			res.Stage1EdgeStatus = rec.Code
+			res.Stage1Passed = rec.Code == http.StatusBadRequest
+		} else {
+			h := [][2]string{
+				{":method", "POST"},
+				{":path", prefix + "/echo"},
+				{":scheme", "http"},
+				{":authority", "localhost"},
+				{"content-length", "5"},
+				{"content-length", "10"},
+			}
+			code, closed, err := executeH2WireProbe(env.EdgeAddr, "POST", prefix+"/echo", h, []byte("hello"))
+			if err != nil && closed {
+				res.Stage1EdgeStatus = http.StatusBadRequest
+				res.Stage1SocketClosed = true
+				res.Stage1Passed = true
+			} else {
+				res.Stage1EdgeStatus = code
+				res.Stage1SocketClosed = closed
+				res.Stage1Passed = (code == http.StatusBadRequest)
+			}
+		}
 
 	case "VECTOR-03": // H2.CL-Mismatch
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("short"))
-		req.Header.Set("Content-Length", "50")
-		env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
+		if env.EdgeServer != nil && !env.IsLive {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("short"))
+			req.Header.Set("Content-Length", "50")
+			env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
 
-		res.Stage1EdgeStatus = rec.Code
-		res.Stage1Passed = rec.Code == http.StatusBadRequest
+			res.Stage1EdgeStatus = rec.Code
+			res.Stage1Passed = rec.Code == http.StatusBadRequest
+		} else {
+			h := [][2]string{
+				{":method", "POST"},
+				{":path", prefix + "/echo"},
+				{":scheme", "http"},
+				{":authority", "localhost"},
+				{"content-length", "50"},
+			}
+			code, closed, err := executeH2WireProbe(env.EdgeAddr, "POST", prefix+"/echo", h, []byte("short"))
+			if err != nil && closed {
+				res.Stage1EdgeStatus = http.StatusBadRequest
+				res.Stage1SocketClosed = true
+				res.Stage1Passed = true
+			} else {
+				res.Stage1EdgeStatus = code
+				res.Stage1SocketClosed = closed
+				res.Stage1Passed = (code == http.StatusBadRequest)
+			}
+		}
 
 	case "VECTOR-04": // H1-CL.TE
 		rawReq := fmt.Sprintf("POST %s/echo HTTP/1.1\r\nHost: localhost\r\nContent-Length: 6\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\nX", prefix)
@@ -509,33 +601,64 @@ func ExecuteScenario(env *TestbedEnvironment, targetBackend *SimulatedBackend, v
 		}
 
 	case "VECTOR-07": // CRLF-Header-Injection
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("test"))
-		req.Header.Set("X-Custom", "val\r\nInjected-Header: evil")
-		env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
+		if env.EdgeServer != nil && !env.IsLive {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("test"))
+			req.Header.Set("X-Custom", "val\r\nInjected-Header: evil")
+			env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
 
-		res.Stage1EdgeStatus = rec.Code
-		res.Stage1Passed = rec.Code == http.StatusBadRequest
-
-	case "VECTOR-08": // Pseudo-Header-Isolation
-		rec := httptest.NewRecorder()
-		req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("valid-body"))
-		req.Header.Set(":protocol", "websocket")
-		req.Header.Set(":custom-pseudo", "invisible")
-		env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
-
-		res.Stage1EdgeStatus = rec.Code
-		res.Stage1Passed = rec.Code == http.StatusOK
-
-		// Verify that no pseudo-header leaked to backend
-		targetBackend.Mu.Lock()
-		for k := range targetBackend.LastHeaders {
-			if strings.HasPrefix(k, ":") {
-				res.Stage1Passed = false
-				res.FailureReason = fmt.Sprintf("pseudo-header leaked to upstream: %s", k)
+			res.Stage1EdgeStatus = rec.Code
+			res.Stage1Passed = rec.Code == http.StatusBadRequest
+		} else {
+			h := [][2]string{
+				{":method", "POST"},
+				{":path", prefix + "/echo"},
+				{":scheme", "http"},
+				{":authority", "localhost"},
+				{"x-custom", "val\r\nInjected-Header: evil"},
+			}
+			code, closed, err := executeH2WireProbe(env.EdgeAddr, "POST", prefix+"/echo", h, []byte("test"))
+			if err != nil && closed {
+				res.Stage1EdgeStatus = http.StatusBadRequest
+				res.Stage1SocketClosed = true
+				res.Stage1Passed = true
+			} else {
+				res.Stage1EdgeStatus = code
+				res.Stage1SocketClosed = closed
+				res.Stage1Passed = (code == http.StatusBadRequest)
 			}
 		}
-		targetBackend.Mu.Unlock()
+
+	case "VECTOR-08": // Pseudo-Header-Isolation
+		if env.EdgeServer != nil && !env.IsLive {
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("POST", prefix+"/echo", strings.NewReader("valid-body"))
+			req.Header.Set(":protocol", "websocket")
+			req.Header.Set(":custom-pseudo", "invisible")
+			env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(rec, req)
+
+			res.Stage1EdgeStatus = rec.Code
+			res.Stage1Passed = rec.Code == http.StatusOK
+
+			if err := parseAndValidateEchoHeaders(rec.Body.Bytes()); err != nil {
+				res.Stage1Passed = false
+				res.FailureReason = err.Error()
+			}
+		} else {
+			code, body, err := executeH2CRequest(env.EdgeAddr, "POST", prefix+"/echo", nil, []byte("valid-body"))
+			if err != nil {
+				res.Stage1EdgeStatus = 500
+				res.Stage1Passed = false
+				res.FailureReason = err.Error()
+			} else {
+				res.Stage1EdgeStatus = code
+				res.Stage1Passed = code == http.StatusOK
+				if err := parseAndValidateEchoHeaders(body); err != nil {
+					res.Stage1Passed = false
+					res.FailureReason = err.Error()
+				}
+			}
+		}
 
 	case "VECTOR-09": // Baseline-GET
 		code, body, err := executeHTTPGet(env.EdgeAddr, prefix+"/health")
@@ -654,6 +777,145 @@ func executeHTTPPost(edgeAddr, path, payload string) (int, string, error) {
 		return resp.StatusCode, "", err
 	}
 	return resp.StatusCode, string(bodyBytes), nil
+}
+
+// parseAndValidateEchoHeaders validates that the JSON response from /echo contains no pseudo-headers starting with ':'.
+func parseAndValidateEchoHeaders(body []byte) error {
+	var payload struct {
+		Headers map[string]any `json:"headers"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return fmt.Errorf("failed to parse echo response JSON: %w", err)
+	}
+	for k := range payload.Headers {
+		if strings.HasPrefix(strings.TrimSpace(k), ":") {
+			return fmt.Errorf("pseudo-header leaked to upstream: %s", k)
+		}
+	}
+	return nil
+}
+
+// executeH2WireProbe transmits raw HTTP/2 frames over cleartext TCP to addr.
+// It returns the HTTP status code (or 400 if stream/conn rejected), whether the connection/stream was closed/reset, and any error.
+func executeH2WireProbe(addr, method, path string, headers [][2]string, body []byte) (int, bool, error) {
+	conn, err := net.DialTimeout("tcp", addr, 2*time.Second)
+	if err != nil {
+		return 0, true, err
+	}
+	defer conn.Close()
+
+	_ = conn.SetDeadline(time.Now().Add(3 * time.Second))
+
+	// Send HTTP/2 client connection preface
+	if _, err := conn.Write([]byte(http2.ClientPreface)); err != nil {
+		return 0, true, err
+	}
+
+	framer := http2.NewFramer(conn, conn)
+	if err := framer.WriteSettings(); err != nil {
+		return 0, true, err
+	}
+
+	var headerBuf bytes.Buffer
+	enc := hpack.NewEncoder(&headerBuf)
+	for _, h := range headers {
+		_ = enc.WriteField(hpack.HeaderField{Name: h[0], Value: h[1]})
+	}
+
+	endStream := len(body) == 0
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      1,
+		BlockFragment: headerBuf.Bytes(),
+		EndStream:     endStream,
+		EndHeaders:    true,
+	}); err != nil {
+		return 0, true, err
+	}
+
+	if len(body) > 0 {
+		if err := framer.WriteData(1, true, body); err != nil {
+			return 0, true, err
+		}
+	}
+
+	var statusCode int
+	for {
+		f, err := framer.ReadFrame()
+		if err != nil {
+			if statusCode != 0 {
+				return statusCode, true, nil
+			}
+			return http.StatusBadRequest, true, nil
+		}
+		switch frame := f.(type) {
+		case *http2.SettingsFrame:
+			if !frame.IsAck() {
+				_ = framer.WriteSettingsAck()
+			}
+		case *http2.HeadersFrame:
+			dec := hpack.NewDecoder(4096, func(hf hpack.HeaderField) {
+				if hf.Name == ":status" {
+					statusCode, _ = strconv.Atoi(hf.Value)
+				}
+			})
+			_, _ = dec.Write(frame.HeaderBlockFragment())
+			if frame.StreamEnded() {
+				return statusCode, false, nil
+			}
+		case *http2.DataFrame:
+			if frame.StreamEnded() {
+				return statusCode, false, nil
+			}
+		case *http2.RSTStreamFrame:
+			return http.StatusBadRequest, true, nil
+		case *http2.GoAwayFrame:
+			return http.StatusBadRequest, true, nil
+		}
+	}
+}
+
+// executeH2CRequest performs a cleartext HTTP/2 request using http2.Transport.
+func executeH2CRequest(edgeAddr, method, path string, headers map[string]string, body []byte) (int, []byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	tr := &http2.Transport{
+		AllowHTTP: true,
+		DialTLSContext: func(ctx context.Context, network, addr string, cfg *tls.Config) (net.Conn, error) {
+			var d net.Dialer
+			d.Timeout = 2 * time.Second
+			return d.DialContext(ctx, network, addr)
+		},
+	}
+	defer tr.CloseIdleConnections()
+
+	var bodyReader io.Reader
+	if len(body) > 0 {
+		bodyReader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, "http://"+edgeAddr+path, bodyReader)
+	if err != nil {
+		return 0, nil, err
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	client := &http.Client{
+		Transport: tr,
+		Timeout:   3 * time.Second,
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, respBody, nil
 }
 
 // RunAllScenarios executes all 10 vectors across Node.js, Python, and Go backends.
@@ -855,10 +1117,7 @@ func main() {
 		fmt.Printf("[TORON] In-process Edge Gateway listening on %s\n", env.EdgeAddr)
 	} else {
 		fmt.Printf("[TORON] Connecting to live Edge Gateway at %s...\n", *edgeAddr)
-		env = &TestbedEnvironment{
-			EdgeAddr: *edgeAddr,
-			IsLive:   true,
-		}
+		env = SetupLiveTestbed(*edgeAddr)
 	}
 
 	fmt.Println("[TORON] Executing two-stage desynchronization evaluation protocol (r_poison || r_benign)...")

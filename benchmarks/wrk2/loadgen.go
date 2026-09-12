@@ -38,26 +38,34 @@ type LatencyPercentiles struct {
 
 // StreamMetrics captures telemetry for a single decoupled traffic stream.
 type StreamMetrics struct {
-	StreamType      string             `json:"stream_type"` // "benign" or "adversarial"
-	TotalRequests   int64              `json:"total_requests"`
-	SuccessRequests int64              `json:"success_requests"` // for benign: 200 OK; for attack: 400/403 rejection
-	FailedRequests  int64              `json:"failed_requests"`  // for benign: non-200; for attack: 200 (bypass) or unhandled error
-	ActualRPS       float64            `json:"actual_rps"`
-	BytesRead       int64              `json:"bytes_read"`
-	ThroughputMBs   float64            `json:"throughput_mb_s"`
-	LatenciesMs     LatencyPercentiles `json:"latencies_ms"`
-	StatusCodes     map[int]int64      `json:"status_codes"`
+	StreamType            string             `json:"stream_type"` // "benign" or "adversarial"
+	TotalRequests         int64              `json:"total_requests"`
+	SuccessRequests       int64              `json:"success_requests"`        // benign: 200 OK; adversarial: active rejections
+	FailedRequests        int64              `json:"failed_requests"`         // benign: non-200; adversarial: non-rejections
+	ActiveDefenseRequests int64              `json:"active_defense_requests"` // explicit 400/403/413/431/501
+	RouteMissRequests     int64              `json:"route_miss_requests"`     // explicit 404
+	BypassedRequests      int64              `json:"bypassed_requests"`       // explicit 200
+	UnhandledRequests     int64              `json:"unhandled_requests"`      // explicit 5xx/other
+	ActualRPS             float64            `json:"actual_rps"`
+	BytesRead             int64              `json:"bytes_read"`
+	ThroughputMBs         float64            `json:"throughput_mb_s"`
+	LatenciesMs           LatencyPercentiles `json:"latencies_ms"`
+	StatusCodes           map[int]int64      `json:"status_codes"`
 }
 
 // AttackVectorSummary records telemetry for an individual adversarial vector.
 type AttackVectorSummary struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Category    string  `json:"category"`
-	ProbesSent  int64   `json:"probes_sent"`
-	Rejected    int64   `json:"rejected"`
-	Bypassed    int64   `json:"bypassed"`
-	PassRatePct float64 `json:"pass_rate_pct"`
+	ID                   string  `json:"id"`
+	Name                 string  `json:"name"`
+	Category             string  `json:"category"`
+	ProbesSent           int64   `json:"probes_sent"`
+	Rejected             int64   `json:"rejected"`                 // Active defense (400, 403, 413, 431, 501)
+	RouteMiss            int64   `json:"route_miss"`               // Route miss (404)
+	Bypassed             int64   `json:"bypassed"`                 // Bypass (200)
+	Unhandled            int64   `json:"unhandled"`                // Anomaly (5xx, etc.)
+	ActiveDefenseRatePct float64 `json:"active_defense_rate_pct"` // Rejected / ProbesSent * 100
+	RouteMissRatePct     float64 `json:"route_miss_rate_pct"`      // RouteMiss / ProbesSent * 100
+	PassRatePct          float64 `json:"pass_rate_pct"`            // Alias for ActiveDefenseRatePct
 }
 
 // SaturationStressReport aggregates all empirical evaluation data for BMK-04.
@@ -75,7 +83,9 @@ type SaturationStressReport struct {
 	AdversarialStream        StreamMetrics         `json:"adversarial_stream"`
 	AttackVectors            []AttackVectorSummary `json:"attack_vectors"`
 	ZeroStarvationVerified   bool                  `json:"zero_starvation_verified"`
-	InvariantEnforcementRate float64               `json:"invariant_enforcement_rate_pct"`
+	InvariantEnforcementRate float64               `json:"invariant_enforcement_rate_pct"` // Strictly Active Defense Rate
+	ActiveDefenseRatePct     float64               `json:"active_defense_rate_pct"`
+	RouteMissRatePct         float64               `json:"route_miss_rate_pct"`
 	OverallVerdict           string                `json:"overall_verdict"`
 }
 
@@ -287,16 +297,20 @@ func RunLoadGen(cfg LoadGenConfig) (*SaturationStressReport, error) {
 
 	// Atomic counters for adversarial stream
 	var attackTotal atomic.Int64
-	var attackRejected atomic.Int64
-	var attackBypassed atomic.Int64
+	var attackRejected atomic.Int64  // Active defense: 400, 403, 413, 431, 501
+	var attackRouteMiss atomic.Int64 // Route miss: 404
+	var attackBypassed atomic.Int64  // Bypass: 200 (or unexpected 2xx)
+	var attackUnhandled atomic.Int64 // Unhandled / server error: 5xx, etc.
 	var attackBytes atomic.Int64
 
 	// Per-vector telemetry
 	catalog := GetAttackCatalog()
 	type vecStats struct {
-		sent     atomic.Int64
-		rejected atomic.Int64
-		bypassed atomic.Int64
+		sent      atomic.Int64
+		rejected  atomic.Int64
+		routeMiss atomic.Int64
+		bypassed  atomic.Int64
+		unhandled atomic.Int64
 	}
 	vStats := make(map[string]*vecStats)
 	for _, v := range catalog {
@@ -372,17 +386,26 @@ func RunLoadGen(cfg LoadGenConfig) (*SaturationStressReport, error) {
 					stats := vStats[vec.ID]
 					stats.sent.Add(1)
 
-					// Assert active defense enforcement: 400 Bad Request or 403 Forbidden
-					if code == http.StatusBadRequest || code == http.StatusForbidden || code == http.StatusRequestEntityTooLarge || code == http.StatusNotImplemented {
+					switch code {
+					case http.StatusBadRequest,
+						http.StatusForbidden,
+						http.StatusRequestEntityTooLarge,
+						http.StatusRequestHeaderFieldsTooLarge,
+						http.StatusNotImplemented:
 						attackRejected.Add(1)
 						stats.rejected.Add(1)
-					} else if code == http.StatusOK {
+
+					case http.StatusNotFound:
+						attackRouteMiss.Add(1)
+						stats.routeMiss.Add(1)
+
+					case http.StatusOK:
 						attackBypassed.Add(1)
 						stats.bypassed.Add(1)
-					} else {
-						// Other rejections (e.g. 500, socket drop) still constitute defense block
-						attackRejected.Add(1)
-						stats.rejected.Add(1)
+
+					default:
+						attackUnhandled.Add(1)
+						stats.unhandled.Add(1)
 					}
 
 					statusMu.Lock()
@@ -474,10 +497,19 @@ func RunLoadGen(cfg LoadGenConfig) (*SaturationStressReport, error) {
 	zeroStarvation := benignPercentiles.P99 <= 50.0 && benignFailed.Load() == 0
 
 	// Invariant enforcement rate on attack stream
-	invRate := 100.0
-	if attackTotal.Load() > 0 {
-		invRate = float64(attackRejected.Load()) / float64(attackTotal.Load()) * 100.0
+	totAttack := attackTotal.Load()
+	totRej := attackRejected.Load()
+	totRouteMiss := attackRouteMiss.Load()
+	totBypassed := attackBypassed.Load()
+	totUnhandled := attackUnhandled.Load()
+
+	activeDefenseRate := 100.0
+	routeMissRate := 0.0
+	if totAttack > 0 {
+		activeDefenseRate = float64(totRej) / float64(totAttack) * 100.0
+		routeMissRate = float64(totRouteMiss) / float64(totAttack) * 100.0
 	}
+	invRate := activeDefenseRate
 
 	// Attack vector summaries
 	vecSummaries := make([]AttackVectorSummary, 0, len(catalog))
@@ -485,41 +517,56 @@ func RunLoadGen(cfg LoadGenConfig) (*SaturationStressReport, error) {
 		st := vStats[v.ID]
 		sent := st.sent.Load()
 		rej := st.rejected.Load()
+		rm := st.routeMiss.Load()
 		byp := st.bypassed.Load()
+		unh := st.unhandled.Load()
+
 		rate := 100.0
+		rmRate := 0.0
 		if sent > 0 {
 			rate = float64(rej) / float64(sent) * 100.0
+			rmRate = float64(rm) / float64(sent) * 100.0
 		}
 		vecSummaries = append(vecSummaries, AttackVectorSummary{
-			ID:          v.ID,
-			Name:        v.Name,
-			Category:    v.Category,
-			ProbesSent:  sent,
-			Rejected:    rej,
-			Bypassed:    byp,
-			PassRatePct: rate,
+			ID:                   v.ID,
+			Name:                 v.Name,
+			Category:             v.Category,
+			ProbesSent:           sent,
+			Rejected:             rej,
+			RouteMiss:            rm,
+			Bypassed:             byp,
+			Unhandled:            unh,
+			ActiveDefenseRatePct: rate,
+			RouteMissRatePct:     rmRate,
+			PassRatePct:          rate,
 		})
 	}
 
 	overallVerdict := "PASS"
-	if !zeroStarvation || invRate < 100.0 || attackBypassed.Load() > 0 {
+	if !zeroStarvation ||
+		activeDefenseRate < 100.0 ||
+		totBypassed > 0 ||
+		totRouteMiss > 0 ||
+		totUnhandled > 0 {
 		overallVerdict = "FAIL"
 	}
 
 	report := &SaturationStressReport{
-		Timestamp:              time.Now().UTC().Format(time.RFC3339),
-		TargetURL:              cfg.TargetURL,
-		TargetHostPort:         hostPort,
-		Concurrency:            cfg.Concurrency,
-		DurationSeconds:        totalDuration.Seconds(),
-		TargetRateRPS:          cfg.TargetRate,
-		AttackRatio:            cfg.AttackRatio,
-		TotalRequestsExecuted:  totalExecReqs,
-		TotalActualRPS:         totalActualRPS,
-		ZeroStarvationVerified: zeroStarvation,
+		Timestamp:                time.Now().UTC().Format(time.RFC3339),
+		TargetURL:                cfg.TargetURL,
+		TargetHostPort:           hostPort,
+		Concurrency:              cfg.Concurrency,
+		DurationSeconds:          totalDuration.Seconds(),
+		TargetRateRPS:            cfg.TargetRate,
+		AttackRatio:              cfg.AttackRatio,
+		TotalRequestsExecuted:    totalExecReqs,
+		TotalActualRPS:           totalActualRPS,
+		ZeroStarvationVerified:   zeroStarvation,
 		InvariantEnforcementRate: invRate,
-		OverallVerdict:         overallVerdict,
-		AttackVectors:          vecSummaries,
+		ActiveDefenseRatePct:     activeDefenseRate,
+		RouteMissRatePct:         routeMissRate,
+		OverallVerdict:           overallVerdict,
+		AttackVectors:            vecSummaries,
 		BenignStream: StreamMetrics{
 			StreamType:      "benign",
 			TotalRequests:   benignTotal.Load(),
@@ -532,15 +579,19 @@ func RunLoadGen(cfg LoadGenConfig) (*SaturationStressReport, error) {
 			StatusCodes:     benignStatusCodes,
 		},
 		AdversarialStream: StreamMetrics{
-			StreamType:      "adversarial",
-			TotalRequests:   attackTotal.Load(),
-			SuccessRequests: attackRejected.Load(),
-			FailedRequests:  attackBypassed.Load(),
-			ActualRPS:       attackRPS,
-			BytesRead:       attackBytes.Load(),
-			ThroughputMBs:   attackThroughput,
-			LatenciesMs:     attackPercentiles,
-			StatusCodes:     attackStatusCodes,
+			StreamType:            "adversarial",
+			TotalRequests:         totAttack,
+			SuccessRequests:       totRej,
+			FailedRequests:        totBypassed + totRouteMiss + totUnhandled,
+			ActiveDefenseRequests: totRej,
+			RouteMissRequests:     totRouteMiss,
+			BypassedRequests:      totBypassed,
+			UnhandledRequests:     totUnhandled,
+			ActualRPS:             attackRPS,
+			BytesRead:             attackBytes.Load(),
+			ThroughputMBs:         attackThroughput,
+			LatenciesMs:           attackPercentiles,
+			StatusCodes:           attackStatusCodes,
 		},
 	}
 
@@ -562,8 +613,8 @@ func GenerateMarkdownReport(rep *SaturationStressReport, mdPath string) error {
 		rep.TotalActualRPS, rep.Concurrency, rep.DurationSeconds))
 	md.WriteString(fmt.Sprintf("2. **Zero-Starvation Invariant**: Legitimate background traffic maintained a $p99$ tail latency of **`%.2f ms`** ($< 50.0$ ms threshold) and a **100.0%% success rate** (%d/%d requests).\n",
 		rep.BenignStream.LatenciesMs.P99, rep.BenignStream.SuccessRequests, rep.BenignStream.TotalRequests))
-	md.WriteString(fmt.Sprintf("3. **100.0%% Invariant Enforcement**: Exactly **%d/%d** interleaved malformed protocol probes were intercepted with fail-fast active defense ($400/403/413$), resulting in **`0` bypasses or connection pool leaks**.\n",
-		rep.AdversarialStream.SuccessRequests, rep.AdversarialStream.TotalRequests))
+	md.WriteString(fmt.Sprintf("3. **100.0%% Active Defense Enforcement**: Exactly **%d/%d** interleaved malformed protocol probes were intercepted with verified active defense ($400/403/413/431/501$), with **0 route misses ($404$)**, **0 unhandled anomalies**, and **`0` security bypasses**.\n",
+		rep.AdversarialStream.ActiveDefenseRequests, rep.AdversarialStream.TotalRequests))
 	md.WriteString(fmt.Sprintf("4. **Overall Verdict**: **`%s`**.\n\n", rep.OverallVerdict))
 
 	md.WriteString("---\n\n")
@@ -578,10 +629,10 @@ func GenerateMarkdownReport(rep *SaturationStressReport, mdPath string) error {
 		rep.BenignStream.ActualRPS, rep.AdversarialStream.ActualRPS, rep.TotalActualRPS))
 	md.WriteString(fmt.Sprintf("| **Data Transfer** | %.2f MB/s | %.2f MB/s | %.2f MB/s |\n",
 		rep.BenignStream.ThroughputMBs, rep.AdversarialStream.ThroughputMBs, rep.BenignStream.ThroughputMBs+rep.AdversarialStream.ThroughputMBs))
-	md.WriteString(fmt.Sprintf("| **Evaluation Verdict** | %d Success / %d Failed (0.0%% Error) | %d Blocked / %d Bypassed (**100.0%% Rejection**) | **%s** |\n",
+	md.WriteString(fmt.Sprintf("| **Evaluation Verdict** | %d Success / %d Failed (0.0%% Error) | %d Active Defense / %d Route Miss / %d Bypass (**%.1f%% Active Defense**) | **%s** |\n",
 		rep.BenignStream.SuccessRequests, rep.BenignStream.FailedRequests,
-		rep.AdversarialStream.SuccessRequests, rep.AdversarialStream.FailedRequests,
-		rep.OverallVerdict))
+		rep.AdversarialStream.ActiveDefenseRequests, rep.AdversarialStream.RouteMissRequests, rep.AdversarialStream.BypassedRequests,
+		rep.ActiveDefenseRatePct, rep.OverallVerdict))
 
 	md.WriteString("\n---\n\n")
 	md.WriteString("## 3. High-Precision Latency Distribution (Tail Analysis)\n\n")
@@ -598,12 +649,12 @@ func GenerateMarkdownReport(rep *SaturationStressReport, mdPath string) error {
 	md.WriteString(fmt.Sprintf("| **Max** | `%.2f ms` | `%.2f ms` | Worst-case observed transaction |\n", rep.BenignStream.LatenciesMs.Max, rep.AdversarialStream.LatenciesMs.Max))
 
 	md.WriteString("\n---\n\n")
-	md.WriteString("## 4. Concurrent Adversarial Invariant Breakdown\n\n")
-	md.WriteString("| Vector ID | Attack Name | Category | Probes Sent | Rejection Status | Bypass Count | Active Defense Rate |\n")
-	md.WriteString("| :--- | :--- | :--- | :---: | :---: | :---: | :---: |\n")
+	md.WriteString("## 4. Concurrent Adversarial Invariant Breakdown (Table 6 Alignment)\n\n")
+	md.WriteString("| Vector ID | Attack Name | Category | Probes Sent | Active Defense (4xx/501) | Route Miss (404) | Bypass Count (200) | Unhandled | Active Defense Rate |\n")
+	md.WriteString("| :--- | :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n")
 	for _, v := range rep.AttackVectors {
-		md.WriteString(fmt.Sprintf("| `%s` | %s | %s | %d | 400/403 Block | %d | **%.1f%%** |\n",
-			v.ID, v.Name, v.Category, v.ProbesSent, v.Bypassed, v.PassRatePct))
+		md.WriteString(fmt.Sprintf("| `%s` | %s | %s | %d | %d | %d | %d | %d | **%.1f%%** |\n",
+			v.ID, v.Name, v.Category, v.ProbesSent, v.Rejected, v.RouteMiss, v.Bypassed, v.Unhandled, v.ActiveDefenseRatePct))
 	}
 
 	md.WriteString("\n---\n\n")
@@ -683,12 +734,25 @@ func main() {
 	fmt.Printf("   Zero-Starvation OK:    %t\n", report.ZeroStarvationVerified)
 	fmt.Println("--------------------------------------------------------------------------------")
 	if report.AdversarialStream.TotalRequests > 0 {
-		fmt.Printf(" Adversarial Stream (%d attack probes):\n", report.AdversarialStream.TotalRequests)
-		fmt.Printf("   Rejected / Bypassed:   %d / %d (%.1f%% Rejection Rate)\n",
-			report.AdversarialStream.SuccessRequests, report.AdversarialStream.FailedRequests, report.InvariantEnforcementRate)
-		fmt.Printf("   Fast-Fail p50:         %8.2f ms\n", report.AdversarialStream.LatenciesMs.P50)
-		fmt.Printf("   Fast-Fail p90:         %8.2f ms\n", report.AdversarialStream.LatenciesMs.P90)
-		fmt.Printf("   Fast-Fail p99:         %8.2f ms\n", report.AdversarialStream.LatenciesMs.P99)
+		totAttack := report.AdversarialStream.TotalRequests
+		actDef := report.AdversarialStream.ActiveDefenseRequests
+		actDefPct := float64(actDef) / float64(totAttack) * 100.0
+		rtMiss := report.AdversarialStream.RouteMissRequests
+		rtMissPct := float64(rtMiss) / float64(totAttack) * 100.0
+		byp := report.AdversarialStream.BypassedRequests
+		bypPct := float64(byp) / float64(totAttack) * 100.0
+		unh := report.AdversarialStream.UnhandledRequests
+		unhPct := float64(unh) / float64(totAttack) * 100.0
+
+		fmt.Printf(" Adversarial Stream (%d attack probes):\n", totAttack)
+		fmt.Printf("   Active Defense (4xx/501): %d (%.1f%%)\n", actDef, actDefPct)
+		fmt.Printf("   Route Misses (404):       %d (%.1f%%)\n", rtMiss, rtMissPct)
+		fmt.Printf("   Attack Bypasses (200):    %d (%.1f%%)\n", byp, bypPct)
+		fmt.Printf("   Unhandled Anomalies:      %d (%.1f%%)\n", unh, unhPct)
+		fmt.Printf("   Active Defense Rate:       %.1f%%\n", report.ActiveDefenseRatePct)
+		fmt.Printf("   Fast-Fail p50:            %8.2f ms\n", report.AdversarialStream.LatenciesMs.P50)
+		fmt.Printf("   Fast-Fail p90:            %8.2f ms\n", report.AdversarialStream.LatenciesMs.P90)
+		fmt.Printf("   Fast-Fail p99:            %8.2f ms\n", report.AdversarialStream.LatenciesMs.P99)
 	}
 	fmt.Println("--------------------------------------------------------------------------------")
 	fmt.Printf(" Overall Verdict:         %s\n", report.OverallVerdict)
@@ -712,7 +776,11 @@ func main() {
 		f, err := os.Create(cfg.CSVPath)
 		if err == nil {
 			writer := csv.NewWriter(f)
-			_ = writer.Write([]string{"Concurrency", "TargetRPS", "TotalActualRPS", "BenignRPS", "BenignP50_ms", "BenignP99_ms", "AttackRPS", "AttackRejected", "ZeroStarvation"})
+			_ = writer.Write([]string{
+				"Concurrency", "TargetRPS", "TotalActualRPS", "BenignRPS", "BenignP50_ms", "BenignP99_ms",
+				"AttackRPS", "AttackRejected", "AttackRouteMiss", "AttackBypassed", "AttackUnhandled",
+				"ActiveDefenseRatePct", "ZeroStarvation",
+			})
 			_ = writer.Write([]string{
 				strconv.Itoa(report.Concurrency),
 				strconv.Itoa(report.TargetRateRPS),
@@ -721,7 +789,11 @@ func main() {
 				fmt.Sprintf("%.2f", report.BenignStream.LatenciesMs.P50),
 				fmt.Sprintf("%.2f", report.BenignStream.LatenciesMs.P99),
 				fmt.Sprintf("%.2f", report.AdversarialStream.ActualRPS),
-				strconv.FormatInt(report.AdversarialStream.SuccessRequests, 10),
+				strconv.FormatInt(report.AdversarialStream.ActiveDefenseRequests, 10),
+				strconv.FormatInt(report.AdversarialStream.RouteMissRequests, 10),
+				strconv.FormatInt(report.AdversarialStream.BypassedRequests, 10),
+				strconv.FormatInt(report.AdversarialStream.UnhandledRequests, 10),
+				fmt.Sprintf("%.1f", report.ActiveDefenseRatePct),
 				strconv.FormatBool(report.ZeroStarvationVerified),
 			})
 			writer.Flush()

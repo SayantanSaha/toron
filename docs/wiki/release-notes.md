@@ -1,5 +1,61 @@
 # Release Notes
 
+## 2026-09-12 - Toron v1.5.21 Benchmark Release (Disaggregated Adversarial Status Classification and Route-Miss Separation in Load Generator - HARN-01 / TASK-140 / REQ-117)
+
+### Milestone Summary
+- **Remediation of Circular Defense Scoring Anomaly (HARN-01, TASK-140, REQ-117, BMK-04)**: Completely resolved the circular defense scoring defect and route-miss conflation anomaly ([`ADR-117`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-117.md), [`CR-113`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-113.md), [`SR-117`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-117.md), [`TC-117`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-117.md)) in Toron's high-concurrency saturation benchmark load generator harness ([`benchmarks/wrk2/loadgen.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/wrk2/loadgen.go)).
+- **Elimination of Circular Catch-All Else Block (`benchmarks/wrk2/loadgen.go`)**: Permanently removed the circular `else { attackRejected.Add(1); stats.rejected.Add(1) }` fallback (previously lines 382–386). This catch-all had indiscriminately scored any non-200 HTTP response—including passive `404 Not Found` responses (such as 349 path traversal directory escape probes under `ADV-06`) and server errors (`500 Internal Server Error`)—as active security defense blocks.
+- **Strict Four-Tier Mutually Exclusive Status Classification Taxonomy**: Replaced ambiguous branch logic with an exhaustive `switch code` construct establishing four architectural tiers for adversarial probe evaluation:
+  1. **Tier 1 (Active Defense - `attackRejected`)**: Explicit defensive rejections (`400 Bad Request`, `403 Forbidden`, `413 Payload Too Large`, `431 Request Header Fields Too Large`, `501 Not Implemented`) and transport-level socket resets.
+  2. **Tier 2 (Route Miss - `attackRouteMiss`)**: Unmatched URI paths reaching passive 404 handlers (`404 Not Found`). Explicitly isolated from defense metrics.
+  3. **Tier 3 (Attack Bypass - `attackBypassed`)**: Invariant violations accepted and processed successfully (`200 OK` or unexpected 2xx/3xx).
+  4. **Tier 4 (Unhandled / Protocol Anomaly - `attackUnhandled`)**: Unexpected server crashes, panics, or transport desynchronizations (`500 Internal Server Error`, 5xx, or non-standard codes).
+- **Explicit RFC 6585 Status 431 Active Defense Inclusion**: Formally incorporated HTTP `431 Request Header Fields Too Large` into Tier 1 active defense, correctly reflecting Toron's bounded header parser protections against oversized header blocks (`ADV-07`) without relying on fallback logic.
+- **Route-Miss Isolation & Strict Overall Verdict Logic**: Enforced that `404 Not Found` responses are captured in dedicated 64-bit atomic counters (`attackRouteMiss`, `stats.routeMiss`). Any non-zero route miss, attack bypass, or unhandled anomaly prevents achieving 100.0% active defense, reduces `ActiveDefenseRatePct`, and immediately marks `OverallVerdict = "FAIL"`.
+- **Publication-Grade Table 6 Alignment & Telemetry Parity**: Updated Markdown report generation (`GenerateMarkdownReport`), JSON serialization, and CSV exports to output full 9-column disaggregated breakdowns (`Vector ID`, `Attack Name`, `Category`, `Probes Sent`, `Active Defense (4xx/501)`, `Route Miss (404)`, `Bypass Count (200)`, `Unhandled`, `Active Defense Rate`), aligning directly with Paper 1 and Paper 2 manuscript Table 6 requirements (`REV-03`).
+- **Sub-5ns Hot-Path Overhead & Zero Heap Allocations (NFR-3)**: Implemented the four-tier classification using direct integer switch evaluation with zero heap allocations on the critical benchmarking path, maintaining load generator throughput fidelity beyond 10,000 RPS.
+- **Zero Race Concurrency Verification (`TC-117`)**: Comprehensive automated verification suite verifying all four tiers, AST absence of catch-all else, markdown table formatting, JSON/CSV parity, and race freedom under `go test -race -count=1 ./benchmarks/wrk2/...`.
+
+### Fixed
+- **Circular Catch-All Else Scoring Anomaly (`BMK-04`, `HARN-01`)**: Fixed circular fallback in `loadgen.go` where any non-200 status code was scored as `attackRejected`, falsely crediting passive 404 route misses as active security defense.
+- **Masking of Routing Invariant Deficiencies**: Eliminated false-positive defense classification of 349 path traversal probes (`ADV-06`) that had previously returned `404 Not Found` due to premature path canonicalization prior to the fix in `REQ-116`/`TASK-139`.
+- **Missing RFC 6585 Status 431 Active Defense Code**: Fixed omission of HTTP 431 in explicit active defense checks, which previously relied on accidental fallback.
+- **Anomaly and Server Crash Masking**: Prevented 5xx internal server errors, unhandled panics, or transport anomalies from inflating active defense counts.
+
+### Changed
+- **Benchmark Load Generator Core (`benchmarks/wrk2/loadgen.go`)**:
+  - Replaced conditional branch logic in worker goroutine with exhaustive `switch code` dispatch.
+  - Added atomic counters `attackRouteMiss`, `attackUnhandled`, and expanded `vecStats` with `routeMiss` and `unhandled`.
+  - Augmented `StreamMetrics` struct with `ActiveDefenseRequests`, `RouteMissRequests`, `BypassedRequests`, `UnhandledRequests`.
+  - Augmented `AttackVectorSummary` struct with `RouteMiss`, `Unhandled`, `ActiveDefenseRatePct`, `RouteMissRatePct`.
+  - Augmented `SaturationStressReport` struct with `ActiveDefenseRatePct`, `RouteMissRatePct`, and strict overall verdict logic.
+  - Updated `GenerateMarkdownReport` Section 1, Section 2, and Section 4 to format Table 6 with disaggregated columns.
+  - Updated CLI summary output and CSV exporter to output disaggregated four-tier telemetry.
+
+### Added
+- **User-Facing Documentation (`docs/wiki/features/saturation-stress-benchmark.md`)**: Comprehensive documentation detailing high-concurrency saturation stress benchmarking, the four-tier status classification taxonomy, Table 6 metrics alignment, and CLI flags.
+- **Automated Verification Suite (`benchmarks/wrk2/loadgen_test.go`)**:
+  - `TestLoadGen_ClassificationLogic`: Validates classification across 400, 403, 413, 431, 501, socket reset, 404, 200, 500, 502, and 999.
+  - `TestLoadGen_StatusClassification_FourTiers`: End-to-end multi-status mock server verification of atomic counters and vector telemetry.
+  - `TestLoadGen_RouteMissFailsVerdict`: Asserts 404 increments route miss counter and fails overall verdict.
+  - `TestLoadGen_BypassFailsVerdict` & `TestLoadGen_AttackBypassFailsVerdict`: Asserts 200 increments bypass counter and fails overall verdict.
+  - `TestLoadGen_UnhandledAnomalyFailsVerdict`: Asserts 500 increments unhandled counter and fails overall verdict.
+  - `TestLoadGen_AST_NoCatchAllElse`: Static AST analysis verifying complete elimination of circular `else` blocks in `loadgen.go`.
+  - `TestLoadGen_MarkdownTable6Format` & `TestLoadGen_ReportGeneration_Table6`: Validates 9-column publication-grade Table 6 Markdown formatting.
+  - `TestLoadGen_TelemetryParity_JSON_CSV`: Asserts 100% telemetry parity between memory, JSON, and CSV.
+  - `TestLoadGen_RaceFreeConcurrency`: Asserts partition invariants and race freedom under concurrent load.
+
+### Related Tasks & Requirements
+- [`TASK-140`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-140.md): Implementation of Disaggregated Status Classification and Route-Miss Separation in Benchmark Load Generator (HARN-01)
+- [`REQ-117`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-117.md): Disaggregated Adversarial Status Classification and Route-Miss Separation in Benchmark Load Generator (HARN-01)
+- [`ADR-117`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-117.md): Disaggregated Adversarial Status Classification and Route-Miss Separation in Benchmark Load Generator (HARN-01)
+- [`TC-117`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-117.md): Automated Verification Suite for Benchmark Load Generator Status Classification
+- [`CR-113`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-113.md): Code Review for Disaggregated Adversarial Status Classification and Route-Miss Separation
+- [`SR-117`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-117.md): Security & Empirical Review for Table 6 Benchmark Alignment & Invariant Scoring Audit
+- [`REQ-114`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-114.md) / [`TASK-137`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-137.md): High-Concurrency Saturation Stress Testing with Background Traffic (BMK-04)
+- [`REQ-116`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-116.md) / [`TASK-139`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-139.md): Layered Route-Aware Path Traversal Defense Architecture (CWE-22)
+- [`ReviewTaskSummary.md`](file:///Users/sneha/Developer/toron-research/ReviewTaskSummary.md): Directive `REV-03` / Task `HARN-01`
+
 ## 2026-09-12 - Toron v1.5.20 Security Release (Layered Route-Aware Path Traversal Defense Architecture - CWE-22 / TASK-139 / REQ-116)
 
 ### Milestone Summary

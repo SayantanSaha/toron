@@ -88,6 +88,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [In-Memory Response Caching](./features/response-caching.md) – RFC 7234 HTTP response caching and telemetry headers.
 - [Multi-Scheme Authentication](./features/authentication.md) – JWT (HS256), API Key, and HTTP Basic authentication.
 - [Native Go Benchmarking](./features/benchmarking.md) – Performance benchmarks and allocation metrics.
+- [High-Concurrency Saturation Stress Benchmark & Status Classification](./features/saturation-stress-benchmark.md) – Dual-stream saturation testing, four-tier status classification taxonomy, and Table 6 metrics (BMK-04, HARN-01).
 - [Dummy Microservices Suite](./features/dummy-services.md) – Cluster of 10 test microservices.
 
 ### 📖 References

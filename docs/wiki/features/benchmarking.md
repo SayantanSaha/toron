@@ -65,5 +65,6 @@ go test -bench . -benchmem ./pkg/server
 
 ## Related Pages
 
+- [High-Concurrency Saturation Stress Benchmark & Status Classification](./saturation-stress-benchmark.md)
 - [Event Reactor Core](./event-reactor.md)
 - [Release Notes](../release-notes.md)

@@ -1,0 +1,59 @@
+version: '3.8'
+
+services:
+  toron-edge:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: toron-edge-multihop
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./config.multihop.yaml:/etc/toron/config.yaml:ro
+      - ./routes.multihop.yaml:/etc/toron/routes.yaml:ro
+    depends_on:
+      - node-origin
+      - python-origin
+      - go-origin
+    networks:
+      - multihop-net
+
+  node-origin:
+    build:
+      context: ./backends/node
+      dockerfile: Dockerfile
+    container_name: toron-node-origin
+    ports:
+      - "9101:9101"
+    environment:
+      - PORT=9101
+    networks:
+      - multihop-net
+
+  python-origin:
+    build:
+      context: ./backends/python
+      dockerfile: Dockerfile
+    container_name: toron-python-origin
+    ports:
+      - "9102:9102"
+    environment:
+      - PORT=9102
+    networks:
+      - multihop-net
+
+  go-origin:
+    build:
+      context: ./backends/go
+      dockerfile: Dockerfile
+    container_name: toron-go-origin
+    ports:
+      - "9103:9103"
+    environment:
+      - PORT=9103
+    networks:
+      - multihop-net
+
+networks:
+  multihop-net:
+    driver: bridge

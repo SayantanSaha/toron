@@ -1,0 +1,9 @@
+{
+  "name": "toron-node-origin",
+  "version": "1.0.0",
+  "description": "Heterogeneous multi-hop Node.js origin backend for Toron evaluation",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

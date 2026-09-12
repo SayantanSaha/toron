@@ -17,10 +17,18 @@ benchmarks/
 │   └── scripts/
 │       ├── pipeline.lua          # Pipelined HTTP request script
 │       └── post_payload.lua      # JSON POST payload ingestion script
-└── fuzzer/                       # Differential protocol security evaluation
-    ├── diff_fuzzer.go            # Protocol invariant test engine & raw socket fuzzer
-    ├── diff_fuzzer_test.go       # Unit tests for socket termination verification & latency isolation
-    └── run_fuzzer.sh             # Differential fuzzer execution script
+├── fuzzer/                       # Differential protocol security evaluation
+│   ├── diff_fuzzer.go            # Protocol invariant test engine & raw socket fuzzer
+│   ├── diff_fuzzer_test.go       # Unit tests for socket termination verification & latency isolation
+│   └── run_fuzzer.sh             # Differential fuzzer execution script
+└── multihop/                     # Heterogeneous multi-hop backend testbed (BMK-03)
+    ├── backends/                 # Real-world backend runtimes (Node.js, Python, Go)
+    ├── docker-compose.multihop.yml # Multi-container cluster orchestration
+    ├── routes.multihop.yaml      # Multi-hop upstream gateway routing table
+    ├── config.multihop.yaml      # Edge gateway configuration
+    ├── runner.go                 # Two-stage desync evaluation engine (pure Go standard library)
+    ├── multihop_test.go          # Standalone in-process test suite
+    └── run_multihop.sh           # Testbed execution script (standalone & Docker)
 ```
 
 ---
@@ -138,11 +146,42 @@ go test -bench=BenchmarkParseRequest -benchmem ./pkg/httpparser/...
 
 ---
 
-## 📈 4. Generated Evaluation Artifacts
+## 🌐 4. Heterogeneous Multi-Hop Backend Origin Testbed (`benchmarks/multihop/`)
+
+### Overview
+Directly refuting the "multi-hop blindspot" critique (`AER-002` Issue 6, `AR-002` Alternative Explanation 3, `BMK-03`), this testbed evaluates Toron fronting three live, distinct backend HTTP runtime parsing engines:
+1. **Node.js 20 LTS**: C-based `llhttp` parser engine (`/node`).
+2. **Python 3.11**: ASGI `uvicorn` / `h11` parser engine (`/python`).
+3. **Go 1.24**: Standard library `net/http` parser engine (`/go`).
+
+### Two-Stage Desynchronization Evaluation Protocol ($r_{\text{poison}} \,\|\, r_{\text{benign}}$)
+For each vector across all three runtimes ($10 \times 3 = 30$ scenarios):
+1. **Stage 1 ($r_{\text{poison}}$)**: Transmits crafted smuggling vectors (H2.TE, H2.CL duplicate/mismatch, H1-CL.TE, H1-TE.CL whitespace obfuscation, pipelining buffer eviction, CRLF header injection, pseudo-header isolation, and benign baselines).
+2. **Stage 2 ($r_{\text{benign}}$)**: Immediately issues a benign canary request (`GET /canary`) over the connection session to prove that:
+   - Edge security rejections physically tear down transport sockets without leaking residual bytes into backend pools.
+   - Forwarded traffic maintains 100% connection pool integrity without response poisoning or desynchronization.
+
+### Running the Multi-Hop Testbed
+```bash
+# Standalone in-process mode (zero-dependency, pure Go standard library for CI):
+go test -v -race -count=1 ./benchmarks/multihop/...
+
+# Shell harness execution:
+bash benchmarks/multihop/run_multihop.sh --standalone
+
+# Live multi-container Docker Compose cluster:
+bash benchmarks/multihop/run_multihop.sh --docker
+```
+
+---
+
+## 📈 5. Generated Evaluation Artifacts
 
 Results are automatically saved in `benchmarks/results/`:
 - `benchmark_c*.json` & `benchmark_c*.csv`: Latency percentiles and throughput numbers suitable for Gnuplot / Python Matplotlib.
 - `concurrency_sweep_summary.csv`: Aggregated latency curve data across concurrency points.
 - `differential_fuzz_report.json`: Machine-readable fuzzer pass/fail data with microsecond rejection latencies.
 - `differential_fuzz_report.md`: Formatted Markdown table comparing invariant conformance.
+- `multihop_report.json`: Full telemetry from the heterogeneous multi-hop testbed (30 scenarios, 3 runtimes).
+- `multihop_report.md`: Publication-grade cross-runtime evaluation matrix.
 

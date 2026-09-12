@@ -198,7 +198,7 @@ if [ -n "${ACTIVE_SESSION_DIR}" ]; then
 
     ARTIFACTS_LIST=$(IFS=,; echo "${ALL_FILES[*]}")
 
-    "${SCRIPT_DIR}/archive_run.sh" record \
+    bash "${SCRIPT_DIR}/archive_run.sh" record \
         -session-dir "${ACTIVE_SESSION_DIR}" \
         -suite "all" \
         -status "success" \

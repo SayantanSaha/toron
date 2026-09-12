@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # ==============================================================================
 # Toron Master Benchmark & Differential Security Evaluation Orchestrator
+# Executes full benchmark suite across microbenchmarks, loadgen, stress testing,
+# differential fuzzing (K=1,000), multi-hop testbed, and controlled ablation.
 # ==============================================================================
 set -euo pipefail
 
@@ -51,12 +53,16 @@ echo " Auto-Start Mode:    ${AUTO_START}"
 echo " Artifact Directory: ${RESULTS_DIR}"
 echo "================================================================================"
 
+echo ""
+echo "[1/6] Running In-Process Parser Microbenchmarks (testing.B, TST-05)..."
+go test -bench=BenchmarkParseRequest -benchmem -run=^$ "${ROOT_DIR}/pkg/httpparser/..." | tee "${RESULTS_DIR}/microbenchmarks.raw.txt"
+
 if [ "$AUTO_START" = "true" ]; then
     echo ""
-    echo "[1/4] Building Toron executable..."
+    echo "[*] Building Toron executable..."
     (cd "${ROOT_DIR}" && go build -o "${RESULTS_DIR}/toron_eval" ./cmd/toron)
 
-    echo "[2/4] Launching Toron server in background..."
+    echo "[*] Launching Toron server in background..."
     "${RESULTS_DIR}/toron_eval" -config "${ROOT_DIR}/config.yaml" -routes "${ROOT_DIR}/routes.yaml" > "${RESULTS_DIR}/server.log" 2>&1 &
     SERVER_PID=$!
     echo "      Server process launched (PID: ${SERVER_PID}). Waiting for socket readiness..."
@@ -82,17 +88,37 @@ if [ "$AUTO_START" = "true" ]; then
 fi
 
 echo ""
-echo "[3/4] Executing High-Throughput & Tail Latency Benchmark (wrk2 harness)..."
+echo "[2/6] Executing Baseline High-Throughput & Tail Latency Benchmark (wrk2 harness)..."
 bash "${SCRIPT_DIR}/wrk2/run_wrk2.sh" -u "http://${TARGET_HOST}/health" -c 100 -d 5s -r 5000
 
 echo ""
-echo "[4/4] Executing Differential Protocol Security Fuzzer..."
-bash "${SCRIPT_DIR}/fuzzer/run_fuzzer.sh" -t "${TARGET_HOST}"
+echo "[3/6] Executing High-Concurrency Saturation Stress Testing with 10% Adversarial Injection (BMK-04)..."
+bash "${SCRIPT_DIR}/wrk2/run_saturation_stress.sh" -u "http://${TARGET_HOST}/health" -c 50 -d 5s -r 5000 -a 0.10
+
+echo ""
+echo "[4/6] Executing Differential Protocol Security Fuzzer (Equation 7 & K=1,000 Trials, BMK-01, BMK-02)..."
+bash "${SCRIPT_DIR}/fuzzer/run_fuzzer.sh" -t "${TARGET_HOST}" -k 1000 -w 50
+
+if [ -n "${SERVER_PID}" ]; then
+    echo ""
+    echo "[*] Stopping background Toron server before isolated testbeds..."
+    kill -TERM "${SERVER_PID}" 2>/dev/null || true
+    wait "${SERVER_PID}" 2>/dev/null || true
+    SERVER_PID=""
+fi
+
+echo ""
+echo "[5/6] Executing Heterogeneous Multi-Hop Backend Origin Testbed (Node.js, Python, Go, BMK-03)..."
+bash "${SCRIPT_DIR}/multihop/run_multihop.sh" --standalone
+
+echo ""
+echo "[6/6] Executing 10-Task Controlled Ablation Experiment Suite (TASK-061 to TASK-070, BMK-05)..."
+bash "${SCRIPT_DIR}/ablation/run_ablation.sh"
 
 echo ""
 echo "================================================================================"
 echo " [✓] ALL EVALUATION ARTIFACTS SUCCESSFULLY GENERATED                            "
 echo "================================================================================"
-echo " Generated Artifacts:"
+echo " Generated Artifacts in ${RESULTS_DIR}:"
 ls -lh "${RESULTS_DIR}"
 echo "================================================================================"

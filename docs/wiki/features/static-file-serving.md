@@ -39,7 +39,7 @@ Toron provides native static file serving capabilities, allowing developers to h
 - **Directory Index Fallback**: Automatically serves `index.html` when a directory URL is requested (e.g. `http://localhost:8080/`).
 - **Single Page Application (SPA) HTML5 History Fallback**: Transparently resolves client-side virtual routes lacking file extensions to `index.html` (or a custom fallback document) with HTTP 200 OK, delivering full Nginx `try_files` parity (`TASK-056`).
 - **Asset Masking Protection**: Missing static asset requests containing file extensions (`.js`, `.css`, `.png`, `.json`) return HTTP 404 Not Found rather than HTML, preventing runtime browser syntax errors.
-- **Path Traversal Security**: Automatically blocks directory traversal attacks (`../`) and symlink directory escapes, returning `403 Forbidden`.
+- **Path Traversal Security**: Automatically blocks directory traversal attacks (`../`) and symlink directory escapes, returning `403 Forbidden` via the [Layered Route-Aware Path Traversal Defense Architecture](./path-traversal-defense.md).
 
 ## Configuration Example
 
@@ -78,6 +78,7 @@ r.RoutePrefix(router.RouteTypeStatic, "/app", "./frontend/dist", proxy.ProxyOpti
 
 ## Related Pages
 
+- [Layered Route-Aware Path Traversal Defense Architecture](./path-traversal-defense.md)
 - [Configuration Guide](../configuration.md)
 - [Configuration Options Reference](../reference/config-options.md)
 - [Troubleshooting](../troubleshooting.md)

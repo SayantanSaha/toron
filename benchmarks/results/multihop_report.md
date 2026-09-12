@@ -1,6 +1,6 @@
 # Toron Heterogeneous Multi-Hop Empirical Evaluation Report (BMK-03)
 
-**Generated**: `2026-09-12T02:10:20Z` | **Target Edge**: `127.0.0.1:62007` | **Execution Mode**: `Standalone In-Process (Pure Go)`
+**Generated**: `2026-09-12T03:51:42Z` | **Target Edge**: `127.0.0.1:63574` | **Execution Mode**: `Standalone In-Process (Pure Go)`
 
 ---
 

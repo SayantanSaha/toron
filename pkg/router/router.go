@@ -1,10 +1,12 @@
 package router
 
 import (
+	"bytes"
 	"fmt"
 	"log"
 	"mime"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -785,7 +787,31 @@ func cleanRequestPath(p string) string {
 
 // ServeHTTP dispatches the request to registered handlers through the middleware chain.
 func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
+	rawPath := ""
+	unescaped := ""
 	if req != nil {
+		if req.RequestURI != "" {
+			rawWire := req.RequestURI
+			if idx := strings.IndexByte(rawWire, '?'); idx != -1 {
+				rawWire = rawWire[:idx]
+			}
+			if idx := strings.IndexByte(rawWire, '#'); idx != -1 {
+				rawWire = rawWire[:idx]
+			}
+			rawPath = rawWire
+		} else {
+			rawPath = req.Path
+		}
+
+		unescaped = rawPath
+		for {
+			u, err := url.PathUnescape(unescaped)
+			if err != nil || u == unescaped {
+				break
+			}
+			unescaped = u
+		}
+
 		req.Path = cleanRequestPath(req.Path)
 	}
 	r.mu.RLock()
@@ -819,36 +845,76 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	}
 
 	if targetHandler == nil {
-		// Check prefix routes (static file, upstream reverse proxy, or prefix handler routes)
-		var fallbackPrefix *prefixRoute
-		var methodMismatch bool
+		// Static Prefix Escape Guard (REQ-116 / ADR-116):
+		// Detect if incoming path targeted a registered static prefix route,
+		// but canonical path escapes the prefix boundary.
+		var staticEscapeDetected bool
 		for i := range r.prefixRoutes {
 			pr := &r.prefixRoutes[i]
-			if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
-				if pr.method != "" && !strings.EqualFold(pr.method, req.Method) {
-					methodMismatch = true
-					continue
-				}
-				if pr.matcher != nil && !pr.matcher(req.Path) {
-					continue
-				}
-				if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
-					targetHandler = pr.handler
+			if pr.routeType != string(RouteTypeStatic) || pr.prefix == "" {
+				continue
+			}
+			prefix := "/" + strings.Trim(pr.prefix, "/")
+			if prefix == "/" {
+				continue
+			}
+			prefixSlash := prefix + "/"
+			targeted := rawPath == prefix || strings.HasPrefix(rawPath, prefixSlash) ||
+				unescaped == prefix || strings.HasPrefix(unescaped, prefixSlash)
+			if targeted {
+				cleanRaw := cleanRequestPath(rawPath)
+				cleanUnesc := cleanRequestPath(unescaped)
+				escapes := (!strings.HasPrefix(cleanRaw, prefixSlash) && cleanRaw != prefix) ||
+					(!strings.HasPrefix(cleanUnesc, prefixSlash) && cleanUnesc != prefix) ||
+					(req != nil && !strings.HasPrefix(req.Path, prefixSlash) && req.Path != prefix)
+				if escapes {
+					staticEscapeDetected = true
+					targetHandler = func(req *httpparser.Request, res *httpparser.Response) {
+						if res.Body == nil {
+							res.Body = bytes.NewBuffer(nil)
+						}
+						res.SetStatus(http.StatusForbidden)
+						res.Header.Set("Content-Type", "application/json")
+						res.Header.Set("Connection", "close")
+						_, _ = res.WriteString(`{"error":"403 Forbidden: Path Traversal Disallowed"}`)
+					}
 					break
-				}
-				if pr.host == "" && len(pr.headers) == 0 && fallbackPrefix == nil {
-					fallbackPrefix = pr
 				}
 			}
 		}
-		if targetHandler == nil && fallbackPrefix != nil {
-			targetHandler = fallbackPrefix.handler
-		}
-		if targetHandler == nil {
-			if methodMismatch {
-				targetHandler = r.MethodNotAllowed
-			} else {
-				targetHandler = r.NotFound
+
+		if !staticEscapeDetected {
+			// Check prefix routes (static file, upstream reverse proxy, or prefix handler routes)
+			var fallbackPrefix *prefixRoute
+			var methodMismatch bool
+			for i := range r.prefixRoutes {
+				pr := &r.prefixRoutes[i]
+				if pr.prefix == "" || strings.HasPrefix(req.Path, pr.prefix+"/") || req.Path == pr.prefix {
+					if pr.method != "" && !strings.EqualFold(pr.method, req.Method) {
+						methodMismatch = true
+						continue
+					}
+					if pr.matcher != nil && !pr.matcher(req.Path) {
+						continue
+					}
+					if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
+						targetHandler = pr.handler
+						break
+					}
+					if pr.host == "" && len(pr.headers) == 0 && fallbackPrefix == nil {
+						fallbackPrefix = pr
+					}
+				}
+			}
+			if targetHandler == nil && fallbackPrefix != nil {
+				targetHandler = fallbackPrefix.handler
+			}
+			if targetHandler == nil {
+				if methodMismatch {
+					targetHandler = r.MethodNotAllowed
+				} else {
+					targetHandler = r.NotFound
+				}
 			}
 		}
 	}

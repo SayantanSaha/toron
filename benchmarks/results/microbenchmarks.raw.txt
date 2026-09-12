@@ -1,0 +1,13 @@
+goos: darwin
+goarch: arm64
+pkg: toron/pkg/httpparser
+cpu: Apple M1 Pro
+BenchmarkParseRequest_GET-8                     	  611408	      1965 ns/op	    5707 B/op	      25 allocs/op
+BenchmarkParseRequest_POST-8                    	  151526	      7749 ns/op	   71083 B/op	      30 allocs/op
+BenchmarkParseRequest_WhitespaceRejection-8     	 1000000	      1158 ns/op	    4812 B/op	      12 allocs/op
+BenchmarkParseRequest_MultipleCL-8              	  609066	      1933 ns/op	    5429 B/op	      26 allocs/op
+BenchmarkParseRequest_ValidBaseline-8           	  708324	      1791 ns/op	    5274 B/op	      22 allocs/op
+BenchmarkParseRequest_InvalidTokenRejection-8   	  672513	      1558 ns/op	    5237 B/op	      16 allocs/op
+BenchmarkParseRequest_PooledBody-8              	  564942	      1918 ns/op	    5424 B/op	      25 allocs/op
+PASS
+ok  	toron/pkg/httpparser	11.424s

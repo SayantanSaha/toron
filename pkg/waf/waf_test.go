@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+
+	"toron/pkg/httpparser"
 )
 
 func TestWAF_SQLInjectionDetection(t *testing.T) {
@@ -175,4 +177,167 @@ func TestWAF_PathTraversal_CaseInsensitive(t *testing.T) {
 			t.Errorf("expected TRAVERSAL-001 rule to match in query, got %v", matched)
 		}
 	})
+}
+
+// TC-116-01: Layer 7 WAF Raw Wire URI Dot-Dot Traversal Inspection (REQ-116 / ADR-116 / TASK-139.1)
+func TestWAF_InspectToron_RawWireURI_Traversal(t *testing.T) {
+	engine, err := NewEngine(DefaultConfig())
+	if err != nil {
+		t.Fatalf("failed to create WAF engine: %v", err)
+	}
+
+	testCases := []struct {
+		name        string
+		requestURI  string
+		path        string
+		wantBlocked bool
+		wantRuleID  string
+	}{
+		{
+			name:        "Raw Dot-Dot Path Traversal Sequence",
+			requestURI:  "/internal/dashboard/../../canary_traversal.txt",
+			path:        "/canary_traversal.txt",
+			wantBlocked: true,
+			wantRuleID:  "TRAVERSAL-001",
+		},
+		{
+			name:        "Uppercase Percent-Encoded Traversal (%2E%2E)",
+			requestURI:  "/internal/dashboard/%2E%2E/%2E%2E/canary_traversal.txt",
+			path:        "/canary_traversal.txt",
+			wantBlocked: true,
+			wantRuleID:  "TRAVERSAL-001",
+		},
+		{
+			name:        "Lowercase Percent-Encoded Traversal with Query and Fragment",
+			requestURI:  "/internal/dashboard/%2e%2e/%2e%2e/canary_traversal.txt?query=test#section1",
+			path:        "/canary_traversal.txt",
+			wantBlocked: true,
+			wantRuleID:  "TRAVERSAL-001",
+		},
+		{
+			name:        "Encoded Slashes Traversal",
+			requestURI:  "/assets/..%2f..%2fetc/passwd",
+			path:        "/etc/passwd",
+			wantBlocked: true,
+			wantRuleID:  "TRAVERSAL-001",
+		},
+		{
+			name:        "Double Percent-Encoded Traversal (%252e%252e)",
+			requestURI:  "/internal/dashboard/%252e%252e/%252e%252e/canary_traversal.txt",
+			path:        "/internal/dashboard/%2e%2e/%2e%2e/canary_traversal.txt",
+			wantBlocked: true,
+			wantRuleID:  "TRAVERSAL-001",
+		},
+		{
+			name:        "Legitimate Request Without Traversal",
+			requestURI:  "/internal/dashboard/assets/app.js",
+			path:        "/internal/dashboard/assets/app.js",
+			wantBlocked: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &httpparser.Request{
+				Method:     "GET",
+				RequestURI: tc.requestURI,
+				Path:       tc.path,
+				Header:     make(httpparser.Header),
+			}
+
+			blocked, score, matched, err := engine.InspectToron(req)
+			if err != nil {
+				t.Fatalf("unexpected InspectToron error: %v", err)
+			}
+			if blocked != tc.wantBlocked {
+				t.Errorf("blocked mismatch: got %v, want %v (score=%d, matched=%v)", blocked, tc.wantBlocked, score, matched)
+			}
+			if tc.wantBlocked {
+				if score < 5 {
+					t.Errorf("expected threat score >= 5, got %d", score)
+				}
+				found := false
+				for _, r := range matched {
+					if r.ID == tc.wantRuleID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected rule %s to match, got %v", tc.wantRuleID, matched)
+				}
+				blockedResp := FormatBlockedResponse(score, matched)
+				if !strings.Contains(blockedResp, `"error":"Forbidden"`) || !strings.Contains(blockedResp, tc.wantRuleID) {
+					t.Errorf("expected FormatBlockedResponse to include Forbidden and rule ID, got: %s", blockedResp)
+				}
+			}
+		})
+	}
+}
+
+// TC-116-02: WAF InspectToron Fallback when RequestURI is Empty (REQ-116 / ADR-116 / TASK-139.1)
+func TestWAF_InspectToron_Fallback_EmptyRequestURI(t *testing.T) {
+	engine, err := NewEngine(DefaultConfig())
+	if err != nil {
+		t.Fatalf("failed to create WAF engine: %v", err)
+	}
+
+	testCases := []struct {
+		name        string
+		path        string
+		wantBlocked bool
+		wantRuleID  string
+	}{
+		{
+			name:        "Fallback Dot-Dot Traversal in Path",
+			path:        "/internal/../secret",
+			wantBlocked: true,
+			wantRuleID:  "TRAVERSAL-001",
+		},
+		{
+			name:        "Fallback Encoded Traversal in Path",
+			path:        "/%2e%2e/secret",
+			wantBlocked: true,
+			wantRuleID:  "TRAVERSAL-001",
+		},
+		{
+			name:        "Fallback Benign Path",
+			path:        "/api/v1/health",
+			wantBlocked: false,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := &httpparser.Request{
+				Method:     "GET",
+				RequestURI: "",
+				Path:       tc.path,
+				Header:     make(httpparser.Header),
+			}
+
+			blocked, score, matched, err := engine.InspectToron(req)
+			if err != nil {
+				t.Fatalf("unexpected InspectToron error: %v", err)
+			}
+			if blocked != tc.wantBlocked {
+				t.Errorf("blocked mismatch: got %v, want %v (score=%d, matched=%v)", blocked, tc.wantBlocked, score, matched)
+			}
+			if tc.wantBlocked {
+				if score < 5 {
+					t.Errorf("expected threat score >= 5, got %d", score)
+				}
+				found := false
+				for _, r := range matched {
+					if r.ID == tc.wantRuleID {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("expected rule %s to match, got %v", tc.wantRuleID, matched)
+				}
+			}
+		})
+	}
 }

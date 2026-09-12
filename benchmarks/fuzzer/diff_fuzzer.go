@@ -206,7 +206,7 @@ func getTestCases() []TestCase {
 			CWE:         "CWE-22",
 			RawPayload:  "GET /internal/dashboard/../../canary_traversal.txt HTTP/1.1\r\nHost: localhost\r\n\r\n",
 			ExpectedStatus: []int{400, 403},
-			ExpectClose: false,
+			ExpectClose: true,
 			Description: "Pre-route path canonicalization and route root boundary guard must actively reject escaping to canary file",
 		},
 		{
@@ -216,7 +216,7 @@ func getTestCases() []TestCase {
 			CWE:         "CWE-22",
 			RawPayload:  "GET /internal/dashboard/%2E%2E/%2E%2E/canary_traversal.txt HTTP/1.1\r\nHost: localhost\r\n\r\n",
 			ExpectedStatus: []int{400, 403},
-			ExpectClose: false,
+			ExpectClose: true,
 			Description: "Uppercase encoded dot segments must be normalized before filesystem access",
 		},
 		{

@@ -282,8 +282,27 @@ func (e *WAFEngine) Inspect(req *http.Request) (blocked bool, score int, matched
 	urlPath := ""
 	rawQuery := ""
 	if req.URL != nil {
-		urlPath = req.URL.Path
 		rawQuery = req.URL.RawQuery
+	}
+
+	if req.RequestURI != "" {
+		rawWire := req.RequestURI
+		if idx := strings.IndexByte(rawWire, '?'); idx != -1 {
+			if rawQuery == "" {
+				q := rawWire[idx+1:]
+				if fIdx := strings.IndexByte(q, '#'); fIdx != -1 {
+					q = q[:fIdx]
+				}
+				rawQuery = q
+			}
+			rawWire = rawWire[:idx]
+		}
+		if idx := strings.IndexByte(rawWire, '#'); idx != -1 {
+			rawWire = rawWire[:idx]
+		}
+		urlPath = rawWire
+	} else if req.URL != nil {
+		urlPath = req.URL.Path
 	}
 
 	var headersCombined strings.Builder
@@ -310,17 +329,30 @@ func (e *WAFEngine) InspectToron(req *httpparser.Request) (blocked bool, score i
 		return false, 0, nil, nil
 	}
 
-	urlPath := req.Path
+	urlPath := ""
 	rawQuery := ""
 	if req.URL != nil {
 		rawQuery = req.URL.RawQuery
-	} else if req.RequestURI != "" {
-		if u, parseErr := url.ParseRequestURI(req.RequestURI); parseErr == nil {
-			rawQuery = u.RawQuery
-			if urlPath == "" {
-				urlPath = u.Path
+	}
+
+	if req.RequestURI != "" {
+		rawWire := req.RequestURI
+		if idx := strings.IndexByte(rawWire, '?'); idx != -1 {
+			if rawQuery == "" {
+				q := rawWire[idx+1:]
+				if fIdx := strings.IndexByte(q, '#'); fIdx != -1 {
+					q = q[:fIdx]
+				}
+				rawQuery = q
 			}
+			rawWire = rawWire[:idx]
 		}
+		if idx := strings.IndexByte(rawWire, '#'); idx != -1 {
+			rawWire = rawWire[:idx]
+		}
+		urlPath = rawWire
+	} else {
+		urlPath = req.Path
 	}
 
 	var headersCombined strings.Builder
@@ -379,7 +411,7 @@ func (e *WAFEngine) inspectInternal(method, urlPath, rawQuery, headersStr string
 	for _, rule := range e.rules {
 		matchFound := false
 
-		if (rule.Locations&InspectURL != 0) && normPath != "" && rule.Pattern.MatchString(normPath) {
+		if (rule.Locations&InspectURL != 0) && ((normPath != "" && rule.Pattern.MatchString(normPath)) || (urlPath != "" && rule.Pattern.MatchString(urlPath))) {
 			matchFound = true
 		}
 		if !matchFound && (rule.Locations&InspectQuery != 0) && normQuery != "" && rule.Pattern.MatchString(normQuery) {

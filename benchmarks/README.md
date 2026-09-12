@@ -90,9 +90,12 @@ Transmits raw TCP byte streams containing deliberate RFC protocol violations, de
    - Terminal control sequences (`0x07` Bell, `0x1B` ANSI escape) in headers and query parameters.
 4. **Path Traversal & Normalization (CWE-22 / RFC 3986)**:
    - Strict active defense oracle: asserts `400 Bad Request` or `403 Forbidden` (`404 Not Found` rejected as false-positive).
-   - Raw dot-dot (`..`) segments escaping root boundaries targeting canary file (`canary_traversal.txt`).
-   - Uppercase percent-encoded (`%2E%2E`) sequences.
-   - Double percent-encoded (`%252e%252e`) sequences.
+   - Enforces fail-fast transport socket teardown (`Connection: close`) and physical TCP closure upon rejection (`REQ-107`, `ADR-116`).
+   - `TRAVERSAL-001`: Raw dot-dot (`..`) segments escaping static route prefix (`GET /internal/dashboard/../../canary_traversal.txt HTTP/1.1`) -> **`403 Forbidden` / `Connection: close` (PASS)**.
+   - `TRAVERSAL-002`: Uppercase percent-encoded (`%2E%2E`) sequences (`GET /internal/dashboard/%2E%2E/%2E%2E/canary_traversal.txt HTTP/1.1`) -> **`403 Forbidden` / `Connection: close` (PASS)**.
+   - `TRAVERSAL-003`: Double percent-encoded (`%252e%252e`) sequences (`GET /internal/dashboard/%252e%252e/%252e%252e/canary_traversal.txt HTTP/1.1`) -> **`403 Forbidden` / `Connection: close` (PASS)**.
+   - Verifies zero canary secret leakage (`canary_traversal.txt`) across all boundary escape attempts.
+   - Mitigates defensive masking where premature router path canonicalization previously diverted traversal probes to `404 Not Found` with keep-alive connections.
 5. **Heap Allocation Bounding (CWE-400)**:
    - Oversized request headers (>8KB).
    - Oversized single query parameters (>2KB).
@@ -103,6 +106,38 @@ Transmits raw TCP byte streams containing deliberate RFC protocol violations, de
    - `CACHE-003`: `Authorization` refusal (requests with `Authorization` are refused storage unless explicitly marked `Cache-Control: public`).
 7. **RFC Conformance Baseline (`BASELINE-001`)**:
    - Standard valid HTTP/1.1 request formatted canonically as `200 OK` in generated Markdown and JSON reports via dynamic RFC status resolution.
+
+### 🛡️ Empirical Invariant Conformance & Active Defense Results (100.0% Pass Rate)
+
+Following the implementation of the **Layered Route-Aware Path Traversal Defense Architecture** ([`REQ-116`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-116.md), [`ADR-116`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-116.md), [`TASK-139`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-139.md)), Toron achieves a **100.0% invariant pass rate (19/19 tests passed, 0 failed)** across all 10 evaluated security categories:
+
+| Security Category | Total Tests | Passed | Failed | Pass Rate | Target Invariant & Standard |
+| :--- | :---: | :---: | :---: | :---: | :--- |
+| **Path Canonicalization (CWE-22)** | **3** | **3** | **0** | **100.0%** | **Active 403 Forbidden & Socket Teardown on Prefix Escapes (REQ-116 / ADR-116)** |
+| Request Smuggling (CL.CL) | 1 | 1 | 0 | 100.0% | RFC 7230 §3.3.3 Multiple Content-Length Rejection (CWE-444) |
+| Request Smuggling (Obfuscation) | 1 | 1 | 0 | 100.0% | RFC 7230 §3.3.3 Obfuscated Transfer-Encoding Rejection (CWE-444) |
+| Request Smuggling (Chunked) | 1 | 1 | 0 | 100.0% | RFC 7230 §4.1.1 Chunk Hex Size Syntax Integrity (CWE-444) |
+| Request Smuggling (CL.TE) | 1 | 1 | 0 | 100.0% | RFC 7230 §3.3.3 Conflicting CL and TE Rejection (CWE-444) |
+| Header Syntax Invariants | 3 | 3 | 0 | 100.0% | RFC 7230 §3.2.4 Leading Whitespace & Line Folding (CWE-436) |
+| Control Character Guards | 3 | 3 | 0 | 100.0% | CWE-117 Null Byte & Terminal Control Sequence Filtering |
+| Resource Bounding (CWE-400) | 2 | 2 | 0 | 100.0% | CWE-400 Header (>8KB) & Query Parameter (>2KB) Limits |
+| Cache Session Boundary | 3 | 3 | 0 | 100.0% | RFC 7234 Web Cache Deception & Cookie Stripping (CWE-524) |
+| RFC Conformance Baseline | 1 | 1 | 0 | 100.0% | RFC 7230 Canonical 200 OK Baseline Evaluation |
+| **Total Conformance** | **19** | **19** | **0** | **100.0%** | **Full Protocol Invariant & Active Security Conformance** |
+
+#### Path Traversal Active Defense Verification Matrix (`TRAVERSAL-001` .. `TRAVERSAL-003`)
+
+The differential security fuzzer enforces strict active defense oracles, asserting that path traversal attempts receive active security rejections (`403 Forbidden`) with mandatory transport socket teardown (`Connection: close`), completely rejecting passive `404 Not Found` masking as a failure:
+
+| Test ID | Attack / Invariant Vector | CWE | Expected Status | Actual Status | Transport Teardown (`conn:closed`) | Result | Defense Mechanism |
+| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :--- |
+| `TRAVERSAL-001` | Raw Dot-Dot Path Traversal Sequence (`/../../canary_traversal.txt`) | CWE-22 | `400/403` | `403` | `Closed` | ✅ PASS | Layer 1 WAF Raw Wire URI Inspection + Layer 2 Router Prefix Escape Guard |
+| `TRAVERSAL-002` | Uppercase Percent-Encoded Traversal (`/%2E%2E/%2E%2E/canary_traversal.txt`) | CWE-22 | `400/403` | `403` | `Closed` | ✅ PASS | Layer 1 WAF Case-Insensitive Wire Regex + Layer 2 Router Unescape Guard |
+| `TRAVERSAL-003` | Double Percent-Encoded Traversal (`/%252e%252e/%252e%252e/canary_traversal.txt`) | CWE-22 | `400/403` | `403` | `Closed` | ✅ PASS | Layer 1 Dual-Path Evaluation + Layer 2 Iterative Unescaping Fixpoint Guard |
+
+- **Zero Canary Secret Leakage**: The canary secret file (`canary_traversal.txt`) is strictly contained; zero response bytes ever leak canary content.
+- **Fail-Fast Rejection Latency**: Mean rejection latency remains $< 300\ \mu\text{s}$ (Median $< 70\ \mu\text{s}$) with zero heap allocations on common benign requests.
+- **Standalone Router Protection**: When WAF middleware is disabled or omitted, Layer 2 Router Static Prefix Escape Guard independently catches all prefix escape attempts and enforces `403 Forbidden` with socket closure.
 
 ### Running the Fuzzer
 ```bash

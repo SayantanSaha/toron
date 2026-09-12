@@ -1,12 +1,22 @@
 {
-  "timestamp": "2026-09-07T08:55:30Z",
+  "timestamp": "2026-09-12T03:50:14Z",
   "target_host": "127.0.0.1:8080",
-  "total_tests": 16,
-  "passed_tests": 16,
+  "trials_per_test": 1,
+  "warmup_runs_per_test": 0,
+  "total_tests": 19,
+  "passed_tests": 19,
   "failed_tests": 0,
   "security_pass_rate": 100,
-  "average_latency_us": 298.875,
+  "average_latency_us": 398.7052631578947,
+  "median_latency_us": 208.75,
+  "p90_latency_us": 712.08,
+  "p99_latency_us": 2378,
   "category_stats": {
+    "Cache Session Boundary": {
+      "total": 3,
+      "passed": 3,
+      "failed": 0
+    },
     "Control Character Guards": {
       "total": 3,
       "passed": 3,
@@ -59,176 +69,732 @@
       "category": "Request Smuggling (CL.TE)",
       "name": "Conflicting Content-Length and Transfer-Encoding",
       "cwe": "CWE-444",
+      "expected_status": [
+        400,
+        501
+      ],
+      "expected_status_str": "400/501",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 646,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "27",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 362,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 362.13,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 362.13,
+        "p90_latency_us": 362.13,
+        "p99_latency_us": 362.13,
+        "p999_latency_us": 362.13,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 362.13,
+        "ci95_upper_us": 362.13,
+        "raw_samples": [
+          362.125
+        ]
+      }
     },
     {
       "test_case_id": "SMUGGLE-002",
       "category": "Request Smuggling (CL.CL)",
       "name": "Multiple Divergent Content-Length Headers",
       "cwe": "CWE-444",
+      "expected_status": [
+        400,
+        501
+      ],
+      "expected_status_str": "400/501",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 271,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "27",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 239,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 238.79,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 238.79,
+        "p90_latency_us": 238.79,
+        "p99_latency_us": 238.79,
+        "p999_latency_us": 238.79,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 238.79,
+        "ci95_upper_us": 238.79,
+        "raw_samples": [
+          238.792
+        ]
+      }
     },
     {
       "test_case_id": "SMUGGLE-003",
       "category": "Request Smuggling (Obfuscation)",
       "name": "Transfer-Encoding with Obfuscated Tab Character",
       "cwe": "CWE-444",
+      "expected_status": [
+        400,
+        501
+      ],
+      "expected_status_str": "400/501",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 344,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "27",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 209,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 208.75,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 208.75,
+        "p90_latency_us": 208.75,
+        "p99_latency_us": 208.75,
+        "p999_latency_us": 208.75,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 208.75,
+        "ci95_upper_us": 208.75,
+        "raw_samples": [
+          208.75
+        ]
+      }
     },
     {
       "test_case_id": "SMUGGLE-004",
       "category": "Request Smuggling (Chunked)",
       "name": "Invalid Chunk Hex Size Extension",
       "cwe": "CWE-444",
+      "expected_status": [
+        400,
+        501
+      ],
+      "expected_status_str": "400/501",
       "actual_status": 501,
       "status_line": "HTTP/1.1 501 Not Implemented",
-      "connection_closed": false,
-      "latency_us": 329,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "62",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 250,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 250.08,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 250.08,
+        "p90_latency_us": 250.08,
+        "p99_latency_us": 250.08,
+        "p999_latency_us": 250.08,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 250.08,
+        "ci95_upper_us": 250.08,
+        "raw_samples": [
+          250.084
+        ]
+      }
     },
     {
       "test_case_id": "WHITESPACE-001",
       "category": "Header Syntax Invariants",
       "name": "Space Before Colon in Field Name",
       "cwe": "CWE-444",
+      "expected_status": [
+        400
+      ],
+      "expected_status_str": "400 Bad Request",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 229,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "27",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 170,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 169.58,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 169.58,
+        "p90_latency_us": 169.58,
+        "p99_latency_us": 169.58,
+        "p999_latency_us": 169.58,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 169.58,
+        "ci95_upper_us": 169.58,
+        "raw_samples": [
+          169.583
+        ]
+      }
     },
     {
       "test_case_id": "WHITESPACE-002",
       "category": "Header Syntax Invariants",
       "name": "Tab Before Colon in Field Name",
       "cwe": "CWE-444",
+      "expected_status": [
+        400
+      ],
+      "expected_status_str": "400 Bad Request",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 263,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "27",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 177,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 177.04,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 177.04,
+        "p90_latency_us": 177.04,
+        "p99_latency_us": 177.04,
+        "p999_latency_us": 177.04,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 177.04,
+        "ci95_upper_us": 177.04,
+        "raw_samples": [
+          177.041
+        ]
+      }
     },
     {
       "test_case_id": "WHITESPACE-003",
       "category": "Header Syntax Invariants",
       "name": "Obsolete Line Folding (obs-fold)",
       "cwe": "CWE-436",
+      "expected_status": [
+        200,
+        400
+      ],
+      "expected_status_str": "200/400",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 236,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "27",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 100,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 100.29,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 100.29,
+        "p90_latency_us": 100.29,
+        "p99_latency_us": 100.29,
+        "p999_latency_us": 100.29,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 100.29,
+        "ci95_upper_us": 100.29,
+        "raw_samples": [
+          100.291
+        ]
+      }
     },
     {
       "test_case_id": "CONTROL-001",
       "category": "Control Character Guards",
       "name": "Null Byte (0x00) in Request URI",
       "cwe": "CWE-117",
+      "expected_status": [
+        400
+      ],
+      "expected_status_str": "400 Bad Request",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 254,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "27",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 179,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 179.04,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 179.04,
+        "p90_latency_us": 179.04,
+        "p99_latency_us": 179.04,
+        "p999_latency_us": 179.04,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 179.04,
+        "ci95_upper_us": 179.04,
+        "raw_samples": [
+          179.042
+        ]
+      }
     },
     {
       "test_case_id": "CONTROL-002",
       "category": "Control Character Guards",
       "name": "Bell Character (0x07) in Header Value",
       "cwe": "CWE-117",
+      "expected_status": [
+        400
+      ],
+      "expected_status_str": "400 Bad Request",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 679,
-      "passed": true
+      "response_headers": {
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Connection": "close",
+        "Content-Length": "78",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 712,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 712.08,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 712.08,
+        "p90_latency_us": 712.08,
+        "p99_latency_us": 712.08,
+        "p999_latency_us": 712.08,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 712.08,
+        "ci95_upper_us": 712.08,
+        "raw_samples": [
+          712.083
+        ]
+      }
     },
     {
       "test_case_id": "CONTROL-003",
       "category": "Control Character Guards",
       "name": "Escape Sequence (0x1B) in Query String",
       "cwe": "CWE-117",
+      "expected_status": [
+        400
+      ],
+      "expected_status_str": "400 Bad Request",
       "actual_status": 400,
       "status_line": "HTTP/1.1 400 Bad Request",
-      "connection_closed": false,
-      "latency_us": 239,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "27",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 87,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 87.29,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 87.29,
+        "p90_latency_us": 87.29,
+        "p99_latency_us": 87.29,
+        "p999_latency_us": 87.29,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 87.29,
+        "ci95_upper_us": 87.29,
+        "raw_samples": [
+          87.291
+        ]
+      }
     },
     {
       "test_case_id": "TRAVERSAL-001",
       "category": "Path Canonicalization",
       "name": "Raw Dot-Dot Path Traversal Sequence",
       "cwe": "CWE-22",
+      "expected_status": [
+        400,
+        403
+      ],
+      "expected_status_str": "400/403",
       "actual_status": 403,
       "status_line": "HTTP/1.1 403 Forbidden",
-      "connection_closed": false,
-      "latency_us": 232,
-      "passed": true
+      "response_headers": {
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Connection": "close",
+        "Content-Length": "118",
+        "Content-Type": "application/json",
+        "X-Toron-Waf-Anomaly-Score": "5"
+      },
+      "connection_closed": true,
+      "latency_us": 211,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 210.92,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 210.92,
+        "p90_latency_us": 210.92,
+        "p99_latency_us": 210.92,
+        "p999_latency_us": 210.92,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 210.92,
+        "ci95_upper_us": 210.92,
+        "raw_samples": [
+          210.917
+        ]
+      }
     },
     {
       "test_case_id": "TRAVERSAL-002",
       "category": "Path Canonicalization",
       "name": "Uppercase Percent-Encoded Traversal (%2E%2E)",
       "cwe": "CWE-22",
-      "actual_status": 404,
-      "status_line": "HTTP/1.1 404 Not Found",
-      "connection_closed": false,
-      "latency_us": 201,
-      "passed": true
+      "expected_status": [
+        400,
+        403
+      ],
+      "expected_status_str": "400/403",
+      "actual_status": 403,
+      "status_line": "HTTP/1.1 403 Forbidden",
+      "response_headers": {
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Connection": "close",
+        "Content-Length": "118",
+        "Content-Type": "application/json",
+        "X-Toron-Waf-Anomaly-Score": "5"
+      },
+      "connection_closed": true,
+      "latency_us": 166,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 165.58,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 165.58,
+        "p90_latency_us": 165.58,
+        "p99_latency_us": 165.58,
+        "p999_latency_us": 165.58,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 165.58,
+        "ci95_upper_us": 165.58,
+        "raw_samples": [
+          165.583
+        ]
+      }
     },
     {
       "test_case_id": "TRAVERSAL-003",
       "category": "Path Canonicalization",
       "name": "Double Percent-Encoded Traversal (%252e%252e)",
       "cwe": "CWE-22",
+      "expected_status": [
+        400,
+        403
+      ],
+      "expected_status_str": "400/403",
       "actual_status": 403,
       "status_line": "HTTP/1.1 403 Forbidden",
-      "connection_closed": false,
-      "latency_us": 218,
-      "passed": true
+      "response_headers": {
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Connection": "close",
+        "Content-Length": "118",
+        "Content-Type": "application/json",
+        "X-Toron-Waf-Anomaly-Score": "5"
+      },
+      "connection_closed": true,
+      "latency_us": 188,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 187.96,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 187.96,
+        "p90_latency_us": 187.96,
+        "p99_latency_us": 187.96,
+        "p999_latency_us": 187.96,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 187.96,
+        "ci95_upper_us": 187.96,
+        "raw_samples": [
+          187.958
+        ]
+      }
     },
     {
       "test_case_id": "RESOURCE-001",
       "category": "Resource Bounding",
       "name": "Oversized Request Header (\u003e 8KB)",
       "cwe": "CWE-400",
+      "expected_status": [
+        400,
+        431
+      ],
+      "expected_status_str": "400/431",
       "actual_status": 431,
       "status_line": "HTTP/1.1 431 Request Header Fields Too Large",
-      "connection_closed": false,
-      "latency_us": 231,
-      "passed": true
+      "response_headers": {
+        "Connection": "close",
+        "Content-Length": "47",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 148,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 148.46,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 148.46,
+        "p90_latency_us": 148.46,
+        "p99_latency_us": 148.46,
+        "p999_latency_us": 148.46,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 148.46,
+        "ci95_upper_us": 148.46,
+        "raw_samples": [
+          148.458
+        ]
+      }
     },
     {
       "test_case_id": "RESOURCE-002",
       "category": "Resource Bounding",
       "name": "Oversized Single Query Parameter (\u003e 2KB)",
       "cwe": "CWE-400",
+      "expected_status": [
+        400,
+        413,
+        414
+      ],
+      "expected_status_str": "400/413/414",
       "actual_status": 413,
       "status_line": "HTTP/1.1 413 Request Entity Too Large",
-      "connection_closed": false,
-      "latency_us": 202,
-      "passed": true
+      "response_headers": {
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Connection": "close",
+        "Content-Length": "92",
+        "Content-Type": "application/json"
+      },
+      "connection_closed": true,
+      "latency_us": 131,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 131.25,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 131.25,
+        "p90_latency_us": 131.25,
+        "p99_latency_us": 131.25,
+        "p999_latency_us": 131.25,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 131.25,
+        "ci95_upper_us": 131.25,
+        "raw_samples": [
+          131.25
+        ]
+      }
     },
     {
       "test_case_id": "BASELINE-001",
       "category": "RFC Conformance Baseline",
       "name": "Standard Valid HTTP/1.1 GET Request",
       "cwe": "N/A",
+      "expected_status": [
+        200
+      ],
+      "expected_status_str": "200 OK",
       "actual_status": 200,
       "status_line": "HTTP/1.1 200 OK",
+      "response_headers": {
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Connection": "keep-alive",
+        "Content-Length": "15",
+        "Content-Type": "application/json",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+        "X-Cache": "MISS",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY"
+      },
       "connection_closed": false,
-      "latency_us": 208,
-      "passed": true
+      "latency_us": 2378,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 2378,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 2378,
+        "p90_latency_us": 2378,
+        "p99_latency_us": 2378,
+        "p999_latency_us": 2378,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 2378,
+        "ci95_upper_us": 2378,
+        "raw_samples": [
+          2378
+        ]
+      }
+    },
+    {
+      "test_case_id": "CACHE-001",
+      "category": "Cache Session Boundary",
+      "name": "Web Cache Deception (Private Cache-Control)",
+      "cwe": "CWE-524",
+      "expected_status": [
+        200,
+        401
+      ],
+      "expected_status_str": "200/401",
+      "actual_status": 401,
+      "status_line": "HTTP/1.1 401 Unauthorized",
+      "response_headers": {
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Cache-Control": "private, max-age=60",
+        "Connection": "keep-alive",
+        "Content-Length": "24",
+        "Content-Type": "application/json",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+        "X-Cache": "MISS",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY"
+      },
+      "connection_closed": false,
+      "latency_us": 577,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 577,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 577,
+        "p90_latency_us": 577,
+        "p99_latency_us": 577,
+        "p999_latency_us": 577,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 577,
+        "ci95_upper_us": 577,
+        "raw_samples": [
+          577
+        ]
+      }
+    },
+    {
+      "test_case_id": "CACHE-002",
+      "category": "Cache Session Boundary",
+      "name": "Shared Cache Set-Cookie Header Stripping",
+      "cwe": "CWE-384",
+      "expected_status": [
+        200
+      ],
+      "expected_status_str": "200 OK",
+      "actual_status": 200,
+      "status_line": "HTTP/1.1 200 OK",
+      "response_headers": {
+        "Age": "0",
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Cache-Control": "public, max-age=60",
+        "Connection": "keep-alive",
+        "Content-Length": "26",
+        "Content-Type": "application/json",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+        "X-Cache": "HIT",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY"
+      },
+      "connection_closed": false,
+      "latency_us": 709,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 708.58,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 708.58,
+        "p90_latency_us": 708.58,
+        "p99_latency_us": 708.58,
+        "p999_latency_us": 708.58,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 708.58,
+        "ci95_upper_us": 708.58,
+        "raw_samples": [
+          708.584
+        ]
+      }
+    },
+    {
+      "test_case_id": "CACHE-003",
+      "category": "Cache Session Boundary",
+      "name": "Authorization Refusal Invariant in Shared Cache",
+      "cwe": "CWE-524",
+      "expected_status": [
+        200,
+        401
+      ],
+      "expected_status_str": "200/401",
+      "actual_status": 401,
+      "status_line": "HTTP/1.1 401 Unauthorized",
+      "response_headers": {
+        "Alt-Svc": "h3=\":8443\"; ma=2592000",
+        "Connection": "keep-alive",
+        "Content-Length": "24",
+        "Content-Type": "application/json",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+        "X-Cache": "MISS",
+        "X-Content-Type-Options": "nosniff",
+        "X-Frame-Options": "DENY"
+      },
+      "connection_closed": false,
+      "latency_us": 583,
+      "passed": true,
+      "distribution": {
+        "trials": 1,
+        "warmup_runs": 0,
+        "mean_latency_us": 582.58,
+        "std_dev_latency_us": 0,
+        "median_latency_us": 582.58,
+        "p90_latency_us": 582.58,
+        "p99_latency_us": 582.58,
+        "p999_latency_us": 582.58,
+        "ci95_margin_us": 0,
+        "ci95_lower_us": 582.58,
+        "ci95_upper_us": 582.58,
+        "raw_samples": [
+          582.583
+        ]
+      }
     }
   ]
 }

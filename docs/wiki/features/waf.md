@@ -40,6 +40,7 @@ documents:
 
 related_to:
   - ../configuration.md
+  - ./path-traversal-defense.md
   - ./cors-security-headers.md
   - ./authentication.md
   - ../index.md
@@ -56,7 +57,7 @@ Toron includes a native, high-throughput **Web Application Firewall (WAF)** midd
 1. **OWASP Top 10 Injection Mitigation**:
    - **SQL Injection (SQLi)**: Detects `UNION SELECT`, `' OR 1=1`, and destructive DDL statements (`DROP TABLE`, `INSERT INTO`).
    - **Cross-Site Scripting (XSS)**: Intercepts script tags (`<script>`), inline event handlers (`onerror=`, `onload=`), and `javascript:` URIs.
-   - **Path Traversal / LFI**: Detects directory escape sequences (`../`, `%2e%2e/`) and sensitive system files (`/etc/passwd`).
+   - **Path Traversal / LFI**: Detects directory escape sequences (`../`, `%2e%2e/`) and sensitive system files (`/etc/passwd`) via raw wire URI evaluation and layered route-aware defense (see [Path Traversal Defense](./path-traversal-defense.md)).
    - **Command Injection / RCE**: Intercepts shell command chaining (`; /bin/sh`, `| bash`) and PHP/system execution primitives (`eval()`, `system()`).
 2. **Flexible Evaluation Modes**:
    - `enforce`: Immediately blocks malicious requests with HTTP `403 Forbidden` and a structured JSON error response.

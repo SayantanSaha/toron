@@ -1393,3 +1393,239 @@ func TestRouter_PrefixRouteSpec_MethodMatching(t *testing.T) {
 	}
 }
 
+// TC-116-03, TC-116-04, TC-116-05, TC-116-06, TC-116-07:
+// Route-Aware Static Prefix Escape Guard and ADR-062 Canonicalization Preservations (REQ-116 / ADR-116 / TASK-139.2 / TASK-139.5)
+func TestRouter_RouteAwareStaticPrefixEscapeGuard(t *testing.T) {
+	tempBase := t.TempDir()
+	staticDir := filepath.Join(tempBase, "static_dashboard")
+	if err := os.MkdirAll(filepath.Join(staticDir, "assets"), 0755); err != nil {
+		t.Fatalf("failed to create static assets dir: %v", err)
+	}
+
+	indexContent := "<html><body>Static Index</body></html>"
+	if err := os.WriteFile(filepath.Join(staticDir, "index.html"), []byte(indexContent), 0644); err != nil {
+		t.Fatalf("failed to write index.html: %v", err)
+	}
+
+	jsContent := `console.log("app");`
+	if err := os.WriteFile(filepath.Join(staticDir, "assets", "app.js"), []byte(jsContent), 0644); err != nil {
+		t.Fatalf("failed to write app.js: %v", err)
+	}
+
+	// Deploy canary traversal secret file outside staticDir
+	canaryPath := filepath.Join(tempBase, "canary_traversal.txt")
+	canaryContent := "TORON_TRAVERSAL_CANARY_SECRET_DATA_DO_NOT_LEAK"
+	if err := os.WriteFile(canaryPath, []byte(canaryContent), 0644); err != nil {
+		t.Fatalf("failed to write canary file: %v", err)
+	}
+
+	// Construct router WITHOUT WAF middleware attached (testing standalone router-level defense)
+	r := router.New()
+	r.Static("/internal/dashboard", staticDir)
+
+	// Register exact API routes to verify ADR-062 non-static canonicalization
+	r.GET("/public", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("public")
+	})
+	r.GET("/internal", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("internal")
+	})
+	r.GET("/api/v1/status", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("status")
+	})
+
+	t.Run("TC-116-03: Raw Dot-Dot Traversal Sequence", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/dashboard/../../canary_traversal.txt", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("expected status 403 Forbidden, got %d", res.StatusCode)
+		}
+		if res.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection: close, got %q", res.Header.Get("Connection"))
+		}
+		if res.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("expected Content-Type: application/json, got %q", res.Header.Get("Content-Type"))
+		}
+		body := res.Body.String()
+		if !strings.Contains(body, `{"error":"403 Forbidden: Path Traversal Disallowed"}`) {
+			t.Errorf("unexpected body payload: %s", body)
+		}
+		if strings.Contains(body, canaryContent) {
+			t.Errorf("CRITICAL SECURITY VIOLATION: canary content was leaked in response body!")
+		}
+	})
+
+	t.Run("TC-116-04: Uppercase Percent-Encoded Traversal (%2E%2E)", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/dashboard/%2E%2E/%2E%2E/canary_traversal.txt", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("expected status 403 Forbidden, got %d", res.StatusCode)
+		}
+		if res.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection: close, got %q", res.Header.Get("Connection"))
+		}
+		if res.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("expected Content-Type: application/json, got %q", res.Header.Get("Content-Type"))
+		}
+		body := res.Body.String()
+		if !strings.Contains(body, `{"error":"403 Forbidden: Path Traversal Disallowed"}`) {
+			t.Errorf("unexpected body payload: %s", body)
+		}
+		if strings.Contains(body, canaryContent) {
+			t.Errorf("CRITICAL SECURITY VIOLATION: canary content was leaked in response body!")
+		}
+	})
+
+	t.Run("TC-116-05: Double Percent-Encoded Traversal (%252e%252e)", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/internal/dashboard/%252e%252e/%252e%252e/canary_traversal.txt", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusForbidden {
+			t.Errorf("expected status 403 Forbidden, got %d", res.StatusCode)
+		}
+		if res.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection: close, got %q", res.Header.Get("Connection"))
+		}
+		if res.Header.Get("Content-Type") != "application/json" {
+			t.Errorf("expected Content-Type: application/json, got %q", res.Header.Get("Content-Type"))
+		}
+		body := res.Body.String()
+		if !strings.Contains(body, `{"error":"403 Forbidden: Path Traversal Disallowed"}`) {
+			t.Errorf("unexpected body payload: %s", body)
+		}
+		if strings.Contains(body, canaryContent) {
+			t.Errorf("CRITICAL SECURITY VIOLATION: canary content was leaked in response body!")
+		}
+	})
+
+	t.Run("TC-116-06: Static Prefix Route Legitimate Subpath Access Preserved", func(t *testing.T) {
+		// Valid file request
+		reqFile, _ := httpparser.NewRequest("GET", "/internal/dashboard/index.html", "HTTP/1.1")
+		resFile := httpparser.NewResponse()
+		r.ServeHTTP(reqFile, resFile)
+
+		if resFile.StatusCode != http.StatusOK {
+			t.Errorf("expected status 200 OK for index.html, got %d", resFile.StatusCode)
+		}
+		if resFile.Body.String() != indexContent {
+			t.Errorf("unexpected body for index.html: got %q, want %q", resFile.Body.String(), indexContent)
+		}
+		if resFile.Header.Get("Connection") == "close" {
+			t.Errorf("expected Connection header NOT to be close for legitimate static file")
+		}
+
+		// Valid assets subpath request
+		reqAsset, _ := httpparser.NewRequest("GET", "/internal/dashboard/assets/app.js", "HTTP/1.1")
+		resAsset := httpparser.NewResponse()
+		r.ServeHTTP(reqAsset, resAsset)
+
+		if resAsset.StatusCode != http.StatusOK {
+			t.Errorf("expected status 200 OK for app.js, got %d", resAsset.StatusCode)
+		}
+		if resAsset.Body.String() != jsContent {
+			t.Errorf("unexpected body for app.js: got %q, want %q", resAsset.Body.String(), jsContent)
+		}
+
+		// Valid relative path resolving inside static directory
+		reqSub, _ := httpparser.NewRequest("GET", "/internal/dashboard/assets/../index.html", "HTTP/1.1")
+		resSub := httpparser.NewResponse()
+		r.ServeHTTP(reqSub, resSub)
+
+		if resSub.StatusCode != http.StatusOK {
+			t.Errorf("expected status 200 OK for internal relative path, got %d", resSub.StatusCode)
+		}
+		if resSub.Body.String() != indexContent {
+			t.Errorf("unexpected body for internal relative path: %s", resSub.Body.String())
+		}
+	})
+
+	t.Run("TC-116-07: Non-Static Route ADR-062 Canonicalization Invariant Preservation", func(t *testing.T) {
+		// /public/../internal -> resolves to /internal
+		req1, _ := httpparser.NewRequest("GET", "/public/../internal", "HTTP/1.1")
+		res1 := httpparser.NewResponse()
+		r.ServeHTTP(req1, res1)
+
+		if res1.StatusCode != http.StatusOK {
+			t.Errorf("expected status 200 OK for /public/../internal, got %d", res1.StatusCode)
+		}
+		if res1.Body.String() != "internal" {
+			t.Errorf("expected body %q, got %q", "internal", res1.Body.String())
+		}
+		if res1.Header.Get("Connection") == "close" {
+			t.Errorf("expected Connection NOT to be close for valid API canonicalization")
+		}
+
+		// //internal -> resolves to /internal
+		req2, _ := httpparser.NewRequest("GET", "//internal", "HTTP/1.1")
+		res2 := httpparser.NewResponse()
+		r.ServeHTTP(req2, res2)
+
+		if res2.StatusCode != http.StatusOK || res2.Body.String() != "internal" {
+			t.Errorf("expected 200 OK /internal for //internal, got %d %q", res2.StatusCode, res2.Body.String())
+		}
+
+		// /api/v1/../v1/status -> resolves to /api/v1/status
+		req3, _ := httpparser.NewRequest("GET", "/api/v1/../v1/status", "HTTP/1.1")
+		res3 := httpparser.NewResponse()
+		r.ServeHTTP(req3, res3)
+
+		if res3.StatusCode != http.StatusOK || res3.Body.String() != "status" {
+			t.Errorf("expected 200 OK status for /api/v1/../v1/status, got %d %q", res3.StatusCode, res3.Body.String())
+		}
+	})
+}
+
+// TestRouter_ADR062_Canonicalization verifies ADR-062 canonicalization invariants for non-static API routes (REQ-116 / FR-3 / TC-116-07).
+func TestRouter_ADR062_Canonicalization(t *testing.T) {
+	r := router.New()
+
+	r.GET("/public", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("public")
+	})
+	r.GET("/internal", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("internal")
+	})
+	r.GET("/api/v1/status", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("status")
+	})
+
+	// Register a static prefix route to ensure non-interference
+	tempDir := t.TempDir()
+	r.Static("/internal/dashboard", tempDir)
+
+	// 1. /public/../internal -> resolves cleanly to /internal
+	req1, _ := httpparser.NewRequest("GET", "/public/../internal", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.StatusCode != http.StatusOK || res1.Body.String() != "internal" {
+		t.Errorf("expected 200 OK 'internal' for /public/../internal, got %d %q", res1.StatusCode, res1.Body.String())
+	}
+
+	// 2. //internal -> resolves cleanly to /internal
+	req2, _ := httpparser.NewRequest("GET", "//internal", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.StatusCode != http.StatusOK || res2.Body.String() != "internal" {
+		t.Errorf("expected 200 OK 'internal' for //internal, got %d %q", res2.StatusCode, res2.Body.String())
+	}
+
+	// 3. /api/v1/../v1/status -> resolves cleanly to /api/v1/status
+	req3, _ := httpparser.NewRequest("GET", "/api/v1/../v1/status", "HTTP/1.1")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+	if res3.StatusCode != http.StatusOK || res3.Body.String() != "status" {
+		t.Errorf("expected 200 OK 'status' for /api/v1/../v1/status, got %d %q", res3.StatusCode, res3.Body.String())
+	}
+}
+

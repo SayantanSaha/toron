@@ -257,6 +257,7 @@ func TestExecuteRawTest_Traversal_Accepts403And400(t *testing.T) {
 			_, _ = conn.Write([]byte(strings.Join([]string{
 				"HTTP/1.1 " + string(rune('0'+code/100)) + string(rune('0'+(code/10)%10)) + string(rune('0'+code%10)) + " " + statusText,
 				"Content-Length: 0",
+				"Connection: close",
 				"\r\n",
 			}, "\r\n")))
 		}(expectedCode)

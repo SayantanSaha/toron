@@ -1,61 +1,59 @@
 {
-  "timestamp": "2026-09-12T07:15:00Z",
+  "timestamp": "2026-09-12T02:15:33Z",
   "target_url": "http://127.0.0.1:8080/health",
   "target_host_port": "127.0.0.1:8080",
   "concurrency": 50,
-  "duration_seconds": 10.0,
+  "duration_seconds": 5.000063583,
   "target_rate_rps": 5000,
-  "attack_ratio": 0.10,
-  "total_requests_executed": 50000,
-  "total_actual_rps": 5000.00,
-  "zero_starvation_verified": true,
-  "invariant_enforcement_rate_pct": 100.0,
-  "overall_verdict": "PASS",
+  "attack_ratio": 0.1,
+  "total_requests_executed": 24866,
+  "total_actual_rps": 4973.1367586090955,
   "benign_stream": {
     "stream_type": "benign",
-    "total_requests": 45000,
-    "success_requests": 45000,
+    "total_requests": 22435,
+    "success_requests": 22435,
     "failed_requests": 0,
-    "actual_rps": 4500.00,
-    "bytes_read": 13140000,
-    "throughput_mb_s": 1.25,
+    "actual_rps": 4486.942941341392,
+    "bytes_read": 336525,
+    "throughput_mb_s": 0.06418623363506401,
     "latencies_ms": {
-      "min": 0.28,
-      "mean": 1.84,
-      "p50": 1.42,
-      "p75": 2.15,
-      "p90": 3.20,
-      "p95": 4.85,
-      "p99": 8.62,
-      "p999": 14.30,
-      "max": 21.40
+      "min": 0.067,
+      "mean": 0.1049747715622955,
+      "p50": 0.092,
+      "p75": 0.104,
+      "p90": 0.121,
+      "p95": 0.139,
+      "p99": 0.279,
+      "p999": 2.236,
+      "max": 7.783
     },
     "status_codes": {
-      "200": 45000
+      "200": 22435
     }
   },
   "adversarial_stream": {
     "stream_type": "adversarial",
-    "total_requests": 5000,
-    "success_requests": 5000,
+    "total_requests": 2431,
+    "success_requests": 2431,
     "failed_requests": 0,
-    "actual_rps": 500.00,
-    "bytes_read": 1150000,
-    "throughput_mb_s": 0.11,
+    "actual_rps": 486.1938172677033,
+    "bytes_read": 354805,
+    "throughput_mb_s": 0.06767282259828805,
     "latencies_ms": {
-      "min": 0.15,
-      "mean": 0.48,
-      "p50": 0.38,
-      "p75": 0.52,
-      "p90": 0.76,
-      "p95": 0.98,
-      "p99": 1.82,
-      "p999": 3.10,
-      "max": 5.40
+      "min": 0.079,
+      "mean": 0.14982064993829647,
+      "p50": 0.133,
+      "p75": 0.153,
+      "p90": 0.179,
+      "p95": 0.213,
+      "p99": 0.395,
+      "p999": 3.808,
+      "max": 3.976
     },
     "status_codes": {
-      "400": 4450,
-      "403": 550
+      "400": 1819,
+      "404": 349,
+      "431": 263
     }
   },
   "attack_vectors": [
@@ -63,73 +61,76 @@
       "id": "ADV-01",
       "name": "CL.TE Conflicting Framing Smuggle",
       "category": "HTTP Request Smuggling (CWE-444)",
-      "probes_sent": 625,
-      "rejected": 625,
+      "probes_sent": 299,
+      "rejected": 299,
       "bypassed": 0,
-      "pass_rate_pct": 100.0
+      "pass_rate_pct": 100
     },
     {
       "id": "ADV-02",
       "name": "Obfuscated Header Whitespace",
       "category": "RFC 7230 §3.2.4 Syntax Invariant",
-      "probes_sent": 630,
-      "rejected": 630,
+      "probes_sent": 306,
+      "rejected": 306,
       "bypassed": 0,
-      "pass_rate_pct": 100.0
+      "pass_rate_pct": 100
     },
     {
       "id": "ADV-03",
       "name": "Invalid Token Character in Field Name",
       "category": "RFC 7230 §3.2 Grammar Hardening",
-      "probes_sent": 620,
-      "rejected": 620,
+      "probes_sent": 298,
+      "rejected": 298,
       "bypassed": 0,
-      "pass_rate_pct": 100.0
+      "pass_rate_pct": 100
     },
     {
       "id": "ADV-04",
       "name": "CRLF Header Injection",
       "category": "Response Splitting Defense (CWE-113)",
-      "probes_sent": 615,
-      "rejected": 615,
+      "probes_sent": 322,
+      "rejected": 322,
       "bypassed": 0,
-      "pass_rate_pct": 100.0
+      "pass_rate_pct": 100
     },
     {
       "id": "ADV-05",
       "name": "Multiple Conflicting Content-Length",
       "category": "RFC 7230 §3.3.2 Parsing Invariant",
-      "probes_sent": 635,
-      "rejected": 635,
+      "probes_sent": 274,
+      "rejected": 274,
       "bypassed": 0,
-      "pass_rate_pct": 100.0
+      "pass_rate_pct": 100
     },
     {
       "id": "ADV-06",
       "name": "Path Traversal Directory Escape",
       "category": "Path Traversal Defense (CWE-22)",
-      "probes_sent": 625,
-      "rejected": 625,
+      "probes_sent": 349,
+      "rejected": 349,
       "bypassed": 0,
-      "pass_rate_pct": 100.0
+      "pass_rate_pct": 100
     },
     {
       "id": "ADV-07",
       "name": "Oversized Request Header Block",
       "category": "Heap Bounding Defense (CWE-400)",
-      "probes_sent": 630,
-      "rejected": 630,
+      "probes_sent": 263,
+      "rejected": 263,
       "bypassed": 0,
-      "pass_rate_pct": 100.0
+      "pass_rate_pct": 100
     },
     {
       "id": "ADV-08",
       "name": "Null Byte Path Injection",
       "category": "Control Character Defense (CWE-117)",
-      "probes_sent": 620,
-      "rejected": 620,
+      "probes_sent": 320,
+      "rejected": 320,
       "bypassed": 0,
-      "pass_rate_pct": 100.0
+      "pass_rate_pct": 100
     }
-  ]
+  ],
+  "zero_starvation_verified": true,
+  "invariant_enforcement_rate_pct": 100,
+  "overall_verdict": "PASS"
 }

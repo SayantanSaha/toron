@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-12T03:50:14Z",
+  "timestamp": "2026-09-12T06:50:58Z",
   "target_host": "127.0.0.1:8080",
   "trials_per_test": 1,
   "warmup_runs_per_test": 0,
@@ -7,10 +7,25 @@
   "passed_tests": 19,
   "failed_tests": 0,
   "security_pass_rate": 100,
-  "average_latency_us": 398.7052631578947,
-  "median_latency_us": 208.75,
-  "p90_latency_us": 712.08,
-  "p99_latency_us": 2378,
+  "average_latency_us": 324.348947368421,
+  "median_latency_us": 230.75,
+  "p90_latency_us": 672.83,
+  "p99_latency_us": 1129.75,
+  "fail_fast_defense": {
+    "count": 18,
+    "mean_latency_us": 279.6044444444444,
+    "median_latency_us": 230.75,
+    "p90_latency_us": 574.67,
+    "max_latency_us": 672.83
+  },
+  "comprehensive_suite": {
+    "count": 19,
+    "mean_latency_us": 324.348947368421,
+    "median_latency_us": 230.75,
+    "p90_latency_us": 672.83,
+    "p99_latency_us": 1129.75,
+    "max_latency_us": 1129.75
+  },
   "category_stats": {
     "Cache Session Boundary": {
       "total": 3,
@@ -82,22 +97,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 362,
+      "latency_us": 389,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 362.13,
+        "mean_latency_us": 388.54,
         "std_dev_latency_us": 0,
-        "median_latency_us": 362.13,
-        "p90_latency_us": 362.13,
-        "p99_latency_us": 362.13,
-        "p999_latency_us": 362.13,
+        "median_latency_us": 388.54,
+        "p90_latency_us": 388.54,
+        "p99_latency_us": 388.54,
+        "p999_latency_us": 388.54,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 362.13,
-        "ci95_upper_us": 362.13,
+        "ci95_lower_us": 388.54,
+        "ci95_upper_us": 388.54,
         "raw_samples": [
-          362.125
+          388.542
         ]
       }
     },
@@ -119,22 +134,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 239,
+      "latency_us": 121,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 238.79,
+        "mean_latency_us": 120.67,
         "std_dev_latency_us": 0,
-        "median_latency_us": 238.79,
-        "p90_latency_us": 238.79,
-        "p99_latency_us": 238.79,
-        "p999_latency_us": 238.79,
+        "median_latency_us": 120.67,
+        "p90_latency_us": 120.67,
+        "p99_latency_us": 120.67,
+        "p999_latency_us": 120.67,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 238.79,
-        "ci95_upper_us": 238.79,
+        "ci95_lower_us": 120.67,
+        "ci95_upper_us": 120.67,
         "raw_samples": [
-          238.792
+          120.667
         ]
       }
     },
@@ -156,22 +171,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 209,
+      "latency_us": 95,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 208.75,
+        "mean_latency_us": 95.46,
         "std_dev_latency_us": 0,
-        "median_latency_us": 208.75,
-        "p90_latency_us": 208.75,
-        "p99_latency_us": 208.75,
-        "p999_latency_us": 208.75,
+        "median_latency_us": 95.46,
+        "p90_latency_us": 95.46,
+        "p99_latency_us": 95.46,
+        "p999_latency_us": 95.46,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 208.75,
-        "ci95_upper_us": 208.75,
+        "ci95_lower_us": 95.46,
+        "ci95_upper_us": 95.46,
         "raw_samples": [
-          208.75
+          95.459
         ]
       }
     },
@@ -193,22 +208,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 250,
+      "latency_us": 101,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 250.08,
+        "mean_latency_us": 100.58,
         "std_dev_latency_us": 0,
-        "median_latency_us": 250.08,
-        "p90_latency_us": 250.08,
-        "p99_latency_us": 250.08,
-        "p999_latency_us": 250.08,
+        "median_latency_us": 100.58,
+        "p90_latency_us": 100.58,
+        "p99_latency_us": 100.58,
+        "p999_latency_us": 100.58,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 250.08,
-        "ci95_upper_us": 250.08,
+        "ci95_lower_us": 100.58,
+        "ci95_upper_us": 100.58,
         "raw_samples": [
-          250.084
+          100.583
         ]
       }
     },
@@ -229,22 +244,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 170,
+      "latency_us": 74,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 169.58,
+        "mean_latency_us": 73.54,
         "std_dev_latency_us": 0,
-        "median_latency_us": 169.58,
-        "p90_latency_us": 169.58,
-        "p99_latency_us": 169.58,
-        "p999_latency_us": 169.58,
+        "median_latency_us": 73.54,
+        "p90_latency_us": 73.54,
+        "p99_latency_us": 73.54,
+        "p999_latency_us": 73.54,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 169.58,
-        "ci95_upper_us": 169.58,
+        "ci95_lower_us": 73.54,
+        "ci95_upper_us": 73.54,
         "raw_samples": [
-          169.583
+          73.541
         ]
       }
     },
@@ -265,22 +280,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 177,
+      "latency_us": 88,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 177.04,
+        "mean_latency_us": 88.17,
         "std_dev_latency_us": 0,
-        "median_latency_us": 177.04,
-        "p90_latency_us": 177.04,
-        "p99_latency_us": 177.04,
-        "p999_latency_us": 177.04,
+        "median_latency_us": 88.17,
+        "p90_latency_us": 88.17,
+        "p99_latency_us": 88.17,
+        "p999_latency_us": 88.17,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 177.04,
-        "ci95_upper_us": 177.04,
+        "ci95_lower_us": 88.17,
+        "ci95_upper_us": 88.17,
         "raw_samples": [
-          177.041
+          88.166
         ]
       }
     },
@@ -302,22 +317,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 100,
+      "latency_us": 138,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 100.29,
+        "mean_latency_us": 137.79,
         "std_dev_latency_us": 0,
-        "median_latency_us": 100.29,
-        "p90_latency_us": 100.29,
-        "p99_latency_us": 100.29,
-        "p999_latency_us": 100.29,
+        "median_latency_us": 137.79,
+        "p90_latency_us": 137.79,
+        "p99_latency_us": 137.79,
+        "p999_latency_us": 137.79,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 100.29,
-        "ci95_upper_us": 100.29,
+        "ci95_lower_us": 137.79,
+        "ci95_upper_us": 137.79,
         "raw_samples": [
-          100.291
+          137.792
         ]
       }
     },
@@ -338,22 +353,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 179,
+      "latency_us": 173,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 179.04,
+        "mean_latency_us": 173.17,
         "std_dev_latency_us": 0,
-        "median_latency_us": 179.04,
-        "p90_latency_us": 179.04,
-        "p99_latency_us": 179.04,
-        "p999_latency_us": 179.04,
+        "median_latency_us": 173.17,
+        "p90_latency_us": 173.17,
+        "p99_latency_us": 173.17,
+        "p999_latency_us": 173.17,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 179.04,
-        "ci95_upper_us": 179.04,
+        "ci95_lower_us": 173.17,
+        "ci95_upper_us": 173.17,
         "raw_samples": [
-          179.042
+          173.167
         ]
       }
     },
@@ -375,22 +390,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 712,
+      "latency_us": 575,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 712.08,
+        "mean_latency_us": 574.67,
         "std_dev_latency_us": 0,
-        "median_latency_us": 712.08,
-        "p90_latency_us": 712.08,
-        "p99_latency_us": 712.08,
-        "p999_latency_us": 712.08,
+        "median_latency_us": 574.67,
+        "p90_latency_us": 574.67,
+        "p99_latency_us": 574.67,
+        "p999_latency_us": 574.67,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 712.08,
-        "ci95_upper_us": 712.08,
+        "ci95_lower_us": 574.67,
+        "ci95_upper_us": 574.67,
         "raw_samples": [
-          712.083
+          574.666
         ]
       }
     },
@@ -411,22 +426,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 87,
+      "latency_us": 200,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 87.29,
+        "mean_latency_us": 200.04,
         "std_dev_latency_us": 0,
-        "median_latency_us": 87.29,
-        "p90_latency_us": 87.29,
-        "p99_latency_us": 87.29,
-        "p999_latency_us": 87.29,
+        "median_latency_us": 200.04,
+        "p90_latency_us": 200.04,
+        "p99_latency_us": 200.04,
+        "p999_latency_us": 200.04,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 87.29,
-        "ci95_upper_us": 87.29,
+        "ci95_lower_us": 200.04,
+        "ci95_upper_us": 200.04,
         "raw_samples": [
-          87.291
+          200.041
         ]
       }
     },
@@ -450,22 +465,22 @@
         "X-Toron-Waf-Anomaly-Score": "5"
       },
       "connection_closed": true,
-      "latency_us": 211,
+      "latency_us": 334,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 210.92,
+        "mean_latency_us": 333.63,
         "std_dev_latency_us": 0,
-        "median_latency_us": 210.92,
-        "p90_latency_us": 210.92,
-        "p99_latency_us": 210.92,
-        "p999_latency_us": 210.92,
+        "median_latency_us": 333.63,
+        "p90_latency_us": 333.63,
+        "p99_latency_us": 333.63,
+        "p999_latency_us": 333.63,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 210.92,
-        "ci95_upper_us": 210.92,
+        "ci95_lower_us": 333.63,
+        "ci95_upper_us": 333.63,
         "raw_samples": [
-          210.917
+          333.625
         ]
       }
     },
@@ -489,22 +504,22 @@
         "X-Toron-Waf-Anomaly-Score": "5"
       },
       "connection_closed": true,
-      "latency_us": 166,
+      "latency_us": 181,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 165.58,
+        "mean_latency_us": 181.42,
         "std_dev_latency_us": 0,
-        "median_latency_us": 165.58,
-        "p90_latency_us": 165.58,
-        "p99_latency_us": 165.58,
-        "p999_latency_us": 165.58,
+        "median_latency_us": 181.42,
+        "p90_latency_us": 181.42,
+        "p99_latency_us": 181.42,
+        "p999_latency_us": 181.42,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 165.58,
-        "ci95_upper_us": 165.58,
+        "ci95_lower_us": 181.42,
+        "ci95_upper_us": 181.42,
         "raw_samples": [
-          165.583
+          181.416
         ]
       }
     },
@@ -528,22 +543,22 @@
         "X-Toron-Waf-Anomaly-Score": "5"
       },
       "connection_closed": true,
-      "latency_us": 188,
+      "latency_us": 391,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 187.96,
+        "mean_latency_us": 390.5,
         "std_dev_latency_us": 0,
-        "median_latency_us": 187.96,
-        "p90_latency_us": 187.96,
-        "p99_latency_us": 187.96,
-        "p999_latency_us": 187.96,
+        "median_latency_us": 390.5,
+        "p90_latency_us": 390.5,
+        "p99_latency_us": 390.5,
+        "p999_latency_us": 390.5,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 187.96,
-        "ci95_upper_us": 187.96,
+        "ci95_lower_us": 390.5,
+        "ci95_upper_us": 390.5,
         "raw_samples": [
-          187.958
+          390.5
         ]
       }
     },
@@ -565,22 +580,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 148,
+      "latency_us": 239,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 148.46,
+        "mean_latency_us": 238.54,
         "std_dev_latency_us": 0,
-        "median_latency_us": 148.46,
-        "p90_latency_us": 148.46,
-        "p99_latency_us": 148.46,
-        "p999_latency_us": 148.46,
+        "median_latency_us": 238.54,
+        "p90_latency_us": 238.54,
+        "p99_latency_us": 238.54,
+        "p999_latency_us": 238.54,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 148.46,
-        "ci95_upper_us": 148.46,
+        "ci95_lower_us": 238.54,
+        "ci95_upper_us": 238.54,
         "raw_samples": [
-          148.458
+          238.541
         ]
       }
     },
@@ -604,22 +619,22 @@
         "Content-Type": "application/json"
       },
       "connection_closed": true,
-      "latency_us": 131,
+      "latency_us": 231,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 131.25,
+        "mean_latency_us": 230.75,
         "std_dev_latency_us": 0,
-        "median_latency_us": 131.25,
-        "p90_latency_us": 131.25,
-        "p99_latency_us": 131.25,
-        "p999_latency_us": 131.25,
+        "median_latency_us": 230.75,
+        "p90_latency_us": 230.75,
+        "p99_latency_us": 230.75,
+        "p999_latency_us": 230.75,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 131.25,
-        "ci95_upper_us": 131.25,
+        "ci95_lower_us": 230.75,
+        "ci95_upper_us": 230.75,
         "raw_samples": [
-          131.25
+          230.75
         ]
       }
     },
@@ -646,22 +661,22 @@
         "X-Frame-Options": "DENY"
       },
       "connection_closed": false,
-      "latency_us": 2378,
+      "latency_us": 1130,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 2378,
+        "mean_latency_us": 1129.75,
         "std_dev_latency_us": 0,
-        "median_latency_us": 2378,
-        "p90_latency_us": 2378,
-        "p99_latency_us": 2378,
-        "p999_latency_us": 2378,
+        "median_latency_us": 1129.75,
+        "p90_latency_us": 1129.75,
+        "p99_latency_us": 1129.75,
+        "p999_latency_us": 1129.75,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 2378,
-        "ci95_upper_us": 2378,
+        "ci95_lower_us": 1129.75,
+        "ci95_upper_us": 1129.75,
         "raw_samples": [
-          2378
+          1129.75
         ]
       }
     },
@@ -690,22 +705,22 @@
         "X-Frame-Options": "DENY"
       },
       "connection_closed": false,
-      "latency_us": 577,
+      "latency_us": 673,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 577,
+        "mean_latency_us": 672.83,
         "std_dev_latency_us": 0,
-        "median_latency_us": 577,
-        "p90_latency_us": 577,
-        "p99_latency_us": 577,
-        "p999_latency_us": 577,
+        "median_latency_us": 672.83,
+        "p90_latency_us": 672.83,
+        "p99_latency_us": 672.83,
+        "p999_latency_us": 672.83,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 577,
-        "ci95_upper_us": 577,
+        "ci95_lower_us": 672.83,
+        "ci95_upper_us": 672.83,
         "raw_samples": [
-          577
+          672.834
         ]
       }
     },
@@ -734,22 +749,22 @@
         "X-Frame-Options": "DENY"
       },
       "connection_closed": false,
-      "latency_us": 709,
+      "latency_us": 547,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 708.58,
+        "mean_latency_us": 546.5,
         "std_dev_latency_us": 0,
-        "median_latency_us": 708.58,
-        "p90_latency_us": 708.58,
-        "p99_latency_us": 708.58,
-        "p999_latency_us": 708.58,
+        "median_latency_us": 546.5,
+        "p90_latency_us": 546.5,
+        "p99_latency_us": 546.5,
+        "p999_latency_us": 546.5,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 708.58,
-        "ci95_upper_us": 708.58,
+        "ci95_lower_us": 546.5,
+        "ci95_upper_us": 546.5,
         "raw_samples": [
-          708.584
+          546.5
         ]
       }
     },
@@ -777,22 +792,22 @@
         "X-Frame-Options": "DENY"
       },
       "connection_closed": false,
-      "latency_us": 583,
+      "latency_us": 486,
       "passed": true,
       "distribution": {
         "trials": 1,
         "warmup_runs": 0,
-        "mean_latency_us": 582.58,
+        "mean_latency_us": 486.08,
         "std_dev_latency_us": 0,
-        "median_latency_us": 582.58,
-        "p90_latency_us": 582.58,
-        "p99_latency_us": 582.58,
-        "p999_latency_us": 582.58,
+        "median_latency_us": 486.08,
+        "p90_latency_us": 486.08,
+        "p99_latency_us": 486.08,
+        "p999_latency_us": 486.08,
         "ci95_margin_us": 0,
-        "ci95_lower_us": 582.58,
-        "ci95_upper_us": 582.58,
+        "ci95_lower_us": 486.08,
+        "ci95_upper_us": 486.08,
         "raw_samples": [
-          582.583
+          486.083
         ]
       }
     }

@@ -66,22 +66,81 @@ type TestResult struct {
 	Distribution       DistributionMetrics `json:"distribution"`
 }
 
+type CohortMetrics struct {
+	Count           int     `json:"count"`
+	MeanLatencyUs   float64 `json:"mean_latency_us"`
+	MedianLatencyUs float64 `json:"median_latency_us"`
+	P90LatencyUs    float64 `json:"p90_latency_us"`
+	P99LatencyUs    float64 `json:"p99_latency_us,omitempty"`
+	MaxLatencyUs    float64 `json:"max_latency_us"`
+}
+
 type DifferentialReport struct {
-	Timestamp         string                  `json:"timestamp"`
-	TargetHost        string                  `json:"target_host"`
-	BaselineHost      string                  `json:"baseline_host,omitempty"`
-	TrialsPerTest     int                     `json:"trials_per_test"`
-	WarmupRunsPerTest int                     `json:"warmup_runs_per_test"`
-	TotalTests        int                     `json:"total_tests"`
-	PassedTests       int                     `json:"passed_tests"`
-	FailedTests       int                     `json:"failed_tests"`
-	SecurityPassRate  float64                 `json:"security_pass_rate"`
-	AverageLatencyUs  float64                 `json:"average_latency_us"`
-	MedianLatencyUs   float64                 `json:"median_latency_us"`
-	P90LatencyUs      float64                 `json:"p90_latency_us"`
-	P99LatencyUs      float64                 `json:"p99_latency_us"`
-	CategoryStats     map[string]CategoryStat `json:"category_stats"`
-	Results           []TestResult            `json:"results"`
+	Timestamp          string                  `json:"timestamp"`
+	TargetHost         string                  `json:"target_host"`
+	BaselineHost       string                  `json:"baseline_host,omitempty"`
+	TrialsPerTest      int                     `json:"trials_per_test"`
+	WarmupRunsPerTest  int                     `json:"warmup_runs_per_test"`
+	TotalTests         int                     `json:"total_tests"`
+	PassedTests        int                     `json:"passed_tests"`
+	FailedTests        int                     `json:"failed_tests"`
+	SecurityPassRate   float64                 `json:"security_pass_rate"`
+	AverageLatencyUs   float64                 `json:"average_latency_us"`
+	MedianLatencyUs    float64                 `json:"median_latency_us"`
+	P90LatencyUs       float64                 `json:"p90_latency_us"`
+	P99LatencyUs       float64                 `json:"p99_latency_us"`
+	FailFastDefense    CohortMetrics           `json:"fail_fast_defense"`
+	ComprehensiveSuite CohortMetrics           `json:"comprehensive_suite"`
+	CategoryStats      map[string]CategoryStat `json:"category_stats"`
+	Results            []TestResult            `json:"results"`
+}
+
+func calculateCohortMetrics(samples []float64, includeP99 bool) CohortMetrics {
+	if len(samples) == 0 {
+		return CohortMetrics{}
+	}
+	sorted := make([]float64, len(samples))
+	copy(sorted, samples)
+	sort.Float64s(sorted)
+
+	var sum float64
+	for _, s := range sorted {
+		sum += s
+	}
+	mean := sum / float64(len(sorted))
+	median := sorted[len(sorted)/2]
+
+	idx90 := int(math.Ceil(0.90*float64(len(sorted)))) - 1
+	if idx90 < 0 {
+		idx90 = 0
+	}
+	if idx90 >= len(sorted) {
+		idx90 = len(sorted) - 1
+	}
+	p90 := sorted[idx90]
+
+	var p99 float64
+	if includeP99 {
+		idx99 := int(math.Ceil(0.99*float64(len(sorted)))) - 1
+		if idx99 < 0 {
+			idx99 = 0
+		}
+		if idx99 >= len(sorted) {
+			idx99 = len(sorted) - 1
+		}
+		p99 = sorted[idx99]
+	}
+
+	maxVal := sorted[len(sorted)-1]
+
+	return CohortMetrics{
+		Count:           len(sorted),
+		MeanLatencyUs:   mean,
+		MedianLatencyUs: median,
+		P90LatencyUs:    p90,
+		P99LatencyUs:    p99,
+		MaxLatencyUs:    maxVal,
+	}
 }
 
 type CategoryStat struct {
@@ -757,8 +816,8 @@ func main() {
 
 	var results []TestResult
 	categoryStats := make(map[string]CategoryStat)
-	var totalMeanLatency float64
-	allMedians := make([]float64, 0, len(testCases))
+	failFastSamples := make([]float64, 0, len(testCases))
+	comprehensiveSamples := make([]float64, 0, len(testCases))
 	passedCount := 0
 
 	for _, tc := range testCases {
@@ -774,8 +833,15 @@ func main() {
 		}
 
 		results = append(results, res)
-		totalMeanLatency += res.Distribution.MeanLatencyUs
-		allMedians = append(allMedians, res.Distribution.MedianLatencyUs)
+
+		latVal := res.Distribution.MedianLatencyUs
+		if *trials == 1 {
+			latVal = res.Distribution.MeanLatencyUs
+		}
+		comprehensiveSamples = append(comprehensiveSamples, latVal)
+		if tc.ID != "BASELINE-001" {
+			failFastSamples = append(failFastSamples, latVal)
+		}
 
 		cat := categoryStats[tc.Category]
 		cat.Total++
@@ -787,9 +853,9 @@ func main() {
 			cat.Passed++
 			passedCount++
 			if *trials > 1 {
-				fmt.Printf(" [PASS] %-14s | %-38s | %d (%s) [%s] [µ: %.1f, p50: %.1f, p99: %.1f µs]\n",
+				fmt.Printf(" [PASS] %-14s | %-38s | %d (%s) [%s] [µ: %.1f, p50: %.1f, p90: %.1f, p99: %.1f µs]\n",
 					tc.ID, tc.Name, res.ActualStatus, tc.CWE, connState,
-					res.Distribution.MeanLatencyUs, res.Distribution.MedianLatencyUs, res.Distribution.P99LatencyUs)
+					res.Distribution.MeanLatencyUs, res.Distribution.MedianLatencyUs, res.Distribution.P90LatencyUs, res.Distribution.P99LatencyUs)
 			} else {
 				fmt.Printf(" [PASS] %-14s | %-40s | %d (%s) [%s] [%.1f µs]\n",
 					tc.ID, tc.Name, res.ActualStatus, tc.CWE, connState, res.Distribution.MeanLatencyUs)
@@ -803,33 +869,9 @@ func main() {
 	}
 
 	passRate := (float64(passedCount) / float64(len(testCases))) * 100.0
-	avgLatency := totalMeanLatency / float64(len(testCases))
 
-	// Compute overall medians and tail percentiles
-	sort.Float64s(allMedians)
-	overallMedian := 0.0
-	overallP90 := 0.0
-	overallP99 := 0.0
-	if len(allMedians) > 0 {
-		overallMedian = allMedians[len(allMedians)/2]
-		idx90 := int(math.Ceil(0.90*float64(len(allMedians)))) - 1
-		if idx90 < 0 {
-			idx90 = 0
-		}
-		if idx90 >= len(allMedians) {
-			idx90 = len(allMedians) - 1
-		}
-		overallP90 = allMedians[idx90]
-
-		idx99 := int(math.Ceil(0.99*float64(len(allMedians)))) - 1
-		if idx99 < 0 {
-			idx99 = 0
-		}
-		if idx99 >= len(allMedians) {
-			idx99 = len(allMedians) - 1
-		}
-		overallP99 = allMedians[idx99]
-	}
+	failFastMetrics := calculateCohortMetrics(failFastSamples, false)
+	comprehensiveMetrics := calculateCohortMetrics(comprehensiveSamples, true)
 
 	fmt.Println()
 	fmt.Println("================================================================================")
@@ -839,11 +881,19 @@ func main() {
 	fmt.Printf(" Passed Assertions:      %d\n", passedCount)
 	fmt.Printf(" Failed Assertions:      %d\n", len(testCases)-passedCount)
 	fmt.Printf(" Security Pass Rate:     %.2f%%\n", passRate)
-	fmt.Printf(" Average Rejection Lat:  %.2f µs (Mean of all test vector means)\n", avgLatency)
-	if *trials > 1 {
-		fmt.Printf(" Median Rejection Lat:   %.2f µs (Overall p50 across test vectors)\n", overallMedian)
-		fmt.Printf(" Tail Rejection Latency: p90: %.2f µs | p99: %.2f µs\n", overallP90, overallP99)
-	}
+	fmt.Println("--------------------------------------------------------------------------------")
+	fmt.Printf(" Fail-Fast Defense Latency (N=%d Rejection Vectors):\n", failFastMetrics.Count)
+	fmt.Printf("   Mean Latency:         %.2f µs\n", failFastMetrics.MeanLatencyUs)
+	fmt.Printf("   Median (p50):         %.2f µs\n", failFastMetrics.MedianLatencyUs)
+	fmt.Printf("   Tail Latency (p90):   %.2f µs\n", failFastMetrics.P90LatencyUs)
+	fmt.Printf("   Max Rejection Lat:    %.2f µs\n", failFastMetrics.MaxLatencyUs)
+	fmt.Println("--------------------------------------------------------------------------------")
+	fmt.Printf(" Cross-Vector Comprehensive Latency (N=%d Vectors, incl. Baseline 200 OK):\n", comprehensiveMetrics.Count)
+	fmt.Printf("   Mean Latency:         %.2f µs\n", comprehensiveMetrics.MeanLatencyUs)
+	fmt.Printf("   Median (p50):         %.2f µs\n", comprehensiveMetrics.MedianLatencyUs)
+	fmt.Printf("   Percentile (p90):     %.2f µs\n", comprehensiveMetrics.P90LatencyUs)
+	fmt.Printf("   Tail Latency (p99):   %.2f µs\n", comprehensiveMetrics.P99LatencyUs)
+	fmt.Printf("   Max Latency:          %.2f µs\n", comprehensiveMetrics.MaxLatencyUs)
 	fmt.Println("--------------------------------------------------------------------------------")
 	fmt.Println(" Category Breakdown:")
 	for name, st := range categoryStats {
@@ -853,21 +903,23 @@ func main() {
 	fmt.Println("================================================================================")
 
 	report := DifferentialReport{
-		Timestamp:         time.Now().UTC().Format(time.RFC3339),
-		TargetHost:        *targetHost,
-		BaselineHost:      *baselineHost,
-		TrialsPerTest:     *trials,
-		WarmupRunsPerTest: *warmup,
-		TotalTests:        len(testCases),
-		PassedTests:       passedCount,
-		FailedTests:       len(testCases) - passedCount,
-		SecurityPassRate:  passRate,
-		AverageLatencyUs:  avgLatency,
-		MedianLatencyUs:   overallMedian,
-		P90LatencyUs:      overallP90,
-		P99LatencyUs:      overallP99,
-		CategoryStats:     categoryStats,
-		Results:           results,
+		Timestamp:          time.Now().UTC().Format(time.RFC3339),
+		TargetHost:         *targetHost,
+		BaselineHost:       *baselineHost,
+		TrialsPerTest:      *trials,
+		WarmupRunsPerTest:  *warmup,
+		TotalTests:         len(testCases),
+		PassedTests:        passedCount,
+		FailedTests:        len(testCases) - passedCount,
+		SecurityPassRate:   passRate,
+		AverageLatencyUs:   comprehensiveMetrics.MeanLatencyUs,
+		MedianLatencyUs:    comprehensiveMetrics.MedianLatencyUs,
+		P90LatencyUs:       comprehensiveMetrics.P90LatencyUs,
+		P99LatencyUs:       comprehensiveMetrics.P99LatencyUs,
+		FailFastDefense:    failFastMetrics,
+		ComprehensiveSuite: comprehensiveMetrics,
+		CategoryStats:      categoryStats,
+		Results:            results,
 	}
 
 	// Ensure results directory exists
@@ -893,14 +945,24 @@ func main() {
 		md.WriteString(fmt.Sprintf("**Execution Timestamp**: `%s`  \n", report.Timestamp))
 		if report.TrialsPerTest > 1 {
 			md.WriteString(fmt.Sprintf("**Evaluation Mode**: Repeated Statistical Trials ($K=%d$, $W=%d$ warm-up discarded)  \n", report.TrialsPerTest, report.WarmupRunsPerTest))
-			md.WriteString(fmt.Sprintf("**Overall Invariant Pass Rate**: **%.2f%%** (%d/%d tests)  \n", report.SecurityPassRate, report.PassedTests, report.TotalTests))
-			md.WriteString(fmt.Sprintf("**Average Fail-Fast Rejection Latency (Mean)**: `%.2f µs`  \n", report.AverageLatencyUs))
-			md.WriteString(fmt.Sprintf("**Median Rejection Latency (p50)**: `%.2f µs`  \n", report.MedianLatencyUs))
-			md.WriteString(fmt.Sprintf("**Tail Latency (p90 / p99)**: `%.2f µs` / `%.2f µs`  \n\n", report.P90LatencyUs, report.P99LatencyUs))
 		} else {
-			md.WriteString(fmt.Sprintf("**Overall Invariant Pass Rate**: **%.2f%%** (%d/%d tests)  \n", report.SecurityPassRate, report.PassedTests, report.TotalTests))
-			md.WriteString(fmt.Sprintf("**Average Fail-Fast Rejection Latency**: `%.2f µs`  \n\n", report.AverageLatencyUs))
+			md.WriteString("**Evaluation Mode**: Single-Shot Cross-Vector Verification ($K=1$, $W=0$)  \n")
 		}
+		md.WriteString(fmt.Sprintf("**Overall Invariant Pass Rate**: **%.2f%%** (%d/%d tests)  \n\n", report.SecurityPassRate, report.PassedTests, report.TotalTests))
+
+		md.WriteString("### Distributional Latency Breakdown (Fail-Fast Defense vs. Comprehensive)\n\n")
+		md.WriteString(fmt.Sprintf("- **Fail-Fast Defense Latency (N=%d Adversarial Rejection Vectors)**:  \n", report.FailFastDefense.Count))
+		md.WriteString(fmt.Sprintf("  - **Mean**: `%.2f µs`  \n", report.FailFastDefense.MeanLatencyUs))
+		md.WriteString(fmt.Sprintf("  - **Median (p50)**: `%.2f µs`  \n", report.FailFastDefense.MedianLatencyUs))
+		md.WriteString(fmt.Sprintf("  - **Tail Latency (p90)**: `%.2f µs`  \n", report.FailFastDefense.P90LatencyUs))
+		md.WriteString(fmt.Sprintf("  - **Max Rejection**: `%.2f µs`  \n\n", report.FailFastDefense.MaxLatencyUs))
+
+		md.WriteString(fmt.Sprintf("- **Cross-Vector Comprehensive Latency (N=%d Vectors, incl. Baseline 200 OK)**:  \n", report.ComprehensiveSuite.Count))
+		md.WriteString(fmt.Sprintf("  - **Mean**: `%.2f µs`  \n", report.ComprehensiveSuite.MeanLatencyUs))
+		md.WriteString(fmt.Sprintf("  - **Median (p50)**: `%.2f µs`  \n", report.ComprehensiveSuite.MedianLatencyUs))
+		md.WriteString(fmt.Sprintf("  - **90th Percentile (p90)**: `%.2f µs`  \n", report.ComprehensiveSuite.P90LatencyUs))
+		md.WriteString(fmt.Sprintf("  - **Tail Latency (p99)**: `%.2f µs`  \n", report.ComprehensiveSuite.P99LatencyUs))
+		md.WriteString(fmt.Sprintf("  - **Max Latency**: `%.2f µs`  \n\n", report.ComprehensiveSuite.MaxLatencyUs))
 
 		md.WriteString("## 1. Category Summary Matrix\n\n")
 		md.WriteString("| Security Category | Total Tests | Passed | Failed | Pass Rate |\n")
@@ -934,7 +996,7 @@ func main() {
 					connIcon, statusIcon))
 			}
 		} else {
-			md.WriteString("| Test ID | Attack / Invariant Vector | CWE | Expected Status | Actual Status | Conn Closed | Fail-Fast Latency | Result |\n")
+			md.WriteString("| Test ID | Attack / Invariant Vector | CWE | Expected Status | Actual Status | Conn Closed | Latency (µs) | Result |\n")
 			md.WriteString("| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: |\n")
 			for _, r := range report.Results {
 				statusIcon := "✅ PASS"

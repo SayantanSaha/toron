@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"math"
 	"net"
 	"strings"
@@ -892,5 +893,125 @@ func TestExecuteRawTest_MultiStage_RepeatedTrials(t *testing.T) {
 		t.Errorf("expected %d total connections, got %d", expectedConns, atomic.LoadInt64(&totalConns))
 	}
 }
+
+// TC-118-01: Verification of Cohort Disaggregation and Statistical Calculation
+func TestCalculateCohortMetrics(t *testing.T) {
+	// Empty slice test
+	emptyCohort := calculateCohortMetrics(nil, true)
+	if emptyCohort.Count != 0 {
+		t.Errorf("expected count 0 for empty slice, got %d", emptyCohort.Count)
+	}
+
+	// 18 Fail-Fast Rejection Vector latencies from empirical benchmark
+	failFastSamples := []float64{
+		87.29, 100.29, 131.25, 148.46, 165.58, 169.58,
+		177.04, 179.04, 187.96, 208.75, 210.92, 238.79,
+		250.08, 362.13, 577.00, 582.58, 708.58, 712.08,
+	}
+
+	cohort18 := calculateCohortMetrics(failFastSamples, false)
+	if cohort18.Count != 18 {
+		t.Fatalf("expected count 18, got %d", cohort18.Count)
+	}
+	if math.Abs(cohort18.MeanLatencyUs-288.74) > 0.1 {
+		t.Errorf("expected mean ~288.74 µs, got %.2f", cohort18.MeanLatencyUs)
+	}
+	if cohort18.MedianLatencyUs != 208.75 {
+		t.Errorf("expected median 208.75 µs, got %.2f", cohort18.MedianLatencyUs)
+	}
+	if cohort18.P90LatencyUs != 708.58 {
+		t.Errorf("expected p90 708.58 µs, got %.2f", cohort18.P90LatencyUs)
+	}
+	if cohort18.MaxLatencyUs != 712.08 {
+		t.Errorf("expected max 712.08 µs, got %.2f", cohort18.MaxLatencyUs)
+	}
+	if cohort18.P99LatencyUs != 0 {
+		t.Errorf("expected p99 0 when includeP99=false, got %.2f", cohort18.P99LatencyUs)
+	}
+
+	// 19 Comprehensive Vector latencies (including BASELINE-001 at 2378.00)
+	compSamples := append([]float64{}, failFastSamples...)
+	compSamples = append(compSamples, 2378.00)
+
+	cohort19 := calculateCohortMetrics(compSamples, true)
+	if cohort19.Count != 19 {
+		t.Fatalf("expected count 19, got %d", cohort19.Count)
+	}
+	if math.Abs(cohort19.MeanLatencyUs-398.71) > 0.1 {
+		t.Errorf("expected mean ~398.71 µs, got %.2f", cohort19.MeanLatencyUs)
+	}
+	if cohort19.MedianLatencyUs != 208.75 {
+		t.Errorf("expected median 208.75 µs, got %.2f", cohort19.MedianLatencyUs)
+	}
+	if cohort19.P90LatencyUs != 712.08 {
+		t.Errorf("expected p90 712.08 µs (CONTROL-002), got %.2f", cohort19.P90LatencyUs)
+	}
+	if cohort19.P99LatencyUs != 2378.00 {
+		t.Errorf("expected p99 2378.00 µs (BASELINE-001), got %.2f", cohort19.P99LatencyUs)
+	}
+	if cohort19.MaxLatencyUs != 2378.00 {
+		t.Errorf("expected max 2378.00 µs, got %.2f", cohort19.MaxLatencyUs)
+	}
+}
+
+// TC-118-04: Verification of JSON Report Serialization with Cohort Disaggregation
+func TestDifferentialReport_JSONSerialization(t *testing.T) {
+	failFast := CohortMetrics{
+		Count:           18,
+		MeanLatencyUs:   288.75,
+		MedianLatencyUs: 208.75,
+		P90LatencyUs:    708.58,
+		MaxLatencyUs:    712.08,
+	}
+	comp := CohortMetrics{
+		Count:           19,
+		MeanLatencyUs:   398.71,
+		MedianLatencyUs: 208.75,
+		P90LatencyUs:    712.08,
+		P99LatencyUs:    2378.00,
+		MaxLatencyUs:    2378.00,
+	}
+
+	report := DifferentialReport{
+		Timestamp:          "2026-09-12T12:00:00Z",
+		TargetHost:         "127.0.0.1:8080",
+		TrialsPerTest:      1,
+		WarmupRunsPerTest:  0,
+		TotalTests:         19,
+		PassedTests:        19,
+		FailedTests:        0,
+		SecurityPassRate:   100.0,
+		AverageLatencyUs:   comp.MeanLatencyUs,
+		MedianLatencyUs:    comp.MedianLatencyUs,
+		P90LatencyUs:       comp.P90LatencyUs,
+		P99LatencyUs:       comp.P99LatencyUs,
+		FailFastDefense:    failFast,
+		ComprehensiveSuite: comp,
+	}
+
+	data, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("failed to marshal report: %v", err)
+	}
+
+	var parsed DifferentialReport
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("failed to unmarshal report: %v", err)
+	}
+
+	if parsed.FailFastDefense.Count != 18 {
+		t.Errorf("expected FailFastDefense.Count 18, got %d", parsed.FailFastDefense.Count)
+	}
+	if parsed.ComprehensiveSuite.Count != 19 {
+		t.Errorf("expected ComprehensiveSuite.Count 19, got %d", parsed.ComprehensiveSuite.Count)
+	}
+	if parsed.ComprehensiveSuite.P90LatencyUs != 712.08 {
+		t.Errorf("expected ComprehensiveSuite.P90LatencyUs 712.08, got %.2f", parsed.ComprehensiveSuite.P90LatencyUs)
+	}
+	if parsed.ComprehensiveSuite.P99LatencyUs != 2378.00 {
+		t.Errorf("expected ComprehensiveSuite.P99LatencyUs 2378.00, got %.2f", parsed.ComprehensiveSuite.P99LatencyUs)
+	}
+}
+
 
 

@@ -1,0 +1,14 @@
+--- a/pkg/proxy/proxy.go
++++ b/pkg/proxy/proxy.go
+@@ -140,6 +140,16 @@ func (p *ReverseProxy) dialUpstreamWS(ctx context.Context, target string) (net.C
++	dialer := &tls.Dialer{
++		Config: &tls.Config{
++			InsecureSkipVerify: true,
++		},
++	}
++	conn, err := dialer.DialContext(ctx, "tcp", target)
++	if err != nil {
++		return nil, err
++	}
++	return conn, nil
+ }

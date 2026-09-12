@@ -1,0 +1,19 @@
+=== RUN   TestCORS_StandardGet
+--- PASS: TestCORS_StandardGet (0.00s)
+=== RUN   TestCORS_PreflightOptions
+--- PASS: TestCORS_PreflightOptions (0.00s)
+=== RUN   TestCORS_DisallowWildcardWithCredentials
+    cors_test.go:82: assertion failed: Access-Control-Allow-Origin: * was returned alongside Access-Control-Allow-Credentials: true, violating W3C CORS specification and allowing cross-origin credential harvesting (CWE-942)
+--- FAIL: TestCORS_DisallowWildcardWithCredentials (0.00s)
+=== RUN   TestCORS_SubdomainPrefixBypass
+    cors_test.go:104: assertion failed: prefix match strings.HasPrefix allowed origin "https://example.com.attacker.com" as authorized domain
+--- FAIL: TestCORS_SubdomainPrefixBypass (0.00s)
+=== RUN   TestCORS_NullOriginRefusal
+    cors_test.go:120: assertion failed: origin "null" was reflected back to client
+--- FAIL: TestCORS_NullOriginRefusal (0.00s)
+=== RUN   TestCORS_AllowedHeaders
+--- PASS: TestCORS_AllowedHeaders (0.00s)
+FAIL
+coverage: 59.4% of statements
+FAIL	toron/pkg/router	0.039s
+FAIL

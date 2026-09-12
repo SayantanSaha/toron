@@ -1,0 +1,26 @@
+{
+  "task_id": "TASK-067",
+  "condition": "Condition B (Direct Single-Agent Prompting)",
+  "total_criteria": 3,
+  "violated_criteria": 2,
+  "drift_rate_percent": 66.67,
+  "protocol_omissions": 1,
+  "security_vulnerabilities": 1,
+  "regressions": 0,
+  "concurrency_hazards": 0,
+  "total_defects": 2,
+  "total_tests": 7,
+  "passed_tests": 4,
+  "test_pass_rate_percent": 57.14,
+  "input_tokens": 1480,
+  "output_tokens": 870,
+  "total_tokens": 2350,
+  "execution_duration_ms": 440,
+  "reviewer_premerge_defects": 0,
+  "reviewer_arrested_defects": 0,
+  "reviewer_arrest_rate_percent": 0.0,
+  "failure_modes": [
+    "Reliance on naive path.Join without URL-decoding (%2e%2e) or prefix boundary validation, allowing route escape to internal endpoints (CWE-22)",
+    "Failing to reject route traversal attempts with HTTP 403 Forbidden and transport socket teardown"
+  ]
+}

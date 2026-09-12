@@ -1,0 +1,26 @@
+{
+  "task_id": "TASK-061",
+  "condition": "Condition B (Direct Single-Agent Prompting)",
+  "total_criteria": 3,
+  "violated_criteria": 2,
+  "drift_rate_percent": 66.67,
+  "protocol_omissions": 1,
+  "security_vulnerabilities": 1,
+  "regressions": 0,
+  "concurrency_hazards": 0,
+  "total_defects": 2,
+  "total_tests": 8,
+  "passed_tests": 6,
+  "test_pass_rate_percent": 75.0,
+  "input_tokens": 1420,
+  "output_tokens": 890,
+  "total_tokens": 2310,
+  "execution_duration_ms": 410,
+  "reviewer_premerge_defects": 0,
+  "reviewer_arrested_defects": 0,
+  "reviewer_arrest_rate_percent": 0.0,
+  "failure_modes": [
+    "Omission of physical transport socket closure (conn.Close) on 501 rejection, leaving unread chunk bytes to desynchronize next HTTP request (CWE-444)",
+    "Missing RFC 7230 §3.2.4 whitespace-preceding-colon validation causing header parsing bypass"
+  ]
+}

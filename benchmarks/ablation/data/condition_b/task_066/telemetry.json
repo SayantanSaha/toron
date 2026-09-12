@@ -1,0 +1,26 @@
+{
+  "task_id": "TASK-066",
+  "condition": "Condition B (Direct Single-Agent Prompting)",
+  "total_criteria": 3,
+  "violated_criteria": 2,
+  "drift_rate_percent": 66.67,
+  "protocol_omissions": 0,
+  "security_vulnerabilities": 1,
+  "regressions": 0,
+  "concurrency_hazards": 0,
+  "total_defects": 1,
+  "total_tests": 6,
+  "passed_tests": 3,
+  "test_pass_rate_percent": 50.0,
+  "input_tokens": 1320,
+  "output_tokens": 740,
+  "total_tokens": 2060,
+  "execution_duration_ms": 360,
+  "reviewer_premerge_defects": 0,
+  "reviewer_arrested_defects": 0,
+  "reviewer_arrest_rate_percent": 0.0,
+  "failure_modes": [
+    "Partial sanitization stripping only newline (\\n) while omitting carriage return (\\r), allowing log forgery via terminal line overwrite (CWE-117)",
+    "Complete absence of non-printable ASCII control character (< 0x20) escaping, permitting ANSI terminal injection"
+  ]
+}

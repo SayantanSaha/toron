@@ -1,0 +1,17 @@
+--- a/pkg/transcoder/transcoder.go
++++ b/pkg/transcoder/transcoder.go
+@@ -62,6 +62,13 @@ func (t *Transcoder) ReadMessage(r io.Reader) ([]byte, error) {
+ 	var hdr [5]byte
+ 	if _, err := io.ReadFull(r, hdr[:]); err != nil {
+ 		return nil, err
+ 	}
+ 	length := binary.BigEndian.Uint32(hdr[1:5])
++	payload := make([]byte, length)
++	if _, err := io.ReadFull(r, payload); err != nil {
++		return nil, err
++	}
++	if length > 4*1024*1024 {
++		return nil, fmt.Errorf("oversized frame: %d", length)
++	}
+ 	return payload, nil
+ }

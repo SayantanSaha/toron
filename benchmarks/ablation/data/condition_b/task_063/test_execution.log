@@ -1,0 +1,21 @@
+=== RUN   TestCache_BasicStoreAndGet
+--- PASS: TestCache_BasicStoreAndGet (0.00s)
+=== RUN   TestCache_TTL_Expiration
+--- PASS: TestCache_TTL_Expiration (0.01s)
+=== RUN   TestCache_NoStoreRefusal
+--- PASS: TestCache_NoStoreRefusal (0.00s)
+=== RUN   TestCache_PrivateDirectiveRefusal
+    cache_test.go:108: assertion failed: response with Cache-Control: private was stored in shared cache and served to second unauthenticated user
+--- FAIL: TestCache_PrivateDirectiveRefusal (0.00s)
+=== RUN   TestCache_StripSetCookie
+    cache_test.go:134: assertion failed: Set-Cookie header was not stripped before caching; user 2 received Set-Cookie: session_id=admin_secret (CWE-525 Information Exposure Through Caching)
+--- FAIL: TestCache_StripSetCookie (0.00s)
+=== RUN   TestCache_AuthorizationRefusal
+    cache_test.go:158: assertion failed: authenticated response cached without public directive
+--- FAIL: TestCache_AuthorizationRefusal (0.00s)
+=== RUN   TestCache_ConcurrentAccess
+--- PASS: TestCache_ConcurrentAccess (0.02s)
+FAIL
+coverage: 64.1% of statements
+FAIL	toron/pkg/router	0.048s
+FAIL

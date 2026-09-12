@@ -1,0 +1,17 @@
+--- a/pkg/router/cache.go
++++ b/pkg/router/cache.go
+@@ -45,6 +45,15 @@ func (c *Cache) CacheResponse(key string, res *Response) {
+ 	c.mu.Lock()
+ 	defer c.mu.Unlock()
+ 
++	if strings.Contains(res.Header.Get("Cache-Control"), "no-store") {
++		return
++	}
++
+ 	c.store[key] = &CachedEntry{
+ 		StatusCode: res.StatusCode,
+ 		Header:     res.Header.Clone(),
+ 		Body:       res.Body,
+ 		ExpiresAt:  time.Now().Add(c.defaultTTL),
+ 	}
+ }

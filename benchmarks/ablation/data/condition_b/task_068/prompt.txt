@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Wire Frame Size Bounding & DoS Prevention in gRPC Transcoder (TASK-068).
+
+Acceptance Criteria:
+1. Enforce maximum wire frame length threshold (4 MB) before buffer allocation in gRPC stream reader.
+2. Reject oversized frame length prefixes immediately with `ResourceExhausted` (code 8) or HTTP 413.
+3. Prevent unbounded memory allocation panics when parsing corrupted stream headers.
+
+Please provide the direct code modifications for `pkg/transcoder/transcoder.go`.

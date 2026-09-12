@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Strict CORS Origin Matching & Credential Protection (TASK-069).
+
+Acceptance Criteria:
+1. Forbid wildcard `Access-Control-Allow-Origin: *` when `Access-Control-Allow-Credentials` is true.
+2. Require exact match or verified subdomain match against configured allowed origins list.
+3. Prevent reflection of arbitrary untrusted `Origin` request headers into response CORS headers.
+
+Please provide the direct code modifications for `pkg/router/cors.go`.

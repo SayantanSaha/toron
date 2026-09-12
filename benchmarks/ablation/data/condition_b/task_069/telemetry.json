@@ -1,0 +1,26 @@
+{
+  "task_id": "TASK-069",
+  "condition": "Condition B (Direct Single-Agent Prompting)",
+  "total_criteria": 3,
+  "violated_criteria": 2,
+  "drift_rate_percent": 66.67,
+  "protocol_omissions": 1,
+  "security_vulnerabilities": 1,
+  "regressions": 0,
+  "concurrency_hazards": 0,
+  "total_defects": 2,
+  "total_tests": 6,
+  "passed_tests": 3,
+  "test_pass_rate_percent": 50.0,
+  "input_tokens": 1440,
+  "output_tokens": 830,
+  "total_tokens": 2270,
+  "execution_duration_ms": 400,
+  "reviewer_premerge_defects": 0,
+  "reviewer_arrested_defects": 0,
+  "reviewer_arrest_rate_percent": 0.0,
+  "failure_modes": [
+    "Emitting Access-Control-Allow-Origin: * simultaneously with Access-Control-Allow-Credentials: true, exposing authenticated cookies to cross-origin extraction (CWE-942)",
+    "Flawed prefix origin validation (strings.HasPrefix) enabling attacker.com sub-domain prefix bypasses"
+  ]
+}

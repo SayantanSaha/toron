@@ -1,0 +1,26 @@
+{
+  "task_id": "TASK-062",
+  "condition": "Condition B (Direct Single-Agent Prompting)",
+  "total_criteria": 3,
+  "violated_criteria": 1,
+  "drift_rate_percent": 33.33,
+  "protocol_omissions": 0,
+  "security_vulnerabilities": 1,
+  "regressions": 0,
+  "concurrency_hazards": 0,
+  "total_defects": 1,
+  "total_tests": 6,
+  "passed_tests": 4,
+  "test_pass_rate_percent": 66.67,
+  "input_tokens": 1380,
+  "output_tokens": 810,
+  "total_tokens": 2190,
+  "execution_duration_ms": 380,
+  "reviewer_premerge_defects": 0,
+  "reviewer_arrested_defects": 0,
+  "reviewer_arrest_rate_percent": 0.0,
+  "failure_modes": [
+    "Complete omission of RemoteAddr IP CIDR parsing and RFC 1918 / loopback subnet restriction (CWE-306), exposing management endpoints to external networks",
+    "Malformed split on IPv6 bracketed addresses causing false positive rejections"
+  ]
+}

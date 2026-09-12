@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Authentication & Subnet Restriction on Internal Management APIs (TASK-062).
+
+Acceptance Criteria:
+1. Require bearer token authentication for all `/debug` and `/metrics` management endpoints.
+2. Restrict management API access strictly to private RFC 1918 and loopback subnets.
+3. Return HTTP 403 Forbidden with `Connection: close` on unauthenticated or external requests.
+
+Please provide the direct code modifications for `pkg/server/server.go`.

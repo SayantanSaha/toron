@@ -1,7 +1,7 @@
 {
-  "timestamp": "2026-09-12T06:55:00Z",
-  "target_edge": "127.0.0.1:8080",
-  "execution_mode": "Standalone In-Process & Heterogeneous Origin Testbed (BMK-03)",
+  "timestamp": "2026-09-12T02:10:20Z",
+  "target_edge": "127.0.0.1:62007",
+  "execution_mode": "Standalone In-Process (Pure Go)",
   "total_scenarios": 30,
   "passed_scenarios": 30,
   "failed_scenarios": 0,
@@ -16,7 +16,7 @@
       "total_vectors": 10,
       "passed_vectors": 10,
       "desync_count": 0,
-      "success_rate_pct": 100.0
+      "success_rate_pct": 100
     },
     {
       "runtime": "Python 3.11",
@@ -25,7 +25,7 @@
       "total_vectors": 10,
       "passed_vectors": 10,
       "desync_count": 0,
-      "success_rate_pct": 100.0
+      "success_rate_pct": 100
     },
     {
       "runtime": "Go 1.24",
@@ -34,7 +34,7 @@
       "total_vectors": 10,
       "passed_vectors": 10,
       "desync_count": 0,
-      "success_rate_pct": 100.0
+      "success_rate_pct": 100
     }
   ],
   "results": [
@@ -47,7 +47,9 @@
       "backend_prefix": "node",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -55,7 +57,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 620
+      "execution_time_us": 2108
     },
     {
       "vector_id": "VECTOR-02",
@@ -66,7 +68,9 @@
       "backend_prefix": "node",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -74,7 +78,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 480
+      "execution_time_us": 675
     },
     {
       "vector_id": "VECTOR-03",
@@ -85,7 +89,9 @@
       "backend_prefix": "node",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -93,7 +99,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 495
+      "execution_time_us": 595
     },
     {
       "vector_id": "VECTOR-04",
@@ -104,7 +110,10 @@
       "backend_prefix": "node",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -112,7 +121,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1240
+      "execution_time_us": 1148
     },
     {
       "vector_id": "VECTOR-05",
@@ -123,7 +132,10 @@
       "backend_prefix": "node",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -131,7 +143,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1180
+      "execution_time_us": 1287
     },
     {
       "vector_id": "VECTOR-06",
@@ -142,7 +154,10 @@
       "backend_prefix": "node",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -150,7 +165,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1310
+      "execution_time_us": 1033
     },
     {
       "vector_id": "VECTOR-07",
@@ -161,7 +176,9 @@
       "backend_prefix": "node",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -169,7 +186,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 510
+      "execution_time_us": 653
     },
     {
       "vector_id": "VECTOR-08",
@@ -180,7 +197,9 @@
       "backend_prefix": "node",
       "protocol": "HTTP/2",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -188,7 +207,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 980
+      "execution_time_us": 1236
     },
     {
       "vector_id": "VECTOR-09",
@@ -199,7 +218,9 @@
       "backend_prefix": "node",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -207,7 +228,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 890
+      "execution_time_us": 1228
     },
     {
       "vector_id": "VECTOR-10",
@@ -218,7 +239,9 @@
       "backend_prefix": "node",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -226,7 +249,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 950
+      "execution_time_us": 1328
     },
     {
       "vector_id": "VECTOR-01",
@@ -237,7 +260,9 @@
       "backend_prefix": "python",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -245,7 +270,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 590
+      "execution_time_us": 800
     },
     {
       "vector_id": "VECTOR-02",
@@ -256,7 +281,9 @@
       "backend_prefix": "python",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -264,7 +291,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 470
+      "execution_time_us": 571
     },
     {
       "vector_id": "VECTOR-03",
@@ -275,7 +302,9 @@
       "backend_prefix": "python",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -283,7 +312,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 485
+      "execution_time_us": 638
     },
     {
       "vector_id": "VECTOR-04",
@@ -294,7 +323,10 @@
       "backend_prefix": "python",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -302,7 +334,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1210
+      "execution_time_us": 890
     },
     {
       "vector_id": "VECTOR-05",
@@ -313,7 +345,10 @@
       "backend_prefix": "python",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -321,7 +356,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1150
+      "execution_time_us": 928
     },
     {
       "vector_id": "VECTOR-06",
@@ -332,7 +367,10 @@
       "backend_prefix": "python",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -340,7 +378,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1290
+      "execution_time_us": 931
     },
     {
       "vector_id": "VECTOR-07",
@@ -351,7 +389,9 @@
       "backend_prefix": "python",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -359,7 +399,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 505
+      "execution_time_us": 658
     },
     {
       "vector_id": "VECTOR-08",
@@ -370,7 +410,9 @@
       "backend_prefix": "python",
       "protocol": "HTTP/2",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -378,7 +420,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 940
+      "execution_time_us": 1194
     },
     {
       "vector_id": "VECTOR-09",
@@ -389,7 +431,9 @@
       "backend_prefix": "python",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -397,7 +441,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 870
+      "execution_time_us": 1128
     },
     {
       "vector_id": "VECTOR-10",
@@ -408,7 +452,9 @@
       "backend_prefix": "python",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -416,7 +462,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 920
+      "execution_time_us": 1280
     },
     {
       "vector_id": "VECTOR-01",
@@ -427,7 +473,9 @@
       "backend_prefix": "go",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -435,7 +483,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 570
+      "execution_time_us": 784
     },
     {
       "vector_id": "VECTOR-02",
@@ -446,7 +494,9 @@
       "backend_prefix": "go",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -454,7 +504,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 460
+      "execution_time_us": 577
     },
     {
       "vector_id": "VECTOR-03",
@@ -465,7 +515,9 @@
       "backend_prefix": "go",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -473,7 +525,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 475
+      "execution_time_us": 568
     },
     {
       "vector_id": "VECTOR-04",
@@ -484,7 +536,10 @@
       "backend_prefix": "go",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -492,7 +547,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1190
+      "execution_time_us": 862
     },
     {
       "vector_id": "VECTOR-05",
@@ -503,7 +558,10 @@
       "backend_prefix": "go",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -511,7 +569,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1130
+      "execution_time_us": 828
     },
     {
       "vector_id": "VECTOR-06",
@@ -522,7 +580,10 @@
       "backend_prefix": "go",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400,
+        501
+      ],
       "stage1_socket_closed": true,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -530,7 +591,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1260
+      "execution_time_us": 862
     },
     {
       "vector_id": "VECTOR-07",
@@ -541,7 +602,9 @@
       "backend_prefix": "go",
       "protocol": "HTTP/2",
       "stage1_edge_status": 400,
-      "stage1_expected_status": [400],
+      "stage1_expected_status": [
+        400
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -549,7 +612,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 490
+      "execution_time_us": 603
     },
     {
       "vector_id": "VECTOR-08",
@@ -560,7 +623,9 @@
       "backend_prefix": "go",
       "protocol": "HTTP/2",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -568,7 +633,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 920
+      "execution_time_us": 1026
     },
     {
       "vector_id": "VECTOR-09",
@@ -579,7 +644,9 @@
       "backend_prefix": "go",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -587,7 +654,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 850
+      "execution_time_us": 1280
     },
     {
       "vector_id": "VECTOR-10",
@@ -598,7 +665,9 @@
       "backend_prefix": "go",
       "protocol": "HTTP/1.1",
       "stage1_edge_status": 200,
-      "stage1_expected_status": [200],
+      "stage1_expected_status": [
+        200
+      ],
       "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
@@ -606,7 +675,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 890
+      "execution_time_us": 1293
     }
   ]
 }

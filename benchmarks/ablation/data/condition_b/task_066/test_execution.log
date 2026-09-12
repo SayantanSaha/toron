@@ -1,0 +1,19 @@
+=== RUN   TestLogger_StandardEntry
+--- PASS: TestLogger_StandardEntry (0.00s)
+=== RUN   TestLogger_NewlineRemoval
+--- PASS: TestLogger_NewlineRemoval (0.00s)
+=== RUN   TestLogger_CarriageReturnSanitization
+    logger_test.go:86: assertion failed: carriage return \r was not sanitized; User-Agent "evil\rADMIN LOGIN OK" resulted in terminal line overwrite (CWE-117 Log Injection)
+--- FAIL: TestLogger_CarriageReturnSanitization (0.00s)
+=== RUN   TestLogger_ControlCharEscape
+    logger_test.go:104: assertion failed: raw ANSI escape sequence "\x1b[31;1m" preserved in log entry
+--- FAIL: TestLogger_ControlCharEscape (0.00s)
+=== RUN   TestLogger_NullByteRemoval
+    logger_test.go:121: assertion failed: null byte \x00 in path preserved
+--- FAIL: TestLogger_NullByteRemoval (0.00s)
+=== RUN   TestLogger_ConcurrentWrites
+--- PASS: TestLogger_ConcurrentWrites (0.01s)
+FAIL
+coverage: 67.8% of statements
+FAIL	toron/pkg/logging	0.035s
+FAIL

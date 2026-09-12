@@ -1,0 +1,27 @@
+{
+  "task_id": "TASK-064",
+  "condition": "Condition B (Direct Single-Agent Prompting)",
+  "total_criteria": 3,
+  "violated_criteria": 2,
+  "drift_rate_percent": 66.67,
+  "protocol_omissions": 0,
+  "security_vulnerabilities": 1,
+  "regressions": 0,
+  "concurrency_hazards": 2,
+  "total_defects": 3,
+  "total_tests": 5,
+  "passed_tests": 2,
+  "test_pass_rate_percent": 40.0,
+  "input_tokens": 1510,
+  "output_tokens": 880,
+  "total_tokens": 2390,
+  "execution_duration_ms": 450,
+  "reviewer_premerge_defects": 0,
+  "reviewer_arrested_defects": 0,
+  "reviewer_arrest_rate_percent": 0.0,
+  "failure_modes": [
+    "Omission of periodic TTL eviction routine, resulting in permanent retention of high-cardinality spoofed IP buckets and eventual memory exhaustion (CWE-770)",
+    "Map saturation denial-of-service blocking legitimate users when capacity is reached",
+    "Data race between request path and unstructured eviction helper under concurrent load"
+  ]
+}

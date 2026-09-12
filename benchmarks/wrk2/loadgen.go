@@ -20,7 +20,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -120,7 +119,7 @@ func GetAttackCatalog() []AttackVector {
 			Name:     "CRLF Header Injection",
 			Category: "Response Splitting Defense (CWE-113)",
 			BuildRawReq: func(host string) string {
-				return fmt.Sprintf("GET /health HTTP/1.1\r\nHost: %s\r\nX-Custom: val\r\nInjected: evil\r\n\r\n", host)
+				return fmt.Sprintf("GET /health HTTP/1.1\r\nHost: %s\r\nX-Custom: val\r\n Injected: evil\r\n\r\n", host)
 			},
 		},
 		{
@@ -414,7 +413,7 @@ func RunLoadGen(cfg LoadGenConfig) (*SaturationStressReport, error) {
 
 					benignTotal.Add(1)
 					if err != nil {
-						if !errors.Is(err, context.Canceled) {
+						if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 							benignFailed.Add(1)
 						}
 						continue
@@ -594,7 +593,7 @@ func GenerateMarkdownReport(rep *SaturationStressReport, mdPath string) error {
 	md.WriteString(fmt.Sprintf("| **p75** | `%.2f ms` | `%.2f ms` | 75th percentile |\n", rep.BenignStream.LatenciesMs.P75, rep.AdversarialStream.LatenciesMs.P75))
 	md.WriteString(fmt.Sprintf("| **p90** | `%.2f ms` | `%.2f ms` | 90th percentile |\n", rep.BenignStream.LatenciesMs.P90, rep.AdversarialStream.LatenciesMs.P90))
 	md.WriteString(fmt.Sprintf("| **p95** | **`%.2f ms`** | **`%.2f ms`** | High-load boundary (95th percentile) |\n", rep.BenignStream.LatenciesMs.P95, rep.AdversarialStream.LatenciesMs.P95))
-	md.WriteString(fmt.Sprintf("| **p99 (Tail)** | **`%.2f ms`** | **`%.2f ms`** | **Zero-Starvation Target Bound ($\le 50$ ms)** |\n", rep.BenignStream.LatenciesMs.P99, rep.AdversarialStream.LatenciesMs.P99))
+	md.WriteString(fmt.Sprintf("| **p99 (Tail)** | **`%.2f ms`** | **`%.2f ms`** | **Zero-Starvation Target Bound ($\\le 50$ ms)** |\n", rep.BenignStream.LatenciesMs.P99, rep.AdversarialStream.LatenciesMs.P99))
 	md.WriteString(fmt.Sprintf("| **p99.9** | `%.2f ms` | `%.2f ms` | Severe tail (99.9th percentile) |\n", rep.BenignStream.LatenciesMs.P999, rep.AdversarialStream.LatenciesMs.P999))
 	md.WriteString(fmt.Sprintf("| **Max** | `%.2f ms` | `%.2f ms` | Worst-case observed transaction |\n", rep.BenignStream.LatenciesMs.Max, rep.AdversarialStream.LatenciesMs.Max))
 

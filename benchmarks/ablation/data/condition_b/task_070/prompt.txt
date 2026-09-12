@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Host Header Validation in Cleartext HTTP Redirection (TASK-070).
+
+Acceptance Criteria:
+1. Validate Host header against configured server names and trusted domain whitelist prior to redirection.
+2. Reject or sanitize user-supplied `X-Forwarded-Host` headers unless originating from trusted CIDRs.
+3. Return HTTP 400 Bad Request instead of redirecting when Host header is malformed or unrecognized.
+
+Please provide the direct code modifications for `pkg/server/server.go`.

@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Upstream Path Canonicalization & Route Traversal Guards (TASK-067).
+
+Acceptance Criteria:
+1. Canonicalize request path segments using RFC 3986 path resolution prior to upstream proxy forwarding.
+2. Reject or normalize dot-dot-slash (`/../`) segments escaping configured route prefixes.
+3. Return HTTP 403 Forbidden with physical connection teardown on route escape attempts.
+
+Please provide the direct code modifications for `pkg/proxy/proxy.go`.

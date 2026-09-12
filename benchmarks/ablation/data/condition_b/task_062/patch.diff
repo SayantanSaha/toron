@@ -1,0 +1,17 @@
+--- a/pkg/server/server.go
++++ b/pkg/server/server.go
+@@ -310,6 +310,18 @@ func (s *Server) registerManagementRoutes() {
+ 	s.router.HandleFunc("/debug/pprof", s.handleManagementEndpoint)
+ 	s.router.HandleFunc("/metrics", s.handleManagementEndpoint)
+ }
++
++func (s *Server) handleManagementEndpoint(w http.ResponseWriter, r *http.Request) {
++	authHeader := r.Header.Get("Authorization")
++	if !strings.HasPrefix(authHeader, "Bearer ") || strings.TrimPrefix(authHeader, "Bearer ") != s.config.ManagementToken {
++		w.Header().Set("Connection", "close")
++		w.WriteHeader(http.StatusForbidden)
++		w.Write([]byte("Forbidden: invalid or missing management token\n"))
++		return
++	}
++	s.defaultHandler(w, r)
++}

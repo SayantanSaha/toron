@@ -1,0 +1,23 @@
+=== RUN   TestParser_ValidRequest
+--- PASS: TestParser_ValidRequest (0.00s)
+=== RUN   TestParser_TransferEncodingRejection
+--- PASS: TestParser_TransferEncodingRejection (0.00s)
+=== RUN   TestParser_WhitespacePrecedingColonTE
+    parser_test.go:142: assertion failed: expected rejection for header "Transfer-Encoding : chunked", but parsed successfully as ""
+--- FAIL: TestParser_WhitespacePrecedingColonTE (0.00s)
+=== RUN   TestServer_TransferEncoding501
+--- PASS: TestServer_TransferEncoding501 (0.00s)
+=== RUN   TestServer_LeftoverChunkSocketDesync
+    server_test.go:284: assertion failed: connection remained open after 501 rejection; subsequent read parsed leftover chunk payload "0\r\n\r\nPOST /admin" as next request (CWE-444 HTTP Request Smuggling)
+--- FAIL: TestServer_LeftoverChunkSocketDesync (0.01s)
+=== RUN   TestServer_ConcurrentRequests
+--- PASS: TestServer_ConcurrentRequests (0.02s)
+=== RUN   TestServer_GracefulShutdown
+--- PASS: TestServer_GracefulShutdown (0.01s)
+=== RUN   TestServer_PipelinedRequests
+--- PASS: TestServer_PipelinedRequests (0.01s)
+FAIL
+coverage: 78.4% of statements
+FAIL	toron/pkg/httpparser	0.045s
+FAIL	toron/pkg/server	0.052s
+FAIL

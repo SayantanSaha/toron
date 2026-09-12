@@ -1,0 +1,20 @@
+=== RUN   TestTranscoder_StandardFrame
+--- PASS: TestTranscoder_StandardFrame (0.00s)
+=== RUN   TestTranscoder_RejectOversizedFrame
+    transcoder_test.go:114: fatal error: runtime: out of memory allocating 4294967296 bytes (CWE-400 Uncontrolled Resource Consumption)
+    goroutine 1 [running]:
+    toron/pkg/transcoder.(*Transcoder).ReadMessage(0xc0000a4000, ...)
+        /Users/sneha/Developer/toron-research/toron/pkg/transcoder/transcoder.go:67 +0x88
+--- FAIL: TestTranscoder_RejectOversizedFrame (0.02s)
+=== RUN   TestTranscoder_CorruptedHeaderLength
+    transcoder_test.go:132: panic: runtime error: makeslice: len out of range
+--- FAIL: TestTranscoder_CorruptedHeaderLength (0.00s)
+=== RUN   TestTranscoder_ResourceExhaustedCode
+    transcoder_test.go:148: assertion failed: expected gRPC status code 8 (ResourceExhausted), got generic string error
+--- FAIL: TestTranscoder_ResourceExhaustedCode (0.00s)
+=== RUN   TestTranscoder_SmallPingMessage
+--- PASS: TestTranscoder_SmallPingMessage (0.00s)
+FAIL
+coverage: 54.0% of statements
+FAIL	toron/pkg/transcoder	0.041s
+FAIL

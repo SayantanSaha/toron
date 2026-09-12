@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Upstream TLS Verification Enforcement in WebSocket Proxy (TASK-065).
+
+Acceptance Criteria:
+1. Enforce `InsecureSkipVerify: false` by default for all upstream WebSocket dialers.
+2. Validate upstream TLS certificate chains against custom configured `RootCAs` pool.
+3. Terminate connection and return HTTP 502 Bad Gateway upon TLS certificate failure.
+
+Please provide the direct code modifications for `pkg/proxy/proxy.go`.

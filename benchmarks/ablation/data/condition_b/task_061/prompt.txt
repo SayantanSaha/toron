@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement HTTP Request Smuggling Prevention and Transfer-Encoding Protocol Guard (TASK-061).
+
+Acceptance Criteria:
+1. In `pkg/httpparser/parser.go`, inspect the `Transfer-Encoding` header. If present and body dechunking is not supported, return an explicit error (e.g. `ErrUnsupportedTransferEncoding`).
+2. In `pkg/server/server.go`, if `ParseRequest` returns `ErrUnsupportedTransferEncoding`, respond with `HTTP/1.1 501 Not Implemented`.
+3. Ensure leftover unread chunk bytes cannot desynchronize persistent keep-alive connections.
+
+Please provide the direct code modifications for `pkg/httpparser/parser.go` and `pkg/server/server.go`.

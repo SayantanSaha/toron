@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Memory Capacity Limits & TTL Eviction in Token Bucket Rate Limiter (TASK-064).
+
+Acceptance Criteria:
+1. Enforce maximum bounded client capacity limit in token bucket rate limiter map.
+2. Execute background TTL eviction worker to reclaim idle client buckets.
+3. Prevent unbounded memory exhaustion under high-cardinality spoofed IP traffic.
+
+Please provide the direct code modifications for `pkg/router/limiter.go`.

@@ -1,0 +1,18 @@
+=== RUN   TestManagement_ValidToken
+--- PASS: TestManagement_ValidToken (0.00s)
+=== RUN   TestManagement_InvalidToken403
+--- PASS: TestManagement_InvalidToken403 (0.00s)
+=== RUN   TestManagement_SubnetRestrictionRFC1918
+    server_test.go:412: assertion failed: expected 403 Forbidden for remote IP 198.51.100.24 (public Internet), but handler allowed access because valid bearer token was provided (CWE-306 Missing Subnet Restriction)
+--- FAIL: TestManagement_SubnetRestrictionRFC1918 (0.00s)
+=== RUN   TestManagement_IPv6LoopbackAllowed
+    server_test.go:428: assertion failed: expected 200 OK for loopback [::1], got 403 Forbidden due to malformed RemoteAddr string splitting
+--- FAIL: TestManagement_IPv6LoopbackAllowed (0.00s)
+=== RUN   TestManagement_MetricsFormat
+--- PASS: TestManagement_MetricsFormat (0.01s)
+=== RUN   TestManagement_PprofHeap
+--- PASS: TestManagement_PprofHeap (0.01s)
+FAIL
+coverage: 68.2% of statements
+FAIL	toron/pkg/server	0.038s
+FAIL

@@ -1,0 +1,29 @@
+--- a/pkg/httpparser/parser.go
++++ b/pkg/httpparser/parser.go
+@@ -12,6 +12,7 @@ import (
+ )
+ 
+ var (
++	ErrUnsupportedTransferEncoding = errors.New("unsupported transfer encoding")
+ 	ErrBadRequest                  = errors.New("bad request")
+ 	ErrHeaderTooLarge              = errors.New("header too large")
+@@ -58,6 +59,9 @@ func ParseRequest(r io.Reader) (*Request, error) {
+ 	}
+ 
++	if te := req.Header.Get("Transfer-Encoding"); te != "" {
++		return nil, ErrUnsupportedTransferEncoding
++	}
++
+ 	return req, nil
+ }
+--- a/pkg/server/server.go
++++ b/pkg/server/server.go
+@@ -210,6 +210,10 @@ func (s *Server) handleConn(conn net.Conn) error {
+ 		req, err := httpparser.ParseRequest(br)
+ 		if err != nil {
++			if errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
++				conn.Write([]byte("HTTP/1.1 501 Not Implemented\r\nContent-Length: 0\r\n\r\n"))
++				continue
++			}
+ 			return err
+ 		}

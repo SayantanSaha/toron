@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Access Log CRLF Sanitization & Control Character Filtering (TASK-066).
+
+Acceptance Criteria:
+1. Strip or URL-encode carriage return (`\r`) and newline (`\n`) in user-controlled log fields.
+2. Filter non-printable ASCII control characters (`< 0x20`) to prevent ANSI escape injection.
+3. Maintain single-line structured log formatting across all request logger sinks.
+
+Please provide the direct code modifications for `pkg/logging/logger.go`.

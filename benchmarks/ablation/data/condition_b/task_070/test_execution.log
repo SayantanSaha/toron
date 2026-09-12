@@ -1,0 +1,19 @@
+=== RUN   TestRedirect_ConfiguredHost
+--- PASS: TestRedirect_ConfiguredHost (0.00s)
+=== RUN   TestRedirect_RejectUntrustedHost
+    server_test.go:342: assertion failed: server blindly redirected request with Host "attacker.com" to "https://attacker.com/login", enabling Open Redirect phishing (CWE-601)
+--- FAIL: TestRedirect_RejectUntrustedHost (0.00s)
+=== RUN   TestRedirect_XForwardedHostSpoofing
+    server_test.go:360: assertion failed: untrusted external client spoofed X-Forwarded-Host: evil.com, which was trusted over Host header
+--- FAIL: TestRedirect_XForwardedHostSpoofing (0.00s)
+=== RUN   TestRedirect_MalformedHost400
+    server_test.go:375: assertion failed: expected HTTP 400 Bad Request for malformed Host header "foo:bar:baz", got 301 Moved Permanently
+--- FAIL: TestRedirect_MalformedHost400 (0.00s)
+=== RUN   TestRedirect_PreserveQueryString
+--- PASS: TestRedirect_PreserveQueryString (0.00s)
+=== RUN   TestRedirect_HTTP10Fallback
+--- PASS: TestRedirect_HTTP10Fallback (0.00s)
+FAIL
+coverage: 66.7% of statements
+FAIL	toron/pkg/server	0.040s
+FAIL

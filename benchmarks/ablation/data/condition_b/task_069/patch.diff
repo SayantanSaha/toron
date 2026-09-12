@@ -1,0 +1,20 @@
+--- a/pkg/router/cors.go
++++ b/pkg/router/cors.go
+@@ -35,6 +35,14 @@ func (c *CORSPolicy) HandleCORS(w http.ResponseWriter, r *http.Request) bool {
+ 	origin := r.Header.Get("Origin")
+ 	if origin == "" {
+ 		return true
+ 	}
+ 
++	if strings.HasPrefix(origin, c.AllowedOrigin) {
++		w.Header().Set("Access-Control-Allow-Origin", origin)
++		w.Header().Set("Access-Control-Allow-Credentials", "true")
++	} else {
++		w.Header().Set("Access-Control-Allow-Origin", "*")
++		w.Header().Set("Access-Control-Allow-Credentials", "true")
++	}
++
+ 	if r.Method == http.MethodOptions {
+ 		w.WriteHeader(http.StatusNoContent)
+ 		return false
+ 	}

@@ -1,0 +1,10 @@
+--- a/pkg/server/server.go
++++ b/pkg/server/server.go
+@@ -280,6 +280,13 @@ func (s *Server) redirectToHTTPS(w http.ResponseWriter, r *http.Request) {
++	host := r.Host
++	if fwd := r.Header.Get("X-Forwarded-Host"); fwd != "" {
++		host = fwd
++	}
++	dest := "https://" + host + r.URL.RequestURI()
++	http.Redirect(w, r, dest, http.StatusMovedPermanently)
+ }

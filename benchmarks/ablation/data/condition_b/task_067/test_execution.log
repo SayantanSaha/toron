@@ -1,0 +1,21 @@
+=== RUN   TestProxy_NormalForwarding
+--- PASS: TestProxy_NormalForwarding (0.00s)
+=== RUN   TestProxy_SimplePathJoin
+--- PASS: TestProxy_SimplePathJoin (0.00s)
+=== RUN   TestProxy_URLEncodedTraversalGuard
+    proxy_test.go:176: assertion failed: encoded traversal sequence "/api/v1/%2e%2e/%2e%2e/internal/secret" was not decoded prior to path.Join; passed raw to upstream server (CWE-22 Path Traversal)
+--- FAIL: TestProxy_URLEncodedTraversalGuard (0.00s)
+=== RUN   TestProxy_RoutePrefixEscape403
+    proxy_test.go:195: assertion failed: traversal attempt was collapsed by path.Join to "/internal/secret" and forwarded upstream, instead of returning HTTP 403 Forbidden with Connection: close
+--- FAIL: TestProxy_RoutePrefixEscape403 (0.00s)
+=== RUN   TestProxy_DoubleSlashBypass
+    proxy_test.go:210: assertion failed: double-slash "/api/v1//../internal" bypassed prefix check
+--- FAIL: TestProxy_DoubleSlashBypass (0.00s)
+=== RUN   TestProxy_QueryParamPreservation
+--- PASS: TestProxy_QueryParamPreservation (0.01s)
+=== RUN   TestProxy_HeaderForwarding
+--- PASS: TestProxy_HeaderForwarding (0.01s)
+FAIL
+coverage: 63.5% of statements
+FAIL	toron/pkg/proxy	0.054s
+FAIL

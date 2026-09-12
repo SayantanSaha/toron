@@ -1,0 +1,10 @@
+--- a/pkg/logging/logger.go
++++ b/pkg/logging/logger.go
+@@ -52,6 +52,10 @@ func (l *AccessLogger) LogRequest(entry *LogEntry) {
++	entry.URI = strings.ReplaceAll(entry.URI, "\n", "")
++	entry.UserAgent = strings.ReplaceAll(entry.UserAgent, "\n", "")
++	entry.Referer = strings.ReplaceAll(entry.Referer, "\n", "")
++
+ 	line := fmt.Sprintf("[%s] %s %s %s %d\n",
+ 		entry.Timestamp.Format(time.RFC3339),
+ 		entry.Method,

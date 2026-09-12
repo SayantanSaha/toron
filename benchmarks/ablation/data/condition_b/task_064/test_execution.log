@@ -1,0 +1,25 @@
+=== RUN   TestLimiter_AllowTokens
+--- PASS: TestLimiter_AllowTokens (0.00s)
+=== RUN   TestLimiter_BurstExceeded
+--- PASS: TestLimiter_BurstExceeded (0.00s)
+=== RUN   TestLimiter_TTLEviction
+    limiter_test.go:88: assertion failed: idle client buckets were not evicted after TTL; count remains 10000 (CWE-770 Memory Leak)
+--- FAIL: TestLimiter_TTLEviction (0.02s)
+=== RUN   TestLimiter_CapacityExhaustionDoS
+    limiter_test.go:112: assertion failed: spoofed IP addresses filled map to maxCap, causing all subsequent legitimate clients to be completely denied service (Denial of Service)
+--- FAIL: TestLimiter_CapacityExhaustionDoS (0.01s)
+=== RUN   TestLimiter_ConcurrentAccessRace
+==================
+WARNING: DATA RACE
+Read at 0x00c000108090 by goroutine 14:
+  toron/pkg/router.(*RateLimiter).evictIdle()
+      /Users/sneha/Developer/toron-research/toron/pkg/router/limiter.go:68 +0x120
+Previous write at 0x00c000108090 by goroutine 12:
+  toron/pkg/router.(*RateLimiter).Allow()
+      /Users/sneha/Developer/toron-research/toron/pkg/router/limiter.go:34 +0x240
+==================
+--- FAIL: TestLimiter_ConcurrentAccessRace (0.03s)
+FAIL
+coverage: 52.8% of statements
+FAIL	toron/pkg/router	0.065s
+FAIL

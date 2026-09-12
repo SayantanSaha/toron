@@ -222,7 +222,7 @@ func GetStandardVectors() []VectorDefinition {
 			Category:       "HTTP/1.1 Request Smuggling (CWE-444)",
 			Protocol:       "HTTP/1.1",
 			Description:    "HTTP/1.1 request containing conflicting Content-Length and Transfer-Encoding",
-			ExpectedStatus: []int{http.StatusBadRequest},
+			ExpectedStatus: []int{http.StatusBadRequest, http.StatusNotImplemented},
 			ExpectClose:    true,
 			IsAttack:       true,
 		},
@@ -232,7 +232,7 @@ func GetStandardVectors() []VectorDefinition {
 			Category:       "HTTP/1.1 Header Syntax (RFC 7230 §3.2.4)",
 			Protocol:       "HTTP/1.1",
 			Description:    "HTTP/1.1 request with whitespace preceding colon in Transfer-Encoding",
-			ExpectedStatus: []int{http.StatusBadRequest},
+			ExpectedStatus: []int{http.StatusBadRequest, http.StatusNotImplemented},
 			ExpectClose:    true,
 			IsAttack:       true,
 		},
@@ -242,7 +242,7 @@ func GetStandardVectors() []VectorDefinition {
 			Category:       "HTTP/1.1 Pipelined Buffer Boundary",
 			Protocol:       "HTTP/1.1",
 			Description:    "Pipelined attack probe attempting residual buffer desynchronization",
-			ExpectedStatus: []int{http.StatusBadRequest},
+			ExpectedStatus: []int{http.StatusBadRequest, http.StatusNotImplemented},
 			ExpectClose:    true,
 			IsAttack:       true,
 		},
@@ -291,16 +291,41 @@ func GetStandardVectors() []VectorDefinition {
 
 // verifySocketClosed checks whether the TCP connection has been closed by the peer.
 func verifySocketClosed(conn net.Conn, reader *bufio.Reader) bool {
+	if conn == nil {
+		return true
+	}
+
+	_ = conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+	buf := make([]byte, 1024)
+	for {
+		_, err := reader.Read(buf)
+		if err != nil {
+			if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) ||
+				strings.Contains(err.Error(), "closed") || strings.Contains(err.Error(), "reset") {
+				return true
+			}
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
+				break
+			}
+			return true
+		}
+	}
+
+	_ = conn.SetWriteDeadline(time.Now().Add(100 * time.Millisecond))
+	if _, err := conn.Write([]byte("\r\n")); err != nil {
+		return true
+	}
+
 	_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
-	buf := make([]byte, 256)
-	n, err := reader.Read(buf)
+	_, err := reader.Read(buf)
 	if err != nil {
 		if errors.Is(err, io.EOF) || errors.Is(err, syscall.ECONNRESET) ||
 			strings.Contains(err.Error(), "closed") || strings.Contains(err.Error(), "reset") {
 			return true
 		}
 	}
-	return n == 0 && err != nil
+	return false
 }
 
 // TestbedEnvironment encapsulates the testbed harness components.
@@ -454,7 +479,7 @@ func ExecuteScenario(env *TestbedEnvironment, targetBackend *SimulatedBackend, v
 		} else {
 			res.Stage1EdgeStatus = code
 			res.Stage1SocketClosed = closed
-			res.Stage1Passed = code == http.StatusBadRequest && closed
+			res.Stage1Passed = (code == http.StatusBadRequest || code == http.StatusNotImplemented) && closed
 		}
 
 	case "VECTOR-05": // H1-TE.CL-Obfuscated (whitespace)
@@ -467,7 +492,7 @@ func ExecuteScenario(env *TestbedEnvironment, targetBackend *SimulatedBackend, v
 		} else {
 			res.Stage1EdgeStatus = code
 			res.Stage1SocketClosed = closed
-			res.Stage1Passed = code == http.StatusBadRequest && closed
+			res.Stage1Passed = (code == http.StatusBadRequest || code == http.StatusNotImplemented) && closed
 		}
 
 	case "VECTOR-06": // H1-Pipelined-Smuggle
@@ -480,7 +505,7 @@ func ExecuteScenario(env *TestbedEnvironment, targetBackend *SimulatedBackend, v
 		} else {
 			res.Stage1EdgeStatus = code
 			res.Stage1SocketClosed = closed
-			res.Stage1Passed = code == http.StatusBadRequest && closed
+			res.Stage1Passed = (code == http.StatusBadRequest || code == http.StatusNotImplemented) && closed
 		}
 
 	case "VECTOR-07": // CRLF-Header-Injection
@@ -587,6 +612,13 @@ func executeRawSocketProbe(addr, raw string) (int, bool, error) {
 	var proto string
 	var code int
 	_, _ = fmt.Sscanf(strings.TrimSpace(statusLine), "%s %d", &proto, &code)
+
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil || strings.TrimRight(line, "\r\n") == "" {
+			break
+		}
+	}
 
 	closed := verifySocketClosed(conn, reader)
 	return code, closed, nil

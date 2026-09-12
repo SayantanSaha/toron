@@ -1,0 +1,19 @@
+=== RUN   TestWebSocketProxy_StandardUpgrade
+--- PASS: TestWebSocketProxy_StandardUpgrade (0.01s)
+=== RUN   TestWebSocketProxy_RejectUntrustedCert
+    proxy_test.go:215: assertion failed: proxy accepted upstream TLS handshake with an untrusted, self-signed certificate due to InsecureSkipVerify: true (CWE-295 Improper Certificate Validation)
+--- FAIL: TestWebSocketProxy_RejectUntrustedCert (0.01s)
+=== RUN   TestWebSocketProxy_CustomRootCAPool
+    proxy_test.go:232: assertion failed: custom RootCAs pool was ignored by dialer
+--- FAIL: TestWebSocketProxy_CustomRootCAPool (0.01s)
+=== RUN   TestWebSocketProxy_502OnUpstreamFailure
+    proxy_test.go:250: assertion failed: expected 502 Bad Gateway on upstream dial failure, received 500 Internal Server Error
+--- FAIL: TestWebSocketProxy_502OnUpstreamFailure (0.00s)
+=== RUN   TestWebSocketProxy_EchoFrame
+--- PASS: TestWebSocketProxy_EchoFrame (0.01s)
+=== RUN   TestWebSocketProxy_BidirectionalStream
+--- PASS: TestWebSocketProxy_BidirectionalStream (0.02s)
+FAIL
+coverage: 61.3% of statements
+FAIL	toron/pkg/proxy	0.062s
+FAIL

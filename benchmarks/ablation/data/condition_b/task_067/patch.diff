@@ -1,0 +1,8 @@
+--- a/pkg/proxy/proxy.go
++++ b/pkg/proxy/proxy.go
+@@ -95,6 +95,9 @@ func (p *ReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
++	targetPath := path.Join(p.prefix, r.URL.Path)
++	outReq.URL.Path = targetPath
++
+ 	p.transport.RoundTrip(outReq)
+ }

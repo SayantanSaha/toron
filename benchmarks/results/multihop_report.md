@@ -1,6 +1,6 @@
 # Toron Heterogeneous Multi-Hop Empirical Evaluation Report (BMK-03)
 
-**Generated**: `2026-09-12T06:55:00Z` | **Target Edge**: `127.0.0.1:8080` | **Execution Mode**: `Standalone In-Process & Heterogeneous Origin Testbed (BMK-03)`
+**Generated**: `2026-09-12T02:10:20Z` | **Target Edge**: `127.0.0.1:62007` | **Execution Mode**: `Standalone In-Process (Pure Go)`
 
 ---
 
@@ -47,8 +47,8 @@ Each backend was subjected to a rigorous two-stage desynchronization evaluation 
 | `VECTOR-06` | H1-Pipelined-Smuggle Buffer Eviction | HTTP/1.1 Pipelined Buffer Boundary | `HTTP/1.1` | Node.js 20 LTS | `400` | ✅ Closed | `200` | ✅ None | ✅ PASS |
 | `VECTOR-07` | CRLF-Header-Injection Wire Splitting | Header Injection Defense (CWE-117) | `HTTP/2` | Node.js 20 LTS | `400` | N/A | `200` | ✅ None | ✅ PASS |
 | `VECTOR-08` | Pseudo-Header Upstream Isolation | HTTP/2 to HTTP/1.1 Isolation | `HTTP/2` | Node.js 20 LTS | `200` | N/A | `200` | ✅ None | ✅ PASS |
-| `VECTOR-09` | Baseline Benign GET Forwarding | Transparent Proxy Round-Trip | `HTTP/1.1` | Node.js 20 LTS | `200` | N/A | `200` | ✅ None | ✅ PASS |
-| `VECTOR-10` | Baseline Benign POST Body Integrity | Payload Body Round-Trip | `HTTP/1.1` | Node.js 20 LTS | `200` | N/A | `200` | ✅ None | ✅ PASS |
+| `VECTOR-09` | Baseline Benign GET Forwarding | Transparent Proxy Round-Trip | `HTTP/1.1` | Node.js 20 LTS | `200` | ❌ Open | `200` | ✅ None | ✅ PASS |
+| `VECTOR-10` | Baseline Benign POST Body Integrity | Payload Body Round-Trip | `HTTP/1.1` | Node.js 20 LTS | `200` | ❌ Open | `200` | ✅ None | ✅ PASS |
 | `VECTOR-01` | H2.TE Smuggling Probe | HTTP/2 Translation Invariant | `HTTP/2` | Python 3.11 | `400` | N/A | `200` | ✅ None | ✅ PASS |
 | `VECTOR-02` | H2.CL-Duplicate Content-Length | HTTP/2 Content-Length Validation | `HTTP/2` | Python 3.11 | `400` | N/A | `200` | ✅ None | ✅ PASS |
 | `VECTOR-03` | H2.CL-Mismatch Payload Discrepancy | HTTP/2 Payload Framing Invariant | `HTTP/2` | Python 3.11 | `400` | N/A | `200` | ✅ None | ✅ PASS |
@@ -57,8 +57,8 @@ Each backend was subjected to a rigorous two-stage desynchronization evaluation 
 | `VECTOR-06` | H1-Pipelined-Smuggle Buffer Eviction | HTTP/1.1 Pipelined Buffer Boundary | `HTTP/1.1` | Python 3.11 | `400` | ✅ Closed | `200` | ✅ None | ✅ PASS |
 | `VECTOR-07` | CRLF-Header-Injection Wire Splitting | Header Injection Defense (CWE-117) | `HTTP/2` | Python 3.11 | `400` | N/A | `200` | ✅ None | ✅ PASS |
 | `VECTOR-08` | Pseudo-Header Upstream Isolation | HTTP/2 to HTTP/1.1 Isolation | `HTTP/2` | Python 3.11 | `200` | N/A | `200` | ✅ None | ✅ PASS |
-| `VECTOR-09` | Baseline Benign GET Forwarding | Transparent Proxy Round-Trip | `HTTP/1.1` | Python 3.11 | `200` | N/A | `200` | ✅ None | ✅ PASS |
-| `VECTOR-10` | Baseline Benign POST Body Integrity | Payload Body Round-Trip | `HTTP/1.1` | Python 3.11 | `200` | N/A | `200` | ✅ None | ✅ PASS |
+| `VECTOR-09` | Baseline Benign GET Forwarding | Transparent Proxy Round-Trip | `HTTP/1.1` | Python 3.11 | `200` | ❌ Open | `200` | ✅ None | ✅ PASS |
+| `VECTOR-10` | Baseline Benign POST Body Integrity | Payload Body Round-Trip | `HTTP/1.1` | Python 3.11 | `200` | ❌ Open | `200` | ✅ None | ✅ PASS |
 | `VECTOR-01` | H2.TE Smuggling Probe | HTTP/2 Translation Invariant | `HTTP/2` | Go 1.24 | `400` | N/A | `200` | ✅ None | ✅ PASS |
 | `VECTOR-02` | H2.CL-Duplicate Content-Length | HTTP/2 Content-Length Validation | `HTTP/2` | Go 1.24 | `400` | N/A | `200` | ✅ None | ✅ PASS |
 | `VECTOR-03` | H2.CL-Mismatch Payload Discrepancy | HTTP/2 Payload Framing Invariant | `HTTP/2` | Go 1.24 | `400` | N/A | `200` | ✅ None | ✅ PASS |
@@ -67,8 +67,8 @@ Each backend was subjected to a rigorous two-stage desynchronization evaluation 
 | `VECTOR-06` | H1-Pipelined-Smuggle Buffer Eviction | HTTP/1.1 Pipelined Buffer Boundary | `HTTP/1.1` | Go 1.24 | `400` | ✅ Closed | `200` | ✅ None | ✅ PASS |
 | `VECTOR-07` | CRLF-Header-Injection Wire Splitting | Header Injection Defense (CWE-117) | `HTTP/2` | Go 1.24 | `400` | N/A | `200` | ✅ None | ✅ PASS |
 | `VECTOR-08` | Pseudo-Header Upstream Isolation | HTTP/2 to HTTP/1.1 Isolation | `HTTP/2` | Go 1.24 | `200` | N/A | `200` | ✅ None | ✅ PASS |
-| `VECTOR-09` | Baseline Benign GET Forwarding | Transparent Proxy Round-Trip | `HTTP/1.1` | Go 1.24 | `200` | N/A | `200` | ✅ None | ✅ PASS |
-| `VECTOR-10` | Baseline Benign POST Body Integrity | Payload Body Round-Trip | `HTTP/1.1` | Go 1.24 | `200` | N/A | `200` | ✅ None | ✅ PASS |
+| `VECTOR-09` | Baseline Benign GET Forwarding | Transparent Proxy Round-Trip | `HTTP/1.1` | Go 1.24 | `200` | ❌ Open | `200` | ✅ None | ✅ PASS |
+| `VECTOR-10` | Baseline Benign POST Body Integrity | Payload Body Round-Trip | `HTTP/1.1` | Go 1.24 | `200` | ❌ Open | `200` | ✅ None | ✅ PASS |
 
 ---
 

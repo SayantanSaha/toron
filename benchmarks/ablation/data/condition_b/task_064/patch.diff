@@ -1,0 +1,20 @@
+--- a/pkg/router/limiter.go
++++ b/pkg/router/limiter.go
+@@ -20,6 +20,7 @@ type RateLimiter struct {
+ 	mu      sync.Mutex
+ 	buckets map[string]*Bucket
+ 	rate    float64
+ 	burst   int
++	maxCap  int
+ }
+ 
+ func (rl *RateLimiter) Allow(key string) bool {
+@@ -31,6 +32,9 @@ func (rl *RateLimiter) Allow(key string) bool {
+ 	b, ok := rl.buckets[key]
+ 	if !ok {
++		if len(rl.buckets) >= rl.maxCap {
++			return false
++		}
+ 		b = &Bucket{tokens: float64(rl.burst), last: now}
+ 		rl.buckets[key] = b
+ 	}

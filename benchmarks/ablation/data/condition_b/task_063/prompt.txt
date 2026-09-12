@@ -1,0 +1,10 @@
+You are an expert Go systems engineer working on the Toron Web Server and Edge Gateway.
+
+Requirement: Implement Shared Cache Session Boundary Isolation & Set-Cookie Stripping (TASK-063).
+
+Acceptance Criteria:
+1. Strip `Set-Cookie` response headers before storing responses in the shared RFC 7234 cache.
+2. Refuse caching of unauthenticated requests when `Cache-Control` specifies `private` or `no-store`.
+3. Never serve cached private responses to subsequent unauthenticated requests.
+
+Please provide the direct code modifications for `pkg/router/cache.go`.

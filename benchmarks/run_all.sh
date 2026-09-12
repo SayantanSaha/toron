@@ -23,6 +23,7 @@ SERVER_PID=""
 NO_HISTORY=false
 SESSION_NAME=""
 CUSTOM_SESSION_DIR=""
+MULTIHOP_MODE="standalone"
 
 cleanup() {
     if [ -n "${SERVER_PID}" ]; then
@@ -41,6 +42,7 @@ print_usage() {
     echo "Options:"
     echo "  --auto-start          Automatically compile and launch local Toron server in background"
     echo "  -t <host:port>        Target host:port (default: 127.0.0.1:8080)"
+    echo "  --docker              Run multi-hop stage with multi-container Docker Compose cluster"
     echo "  --no-history          Disable historical retention (only update canonical benchmarks/results)"
     echo "  --session-name <name> Optional custom suffix for the historical run directory"
     echo "  --session-dir <dir>   Explicit destination session directory"
@@ -52,6 +54,7 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --auto-start) AUTO_START=true; shift ;;
         -t) TARGET_HOST="$2"; shift 2 ;;
+        --docker) MULTIHOP_MODE="docker"; shift ;;
         --no-history) NO_HISTORY=true; export TORON_NO_HISTORY=true; shift ;;
         --session-name) SESSION_NAME="$2"; shift 2 ;;
         --session-dir) CUSTOM_SESSION_DIR="$2"; shift 2 ;;
@@ -149,7 +152,7 @@ fi
 
 echo ""
 echo "[5/6] Executing Heterogeneous Multi-Hop Backend Origin Testbed (Node.js, Python, Go, BMK-03)..."
-bash "${SCRIPT_DIR}/multihop/run_multihop.sh" --standalone
+bash "${SCRIPT_DIR}/multihop/run_multihop.sh" --${MULTIHOP_MODE}
 
 echo ""
 echo "[6/6] Executing 10-Task Controlled Ablation Experiment Suite (TASK-061 to TASK-070, BMK-05)..."
@@ -189,7 +192,7 @@ if [ -n "${ACTIVE_SESSION_DIR}" ]; then
       {"name": "wrk2", "status": "success", "parameters": {"concurrency": 100, "rate": 5000, "duration": "5s"}, "artifacts": ["benchmark_c100_r5000.json", "benchmark_c100_r5000.csv", "benchmark_c100_r5000.raw.txt"]},
       {"name": "saturation_stress", "status": "success", "parameters": {"concurrency": 50, "rate": 5000, "duration": "5s", "attack_ratio": 0.10}, "artifacts": ["saturation_stress_report.json", "saturation_stress_report.md"]},
       {"name": "differential_fuzzer", "status": "success", "parameters": {"trials": 1000, "warmup": 50}, "artifacts": ["differential_fuzz_report.json", "differential_fuzz_report.md"]},
-      {"name": "multihop", "status": "success", "parameters": {"mode": "standalone"}, "artifacts": ["multihop_report.json", "multihop_report.md"]},
+      {"name": "multihop", "status": "success", "parameters": {"mode": "'"${MULTIHOP_MODE}"'"}, "artifacts": ["multihop_report.json", "multihop_report.md"]},
       {"name": "ablation", "status": "success", "parameters": {"tasks": 10}, "artifacts": ["ablation_study_report.json", "ablation_study_report.md"]}
     ]'
 

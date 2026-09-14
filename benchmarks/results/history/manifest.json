@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-12T12:41:43+05:30",
-  "total_runs": 2,
+  "updated_at": "2026-09-14T11:05:41+05:30",
+  "total_runs": 10,
   "runs": [
     {
       "run_id": "run_2026-09-12_12-41-19",
@@ -33,6 +33,215 @@
       "artifacts": [
         "multihop_report.json",
         "multihop_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-12_14-28-09",
+      "timestamp": "2026-09-12T14:28:09+05:30",
+      "directory": "benchmarks/results/history/2026-09-12_14-28-09",
+      "suite": "multihop",
+      "command": "benchmarks/multihop/run_multihop.sh ",
+      "git_commit": "8e7b79a8918800761129fbf5daa39f95d6504f9d",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 0,
+      "artifacts": [
+        "multihop_report.json",
+        "multihop_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-12_14-31-28",
+      "timestamp": "2026-09-12T14:31:28+05:30",
+      "directory": "benchmarks/results/history/2026-09-12_14-31-28",
+      "suite": "multihop",
+      "command": "benchmarks/multihop/run_multihop.sh ",
+      "git_commit": "8e7b79a8918800761129fbf5daa39f95d6504f9d",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 0,
+      "artifacts": [
+        "multihop_report.json",
+        "multihop_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-12_14-33-46",
+      "timestamp": "2026-09-12T14:33:47+05:30",
+      "directory": "benchmarks/results/history/2026-09-12_14-33-46",
+      "suite": "multihop",
+      "command": "benchmarks/multihop/run_multihop.sh ",
+      "git_commit": "8e7b79a8918800761129fbf5daa39f95d6504f9d",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 1,
+      "artifacts": [
+        "multihop_report.json",
+        "multihop_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-12_14-34-30",
+      "timestamp": "2026-09-12T14:34:31+05:30",
+      "directory": "benchmarks/results/history/2026-09-12_14-34-30",
+      "suite": "multihop",
+      "command": "benchmarks/multihop/run_multihop.sh ",
+      "git_commit": "8e7b79a8918800761129fbf5daa39f95d6504f9d",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 1,
+      "artifacts": [
+        "multihop_report.json",
+        "multihop_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-12_14-39-18",
+      "timestamp": "2026-09-12T14:39:44+05:30",
+      "directory": "benchmarks/results/history/2026-09-12_14-39-18",
+      "suite": "multihop",
+      "command": "benchmarks/multihop/run_multihop.sh ",
+      "git_commit": "0bd85243ec07fd064ba17ab808557e82dcd69418",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 26,
+      "artifacts": [
+        "multihop_report.json",
+        "multihop_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-12_14-40-10",
+      "timestamp": "2026-09-12T15:01:24+05:30",
+      "directory": "benchmarks/results/history/2026-09-12_14-40-10",
+      "suite": "all",
+      "command": "bash benchmarks/run_all.sh --auto-start --docker",
+      "git_commit": "0bd85243ec07fd064ba17ab808557e82dcd69418",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 1188,
+      "artifacts": [
+        "microbenchmarks.raw.txt",
+        "benchmark_c100_r5000.json",
+        "benchmark_c100_r5000.csv",
+        "benchmark_c100_r5000.raw.txt",
+        "saturation_stress_report.json",
+        "saturation_stress_report.md",
+        "differential_fuzz_report.json",
+        "differential_fuzz_report.md",
+        "multihop_report.json",
+        "multihop_report.md",
+        "ablation_study_report.json",
+        "ablation_study_report.md"
+      ],
+      "stages": [
+        {
+          "name": "microbenchmarks",
+          "status": "success",
+          "artifacts": [
+            "microbenchmarks.raw.txt"
+          ]
+        },
+        {
+          "name": "wrk2",
+          "status": "success",
+          "parameters": {
+            "concurrency": 100,
+            "duration": "5s",
+            "rate": 5000
+          },
+          "artifacts": [
+            "benchmark_c100_r5000.json",
+            "benchmark_c100_r5000.csv",
+            "benchmark_c100_r5000.raw.txt"
+          ]
+        },
+        {
+          "name": "saturation_stress",
+          "status": "success",
+          "parameters": {
+            "attack_ratio": 0.1,
+            "concurrency": 50,
+            "duration": "5s",
+            "rate": 5000
+          },
+          "artifacts": [
+            "saturation_stress_report.json",
+            "saturation_stress_report.md"
+          ]
+        },
+        {
+          "name": "differential_fuzzer",
+          "status": "success",
+          "parameters": {
+            "trials": 1000,
+            "warmup": 50
+          },
+          "artifacts": [
+            "differential_fuzz_report.json",
+            "differential_fuzz_report.md"
+          ]
+        },
+        {
+          "name": "multihop",
+          "status": "success",
+          "parameters": {
+            "mode": "docker"
+          },
+          "artifacts": [
+            "multihop_report.json",
+            "multihop_report.md"
+          ]
+        },
+        {
+          "name": "ablation",
+          "status": "success",
+          "parameters": {
+            "tasks": 10
+          },
+          "artifacts": [
+            "ablation_study_report.json",
+            "ablation_study_report.md"
+          ]
+        }
+      ]
+    },
+    {
+      "run_id": "run_2026-09-14_10-42-19",
+      "timestamp": "2026-09-14T10:44:14+05:30",
+      "directory": "benchmarks/results/history/2026-09-14_10-42-19",
+      "suite": "docker-compare",
+      "command": "./benchmarks/docker-compare/run_compare.sh ",
+      "git_commit": "ecb1b410573469aa4e5055d7717a146b9afd38aa",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 114,
+      "artifacts": [
+        "docker_compare_report.json",
+        "docker_compare_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-14_11-03-47",
+      "timestamp": "2026-09-14T11:05:41+05:30",
+      "directory": "benchmarks/results/history/2026-09-14_11-03-47",
+      "suite": "docker-compare",
+      "command": "./benchmarks/docker-compare/run_compare.sh ",
+      "git_commit": "ecb1b410573469aa4e5055d7717a146b9afd38aa",
+      "git_branch": "master",
+      "go_version": "go1.26.6",
+      "status": "success",
+      "duration_seconds": 114,
+      "artifacts": [
+        "docker_compare_report.json",
+        "docker_compare_report.md"
       ]
     }
   ]

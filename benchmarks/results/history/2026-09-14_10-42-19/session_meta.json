@@ -1,0 +1,15 @@
+{
+  "run_id": "run_2026-09-14_10-42-19",
+  "timestamp": "2026-09-14T10:44:14+05:30",
+  "suite": "docker-compare",
+  "command": "./benchmarks/docker-compare/run_compare.sh ",
+  "git_commit": "ecb1b410573469aa4e5055d7717a146b9afd38aa",
+  "git_branch": "master",
+  "go_version": "go1.26.6",
+  "status": "success",
+  "duration_seconds": 114,
+  "artifacts": [
+    "docker_compare_report.json",
+    "docker_compare_report.md"
+  ]
+}

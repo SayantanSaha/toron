@@ -1,0 +1,83 @@
+http:
+  routers:
+    node-router:
+      rule: "PathPrefix(`/node`)"
+      entryPoints:
+        - web
+      middlewares:
+        - strip-node
+      service: node-service
+
+    python-router:
+      rule: "PathPrefix(`/python`)"
+      entryPoints:
+        - web
+      middlewares:
+        - strip-python
+      service: python-service
+
+    go-router:
+      rule: "PathPrefix(`/go`)"
+      entryPoints:
+        - web
+      middlewares:
+        - strip-go
+      service: go-service
+
+    fast-router:
+      rule: "PathPrefix(`/fast`)"
+      entryPoints:
+        - web
+      middlewares:
+        - strip-fast
+      service: fast-service
+
+  middlewares:
+    strip-node:
+      stripPrefix:
+        prefixes:
+          - "/node"
+        forceSlash: false
+
+    strip-python:
+      stripPrefix:
+        prefixes:
+          - "/python"
+        forceSlash: false
+
+    strip-go:
+      stripPrefix:
+        prefixes:
+          - "/go"
+        forceSlash: false
+
+    strip-fast:
+      stripPrefix:
+        prefixes:
+          - "/fast"
+        forceSlash: false
+
+  services:
+    node-service:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://node-origin:9101"
+
+    python-service:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://python-origin:9102"
+
+    go-service:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://go-origin:9103"
+
+    fast-service:
+      loadBalancer:
+        passHostHeader: true
+        servers:
+          - url: "http://fast-origin:9104"

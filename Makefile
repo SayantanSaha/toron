@@ -125,6 +125,16 @@ docker-down:
 	@echo "==> Stopping Docker Compose microservices..."
 	docker compose down
 
+## benchmark-compare: Runs the multi-proxy Docker benchmark comparing Toron against NGINX, Traefik, Caddy, and HAProxy
+benchmark-compare:
+	@echo "==> Running Multi-Proxy Differential Docker Benchmark..."
+	./benchmarks/docker-compare/run_compare.sh
+
+## benchmark-compare-clean: Tears down the multi-proxy Docker benchmark containers
+benchmark-compare-clean:
+	@echo "==> Tearing down Multi-Proxy Docker Benchmark cluster..."
+	./benchmarks/docker-compare/run_compare.sh --down
+
 ## graph: Re-syncs the AST Knowledge Graph
 graph:
 	@echo "==> Updating AST Knowledge Graph..."
@@ -133,11 +143,13 @@ graph:
 ## help: Displays available Makefile targets
 help:
 	@echo "Toron Makefile Targets:"
-	@echo "  make build       - Compile Toron binary to bin/toron"
-	@echo "  make dummy       - Compile dummy microservices to bin/dummy"
-	@echo "  make run         - Build and run Toron server"
-	@echo "  make test        - Run all unit tests"
-	@echo "  make clean       - Remove bin/ directory and build files"
-	@echo "  make docker-up   - Launch Docker Compose containers"
-	@echo "  make docker-down - Stop Docker Compose containers"
-	@echo "  make graph       - Re-sync graphify AST Knowledge Graph"
+	@echo "  make build                  - Compile Toron binary to bin/toron"
+	@echo "  make dummy                  - Compile dummy microservices to bin/dummy"
+	@echo "  make run                    - Build and run Toron server"
+	@echo "  make test                   - Run all unit tests"
+	@echo "  make clean                  - Remove bin/ directory and build files"
+	@echo "  make docker-up              - Launch Docker Compose containers"
+	@echo "  make docker-down            - Stop Docker Compose containers"
+	@echo "  make benchmark-compare      - Run multi-proxy Docker benchmark"
+	@echo "  make benchmark-compare-clean- Stop multi-proxy Docker benchmark containers"
+	@echo "  make graph                  - Re-sync graphify AST Knowledge Graph"

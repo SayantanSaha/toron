@@ -1,0 +1,2 @@
+Concurrency,TargetRPS,TotalActualRPS,BenignRPS,BenignP50_ms,BenignP99_ms,AttackRPS,AttackRejected,AttackRouteMiss,AttackBypassed,AttackUnhandled,ActiveDefenseRatePct,ZeroStarvation
+100,5000,4968.11,4968.11,0.09,0.27,0.00,0,0,0,0,100.0,true

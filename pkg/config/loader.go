@@ -292,6 +292,20 @@ func ValidateConfig(cfg *AppConfig) error {
 						return fmt.Errorf("proxy route %q target %q is invalid (must be a valid absolute HTTP or HTTPS URL, e.g. http://localhost:9001)", prefix, targetStr)
 					}
 				}
+
+				if route.Transport != nil && route.Transport.ProxyURL != "" {
+					parsedProxyURL, err := url.Parse(route.Transport.ProxyURL)
+					if err != nil || (parsedProxyURL.Scheme != "http" && parsedProxyURL.Scheme != "https") || parsedProxyURL.Host == "" {
+						return fmt.Errorf("proxy route %q transport proxy_url %q is invalid (must be a valid absolute HTTP or HTTPS URL)", prefix, route.Transport.ProxyURL)
+					}
+				}
+			}
+		}
+
+		if cfg.Proxy.Transport.ProxyURL != "" {
+			parsedProxyURL, err := url.Parse(cfg.Proxy.Transport.ProxyURL)
+			if err != nil || (parsedProxyURL.Scheme != "http" && parsedProxyURL.Scheme != "https") || parsedProxyURL.Host == "" {
+				return fmt.Errorf("proxy.transport.proxy_url %q is invalid (must be a valid absolute HTTP or HTTPS URL)", cfg.Proxy.Transport.ProxyURL)
 			}
 		}
 	}

@@ -21,6 +21,8 @@ depends_on:
   - REQ-089
   - REQ-090
   - REQ-091
+  - REQ-123
+  - REQ-124
 
 derived_from:
   - PRD.md
@@ -31,6 +33,8 @@ derived_from:
   - ADR-084
   - ADR-085
   - ADR-086
+  - ADR-123
+  - ADR-124
   - SEC-26
   - SEC-27
   - SEC-28
@@ -73,7 +77,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Service Mesh Sidecar Mode](./features/service-mesh-sidecar.md) – Lightweight pod-to-pod mTLS, bounded request body limits (HTTP 413), and weighted traffic splitting.
 - [Native Kubernetes Ingress Controller](./features/kubernetes-ingress.md) – Zero-dependency Kubernetes `networking.k8s.io/v1` Ingress Controller.
 - [OCI Container Auto-Discovery](./features/oci-container-auto-discovery.md) – Vendor-agnostic Docker & Podman Unix socket container auto-discovery.
-- [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding and proxy headers.
+- [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding, proxy headers, configurable transport, and distributed tracing (REQ-123, REQ-124).
 - [gRPC Edge Gateway & Health Probing](./features/grpc-gateway.md) – Native `grpc.health.v1` probing and HTTP/2 trailers preservation.
 - [Advanced Load Balancing Engine](./features/advanced-load-balancing.md) – 8 strategies: round-robin, weighted, least conn, least latency, sticky cookie, and IP hash.
 - [Circuit Breaker & Health Checks](./features/circuit-breaker.md) – 3-state circuit breaker and active upstream health probing.
@@ -90,6 +94,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Native Go Benchmarking](./features/benchmarking.md) – Performance benchmarks and allocation metrics.
 - [High-Concurrency Saturation Stress Benchmark & Status Classification](./features/saturation-stress-benchmark.md) – Dual-stream saturation testing, four-tier status classification taxonomy, and Table 6 metrics (BMK-04, HARN-01).
 - [Heterogeneous Multi-Hop Origin Testbed](./features/multihop-testbed.md) – Dual-mode (standalone & Docker Compose) evaluation across Node.js (llhttp), Python (uvicorn/h11), and Go (net/http) origins, wire-level protocol adapters, and zero-desync canary validation (BMK-03, REQ-120).
+- [Multi-Proxy Differential Docker Benchmark](./features/docker-compare-benchmark.md) – Automated comparative benchmarking comparing Toron against NGINX, Traefik, Caddy, and HAProxy fronting identical heterogeneous upstreams (REQ-121, REQ-122).
 - [Dummy Microservices Suite](./features/dummy-services.md) – Cluster of 10 test microservices.
 
 ### 📖 References

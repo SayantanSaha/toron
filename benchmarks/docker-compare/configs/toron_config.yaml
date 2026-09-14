@@ -1,0 +1,27 @@
+# Toron Differential Benchmark Configuration
+server:
+  host: "0.0.0.0"
+  port: 8080
+  worker_pool_size: 256
+  read_timeout: 10s
+  write_timeout: 10s
+  idle_timeout: 60s
+  max_header_bytes: 8192
+  max_body_bytes: 4194304
+
+  http2:
+    enabled: false
+
+  compression:
+    enabled: false
+
+  cache:
+    enabled: false
+
+  waf:
+    enabled: false
+
+logging:
+  level: "error"
+  format: "text"
+  server_log: "stdout"

@@ -421,20 +421,84 @@ type ProxyTLSConfig struct {
 
 // ReverseProxy handles proxying HTTP requests to upstream target URL(s).
 type ReverseProxy struct {
-	TargetURL          *url.URL     // Single primary target (for backward compatibility)
-	Balancer           LoadBalancer // Load balancer interface for target selection
-	Client             *http.Client
-	StripPrefix        bool
-	RewriteRedirects   bool
-	RewriteCookiePath  bool
-	InsecureSkipVerify bool
-	TLSCACertPool      *x509.CertPool
-	trustedProxies     []*net.IPNet
+	TargetURL              *url.URL     // Single primary target (for backward compatibility)
+	Balancer               LoadBalancer // Load balancer interface for target selection
+	Client                 *http.Client
+	StripPrefix            bool
+	RewriteRedirects       bool
+	RewriteCookiePath      bool
+	InsecureSkipVerify     bool
+	TLSCACertPool          *x509.CertPool
+	trustedProxies         []*net.IPNet
+	propagateUpstreamClose bool
+	tracing                bool
+}
+
+// GetTransport returns the underlying *http.Transport for telemetry and testing verification.
+func (p *ReverseProxy) GetTransport() *http.Transport {
+	if p.Client != nil {
+		if tr, ok := p.Client.Transport.(*http.Transport); ok {
+			return tr
+		}
+	}
+	return nil
 }
 
 // NewReverseProxy creates a ReverseProxy instance for a single target URL string.
 func NewReverseProxy(targetURLStr string, timeout time.Duration) (*ReverseProxy, error) {
 	return NewLoadBalancerProxy([]string{targetURLStr}, AlgorithmRoundRobin, timeout)
+}
+
+// ProxyTransportConfig configures upstream transport parameters including connection pooling,
+// timeouts, compression, egress routing, and protocol negotiation.
+type ProxyTransportConfig struct {
+	Profile                string
+	MaxIdleConns           int
+	MaxIdleConnsPerHost    int
+	MaxConnsPerHost        int
+	IdleConnTimeout        time.Duration
+	DisableCompression     *bool
+	UseEnvProxy            *bool
+	ProxyURL               string
+	PropagateUpstreamClose *bool
+	ForceAttemptHTTP2      *bool
+	Tracing                *bool
+}
+
+// DefaultProxyTransportConfig returns the canonical transport configuration for the given profile.
+// Default profile is "raw_speed".
+func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
+	p := strings.ToLower(strings.TrimSpace(profile))
+	if p == "balanced" || p == "standard" {
+		f := false
+		t := true
+		return ProxyTransportConfig{
+			Profile:                "balanced",
+			MaxIdleConns:           1000,
+			MaxIdleConnsPerHost:    100,
+			MaxConnsPerHost:        200,
+			IdleConnTimeout:        30 * time.Second,
+			DisableCompression:     &f,
+			UseEnvProxy:            &t,
+			PropagateUpstreamClose: &t,
+			ForceAttemptHTTP2:      &t,
+			Tracing:                &t,
+		}
+	}
+	t := true
+	f := false
+	return ProxyTransportConfig{
+		Profile:                "raw_speed",
+		MaxIdleConns:           10000,
+		MaxIdleConnsPerHost:    1000,
+		MaxConnsPerHost:        0,
+		IdleConnTimeout:        90 * time.Second,
+		DisableCompression:     &t,
+		UseEnvProxy:            &f,
+		PropagateUpstreamClose: &f,
+		ForceAttemptHTTP2:      &f,
+		Tracing:                &f,
+	}
 }
 
 // ProxyOptions configures advanced proxy, health check, and circuit breaker settings.
@@ -465,6 +529,7 @@ type ProxyOptions struct {
 	TLSCACertPool       *x509.CertPool
 	TLSClientConfig     *tls.Config
 	TrustedProxies      []string
+	Transport           ProxyTransportConfig
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.
@@ -502,15 +567,77 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 
 	insecureSkipVerify := opts.InsecureSkipVerify || opts.TLS.InsecureSkipVerify
 
+	// Resolve transport settings
+	baseProfile := opts.Transport.Profile
+	tc := DefaultProxyTransportConfig(baseProfile)
+	if opts.Transport.MaxIdleConns > 0 {
+		tc.MaxIdleConns = opts.Transport.MaxIdleConns
+	}
+	if opts.Transport.MaxIdleConnsPerHost > 0 {
+		tc.MaxIdleConnsPerHost = opts.Transport.MaxIdleConnsPerHost
+	}
+	if opts.Transport.MaxConnsPerHost > 0 {
+		tc.MaxConnsPerHost = opts.Transport.MaxConnsPerHost
+	}
+	if opts.Transport.IdleConnTimeout > 0 {
+		tc.IdleConnTimeout = opts.Transport.IdleConnTimeout
+	}
+	if opts.Transport.DisableCompression != nil {
+		tc.DisableCompression = opts.Transport.DisableCompression
+	}
+	if opts.Transport.UseEnvProxy != nil {
+		tc.UseEnvProxy = opts.Transport.UseEnvProxy
+	}
+	if opts.Transport.ProxyURL != "" {
+		tc.ProxyURL = opts.Transport.ProxyURL
+	}
+	if opts.Transport.PropagateUpstreamClose != nil {
+		tc.PropagateUpstreamClose = opts.Transport.PropagateUpstreamClose
+	}
+	if opts.Transport.ForceAttemptHTTP2 != nil {
+		tc.ForceAttemptHTTP2 = opts.Transport.ForceAttemptHTTP2
+	}
+	if opts.Transport.Tracing != nil {
+		tc.Tracing = opts.Transport.Tracing
+	}
+
+	var proxyFunc func(*http.Request) (*url.URL, error)
+	if tc.ProxyURL != "" {
+		parsedProxyURL, err := url.Parse(tc.ProxyURL)
+		if err != nil {
+			return nil, fmt.Errorf("proxy: invalid proxy_url %q: %w", tc.ProxyURL, err)
+		}
+		proxyFunc = http.ProxyURL(parsedProxyURL)
+	} else if tc.UseEnvProxy != nil && *tc.UseEnvProxy {
+		proxyFunc = http.ProxyFromEnvironment
+	} else {
+		proxyFunc = nil
+	}
+
+	disableCompression := true
+	if tc.DisableCompression != nil {
+		disableCompression = *tc.DisableCompression
+	}
+
+	forceAttemptH2 := false
+	if tc.ForceAttemptHTTP2 != nil {
+		forceAttemptH2 = *tc.ForceAttemptHTTP2
+	}
+
 	tr := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
+		Proxy: proxyFunc,
 		DialContext: (&net.Dialer{
 			Timeout:   opts.Timeout,
-			KeepAlive: 30 * time.Second,
+			KeepAlive: 60 * time.Second,
 		}).DialContext,
-		ForceAttemptHTTP2:     true,
-		MaxIdleConns:          100,
-		IdleConnTimeout:       90 * time.Second,
+		ForceAttemptHTTP2:     forceAttemptH2,
+		MaxIdleConns:          tc.MaxIdleConns,
+		MaxIdleConnsPerHost:   tc.MaxIdleConnsPerHost,
+		MaxConnsPerHost:       tc.MaxConnsPerHost,
+		IdleConnTimeout:       tc.IdleConnTimeout,
+		DisableCompression:    disableCompression,
+		WriteBufferSize:       64 * 1024,
+		ReadBufferSize:        64 * 1024,
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 		TLSClientConfig: &tls.Config{
@@ -584,16 +711,28 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		}
 	}
 
+	propagateUpstreamClose := false
+	if tc.PropagateUpstreamClose != nil {
+		propagateUpstreamClose = *tc.PropagateUpstreamClose
+	}
+
+	tracing := false
+	if tc.Tracing != nil {
+		tracing = *tc.Tracing
+	}
+
 	return &ReverseProxy{
-		TargetURL:          upstreamTargets[0].URL,
-		Balancer:           lb,
-		Client:             client,
-		StripPrefix:        stripPrefix,
-		RewriteRedirects:   rewriteRedirects,
-		RewriteCookiePath:  rewriteCookiePath,
-		InsecureSkipVerify: insecureSkipVerify,
-		TLSCACertPool:      caPool,
-		trustedProxies:     trustedProxies,
+		TargetURL:              upstreamTargets[0].URL,
+		Balancer:               lb,
+		Client:                 client,
+		StripPrefix:            stripPrefix,
+		RewriteRedirects:       rewriteRedirects,
+		RewriteCookiePath:      rewriteCookiePath,
+		InsecureSkipVerify:     insecureSkipVerify,
+		TLSCACertPool:          caPool,
+		trustedProxies:         trustedProxies,
+		propagateUpstreamClose: propagateUpstreamClose,
+		tracing:                tracing,
 	}, nil
 }
 
@@ -890,9 +1029,13 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		outReq.Header.Set("X-Forwarded-Prefix", prefix)
 	}
 
-	// Propagate / Inject W3C traceparent header
+	// Propagate / Inject W3C traceparent header if tracing is enabled
 	incomingTrace := req.Header.Get("traceparent")
-	outReq.Header.Set("traceparent", metrics.EnsureW3CTraceparent(incomingTrace))
+	if p.tracing {
+		outReq.Header.Set("traceparent", metrics.EnsureW3CTraceparent(incomingTrace))
+	} else if incomingTrace != "" {
+		outReq.Header.Set("traceparent", incomingTrace)
+	}
 
 	// Dispatch request to upstream
 	outResp, err := p.Client.Do(outReq)
@@ -912,11 +1055,25 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	// Copy upstream status code
 	res.SetStatus(outResp.StatusCode)
 
-	// Copy upstream headers
+	upstreamClosed := false
+	if strings.EqualFold(outResp.Header.Get("Connection"), "close") || outResp.Close {
+		upstreamClosed = true
+	}
+
+	// Copy upstream headers (filtering RFC 7230 hop-by-hop headers)
 	for key, values := range outResp.Header {
+		lowerKey := strings.ToLower(key)
+		if hopByHopHeaders[lowerKey] {
+			continue
+		}
 		for _, val := range values {
 			res.Header.Add(key, val)
 		}
+	}
+
+	// Propagate upstream close if enabled
+	if p.propagateUpstreamClose && upstreamClosed {
+		res.Header.Set("Connection", "close")
 	}
 
 	// Intercept and rewrite 3xx redirects (Location header) if enabled

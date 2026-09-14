@@ -1,0 +1,28 @@
+================================================================================
+   TORON HIGH-PRECISION LOAD GENERATOR & ADVERSARIAL STRESS HARNESS (BMK-04)   
+================================================================================
+ Target URL:     http://127.0.0.1:8080/health
+ Concurrency:    100 connections
+ Duration:       5s
+ Target Rate:    5000 req/sec
+ Attack Ratio:   0.0% adversarial attack injection
+ Running benchmark warmup and execution...
+--------------------------------------------------------------------------------
+ Benchmark Completed in:  5.00 seconds
+ Total Requests Executed: 24841 (4968.11 RPS)
+--------------------------------------------------------------------------------
+ Benign Stream (24841 requests):
+   Success / Failed:      24841 / 0
+   Throughput:            4968.11 RPS (0.07 MB/s)
+   p50 (median):              0.09 ms
+   p90:                       0.12 ms
+   p95:                       0.13 ms
+   p99 (tail):                0.27 ms
+   p99.9:                     3.12 ms
+   Zero-Starvation OK:    true
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+ Overall Verdict:         PASS
+================================================================================
+ [Artifact Saved] JSON report -> /Users/sneha/Developer/toron-research/toron/benchmarks/results/benchmark_c100_r5000.json
+ [Artifact Saved] CSV summary -> /Users/sneha/Developer/toron-research/toron/benchmarks/results/benchmark_c100_r5000.csv

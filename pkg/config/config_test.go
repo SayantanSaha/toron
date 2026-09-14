@@ -779,3 +779,209 @@ transcoder:
 	})
 }
 
+// TC-123: Verification of Configurable Upstream Reverse Proxy Transport Architecture
+func TestConfig_ProxyTransportConfig_HierarchyAndDefaults(t *testing.T) {
+	t.Run("TC-123.1/8: Default Raw Speed and Balanced Presets", func(t *testing.T) {
+		raw := config.DefaultProxyTransportConfig("raw_speed")
+		if raw.MaxIdleConns != 10000 || raw.MaxIdleConnsPerHost != 1000 || raw.MaxConnsPerHost != 0 {
+			t.Errorf("unexpected raw_speed pool values: %+v", raw)
+		}
+		if raw.IdleConnTimeout != 90*time.Second {
+			t.Errorf("unexpected raw_speed idle timeout: %v", raw.IdleConnTimeout)
+		}
+		if raw.DisableCompression == nil || !*raw.DisableCompression {
+			t.Errorf("expected raw_speed DisableCompression to be true")
+		}
+		if raw.UseEnvProxy == nil || *raw.UseEnvProxy {
+			t.Errorf("expected raw_speed UseEnvProxy to be false")
+		}
+		if raw.PropagateUpstreamClose == nil || *raw.PropagateUpstreamClose {
+			t.Errorf("expected raw_speed PropagateUpstreamClose to be false")
+		}
+		if raw.ForceAttemptHTTP2 == nil || *raw.ForceAttemptHTTP2 {
+			t.Errorf("expected raw_speed ForceAttemptHTTP2 to be false")
+		}
+		if raw.Tracing == nil || *raw.Tracing {
+			t.Errorf("expected raw_speed Tracing to be false")
+		}
+
+		balanced := config.DefaultProxyTransportConfig("balanced")
+		if balanced.MaxIdleConns != 1000 || balanced.MaxIdleConnsPerHost != 100 || balanced.MaxConnsPerHost != 200 {
+			t.Errorf("unexpected balanced pool values: %+v", balanced)
+		}
+		if balanced.IdleConnTimeout != 30*time.Second {
+			t.Errorf("unexpected balanced idle timeout: %v", balanced.IdleConnTimeout)
+		}
+		if balanced.DisableCompression == nil || *balanced.DisableCompression {
+			t.Errorf("expected balanced DisableCompression to be false")
+		}
+		if balanced.UseEnvProxy == nil || !*balanced.UseEnvProxy {
+			t.Errorf("expected balanced UseEnvProxy to be true")
+		}
+		if balanced.PropagateUpstreamClose == nil || !*balanced.PropagateUpstreamClose {
+			t.Errorf("expected balanced PropagateUpstreamClose to be true")
+		}
+		if balanced.ForceAttemptHTTP2 == nil || !*balanced.ForceAttemptHTTP2 {
+			t.Errorf("expected balanced ForceAttemptHTTP2 to be true")
+		}
+		if balanced.Tracing == nil || !*balanced.Tracing {
+			t.Errorf("expected balanced Tracing to be true")
+		}
+	})
+
+	t.Run("TC-123.2: Hierarchical Override Resolution", func(t *testing.T) {
+		global := config.ProxyTransportConfig{
+			Profile:             "raw_speed",
+			MaxIdleConnsPerHost: 500,
+		}
+
+		// Route without override inherits global
+		routeDefault := config.ProxyRouteConfig{Prefix: "/api"}
+		resolved := routeDefault.ResolveTransport(global)
+		if resolved.MaxIdleConnsPerHost != 500 {
+			t.Errorf("expected inherited MaxIdleConnsPerHost 500, got %d", resolved.MaxIdleConnsPerHost)
+		}
+		if resolved.MaxIdleConns != 10000 {
+			t.Errorf("expected default MaxIdleConns 10000, got %d", resolved.MaxIdleConns)
+		}
+
+		// Route with override takes precedence
+		maxConns := 25
+		routeOverridden := config.ProxyRouteConfig{
+			Prefix: "/slow",
+			Transport: &config.ProxyTransportConfig{
+				MaxConnsPerHost: maxConns,
+			},
+		}
+		resolvedOverride := routeOverridden.ResolveTransport(global)
+		if resolvedOverride.MaxConnsPerHost != 25 {
+			t.Errorf("expected overridden MaxConnsPerHost 25, got %d", resolvedOverride.MaxConnsPerHost)
+		}
+		if resolvedOverride.MaxIdleConnsPerHost != 500 {
+			t.Errorf("expected inherited MaxIdleConnsPerHost 500, got %d", resolvedOverride.MaxIdleConnsPerHost)
+		}
+	})
+
+	t.Run("TC-123.3: YAML and JSON Deserialization", func(t *testing.T) {
+		yamlData := `
+proxy:
+  enabled: true
+  transport:
+    profile: "balanced"
+    max_idle_conns_per_host: 250
+    proxy_url: "http://proxy.corp:3128"
+  routes:
+    - prefix: "/custom"
+      targets: ["http://backend:8080"]
+      transport:
+        max_conns_per_host: 42
+        disable_compression: true
+`
+		tmpDir := t.TempDir()
+		cfgPath := filepath.Join(tmpDir, "config.yaml")
+		if err := os.WriteFile(cfgPath, []byte(yamlData), 0644); err != nil {
+			t.Fatalf("failed to write config yaml: %v", err)
+		}
+
+		appCfg, err := config.LoadFromFiles(cfgPath, "")
+		if err != nil {
+			t.Fatalf("failed to load YAML config: %v", err)
+		}
+
+		if appCfg.Proxy.Transport.Profile != "balanced" {
+			t.Errorf("expected global profile balanced, got %q", appCfg.Proxy.Transport.Profile)
+		}
+		if appCfg.Proxy.Transport.MaxIdleConnsPerHost != 250 {
+			t.Errorf("expected global MaxIdleConnsPerHost 250, got %d", appCfg.Proxy.Transport.MaxIdleConnsPerHost)
+		}
+		if appCfg.Proxy.Transport.ProxyURL != "http://proxy.corp:3128" {
+			t.Errorf("expected global ProxyURL 'http://proxy.corp:3128', got %q", appCfg.Proxy.Transport.ProxyURL)
+		}
+
+		route := appCfg.Proxy.Routes[0]
+		if route.Transport == nil {
+			t.Fatal("expected route Transport to be populated, got nil")
+		}
+		if route.Transport.MaxConnsPerHost != 42 {
+			t.Errorf("expected route MaxConnsPerHost 42, got %d", route.Transport.MaxConnsPerHost)
+		}
+
+		resolved := route.ResolveTransport(appCfg.Proxy.Transport)
+		if resolved.MaxConnsPerHost != 42 {
+			t.Errorf("expected resolved MaxConnsPerHost 42, got %d", resolved.MaxConnsPerHost)
+		}
+		if resolved.MaxIdleConnsPerHost != 250 {
+			t.Errorf("expected resolved MaxIdleConnsPerHost 250, got %d", resolved.MaxIdleConnsPerHost)
+		}
+		if resolved.ProxyURL != "http://proxy.corp:3128" {
+			t.Errorf("expected resolved ProxyURL 'http://proxy.corp:3128', got %q", resolved.ProxyURL)
+		}
+		if resolved.DisableCompression == nil || !*resolved.DisableCompression {
+			t.Errorf("expected resolved DisableCompression to be true")
+		}
+	})
+
+	t.Run("TC-124.1/2: Tracing Configuration Defaults and Overrides", func(t *testing.T) {
+		global := config.ProxyTransportConfig{
+			Profile: "raw_speed",
+		}
+		// In raw_speed, tracing defaults to false
+		routeDef := config.ProxyRouteConfig{Prefix: "/api"}
+		resDef := routeDef.ResolveTransport(global)
+		if resDef.Tracing == nil || *resDef.Tracing {
+			t.Errorf("expected default raw_speed tracing to be false, got: %v", resDef.Tracing)
+		}
+
+		// Route override enables tracing
+		trTrue := true
+		routeWithTracing := config.ProxyRouteConfig{
+			Prefix: "/traced",
+			Transport: &config.ProxyTransportConfig{
+				Tracing: &trTrue,
+			},
+		}
+		resTraced := routeWithTracing.ResolveTransport(global)
+		if resTraced.Tracing == nil || !*resTraced.Tracing {
+			t.Errorf("expected route override tracing to be true")
+		}
+
+		// Balanced profile defaults tracing to true
+		globalBalanced := config.ProxyTransportConfig{
+			Profile: "balanced",
+		}
+		resBalanced := routeDef.ResolveTransport(globalBalanced)
+		if resBalanced.Tracing == nil || !*resBalanced.Tracing {
+			t.Errorf("expected default balanced tracing to be true")
+		}
+
+		// Route override disables tracing under balanced profile
+		trFalse := false
+		routeNoTracing := config.ProxyRouteConfig{
+			Prefix: "/fast",
+			Transport: &config.ProxyTransportConfig{
+				Tracing: &trFalse,
+			},
+		}
+		resNoTracing := routeNoTracing.ResolveTransport(globalBalanced)
+		if resNoTracing.Tracing == nil || *resNoTracing.Tracing {
+			t.Errorf("expected route override tracing to be false under balanced profile")
+		}
+	})
+
+	t.Run("Validation: Invalid ProxyURL Rejection", func(t *testing.T) {
+		cfg := config.DefaultAppConfig()
+		cfg.Static.Enabled = false
+		cfg.Proxy.Enabled = true
+		cfg.Proxy.Transport.ProxyURL = "invalid-url-without-scheme"
+
+		err := config.ValidateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected ValidateConfig error for invalid proxy.transport.proxy_url, got nil")
+		}
+		if !strings.Contains(err.Error(), "proxy.transport.proxy_url") {
+			t.Errorf("expected error containing 'proxy.transport.proxy_url', got: %v", err)
+		}
+	})
+}
+
+

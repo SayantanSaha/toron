@@ -1,0 +1,15 @@
+{
+  "run_id": "run_2026-09-12_14-34-30",
+  "timestamp": "2026-09-12T14:34:31+05:30",
+  "suite": "multihop",
+  "command": "benchmarks/multihop/run_multihop.sh ",
+  "git_commit": "8e7b79a8918800761129fbf5daa39f95d6504f9d",
+  "git_branch": "master",
+  "go_version": "go1.26.6",
+  "status": "success",
+  "duration_seconds": 1,
+  "artifacts": [
+    "multihop_report.json",
+    "multihop_report.md"
+  ]
+}

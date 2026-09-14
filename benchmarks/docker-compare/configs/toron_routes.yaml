@@ -1,0 +1,21 @@
+# Toron Differential Benchmark Routing Table
+routes:
+  - type: "upstream"
+    prefix: "/node"
+    target: "http://node-origin:9101"
+    strip_prefix: true
+
+  - type: "upstream"
+    prefix: "/python"
+    target: "http://python-origin:9102"
+    strip_prefix: true
+
+  - type: "upstream"
+    prefix: "/go"
+    target: "http://go-origin:9103"
+    strip_prefix: true
+
+  - type: "upstream"
+    prefix: "/fast"
+    target: "http://fast-origin:9104"
+    strip_prefix: true

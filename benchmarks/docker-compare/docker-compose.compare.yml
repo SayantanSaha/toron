@@ -1,0 +1,139 @@
+services:
+  # ============================================================================
+  # 1. Heterogeneous Upstream Origins
+  # ============================================================================
+  node-origin:
+    build:
+      context: ../multihop/backends/node
+      dockerfile: Dockerfile
+    container_name: toron-cmp-node
+    ports:
+      - "9101:9101"
+    environment:
+      - PORT=9101
+    networks:
+      - compare-net
+
+  python-origin:
+    build:
+      context: ../multihop/backends/python
+      dockerfile: Dockerfile
+    container_name: toron-cmp-python
+    ports:
+      - "9102:9102"
+    environment:
+      - PORT=9102
+    networks:
+      - compare-net
+
+  go-origin:
+    build:
+      context: ../multihop/backends/go
+      dockerfile: Dockerfile
+    container_name: toron-cmp-go
+    ports:
+      - "9103:9103"
+    environment:
+      - PORT=9103
+    networks:
+      - compare-net
+
+  fast-origin:
+    build:
+      context: ./backends/fast
+      dockerfile: Dockerfile
+    container_name: toron-cmp-fast
+    ports:
+      - "9104:9104"
+    environment:
+      - PORT=9104
+    networks:
+      - compare-net
+
+  # ============================================================================
+  # 2. Reverse Proxies Under Evaluation
+  # ============================================================================
+  toron-proxy:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    container_name: toron-cmp-toron
+    command: ["-config", "/etc/toron/config.yaml", "-routes", "/etc/toron/routes.yaml"]
+    ports:
+      - "8881:8080"
+    volumes:
+      - ./configs/toron_config.yaml:/etc/toron/config.yaml:ro
+      - ./configs/toron_routes.yaml:/etc/toron/routes.yaml:ro
+    depends_on:
+      - node-origin
+      - python-origin
+      - go-origin
+      - fast-origin
+    networks:
+      - compare-net
+
+  nginx-proxy:
+    image: nginx:alpine
+    container_name: toron-cmp-nginx
+    ports:
+      - "8882:80"
+    volumes:
+      - ./configs/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - node-origin
+      - python-origin
+      - go-origin
+      - fast-origin
+    networks:
+      - compare-net
+
+  traefik-proxy:
+    image: traefik:v3.1
+    container_name: toron-cmp-traefik
+    ports:
+      - "8883:80"
+      - "8880:8080"
+    volumes:
+      - ./configs/traefik.yml:/etc/traefik/traefik.yml:ro
+      - ./configs/traefik_dynamic.yml:/etc/traefik/traefik_dynamic.yml:ro
+    depends_on:
+      - node-origin
+      - python-origin
+      - go-origin
+      - fast-origin
+    networks:
+      - compare-net
+
+  caddy-proxy:
+    image: caddy:alpine
+    container_name: toron-cmp-caddy
+    ports:
+      - "8884:80"
+    volumes:
+      - ./configs/Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - node-origin
+      - python-origin
+      - go-origin
+      - fast-origin
+    networks:
+      - compare-net
+
+  haproxy-proxy:
+    image: haproxy:alpine
+    container_name: toron-cmp-haproxy
+    ports:
+      - "8885:80"
+    volumes:
+      - ./configs/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    depends_on:
+      - node-origin
+      - python-origin
+      - go-origin
+      - fast-origin
+    networks:
+      - compare-net
+
+networks:
+  compare-net:
+    driver: bridge

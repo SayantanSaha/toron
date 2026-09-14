@@ -1,0 +1,21 @@
+global:
+  checkNewVersion: false
+  sendAnonymousUsage: false
+
+log:
+  level: WARN
+
+entryPoints:
+  web:
+    address: ":80"
+  traefik:
+    address: ":8080"
+
+api:
+  dashboard: true
+  insecure: true
+
+providers:
+  file:
+    filename: /etc/traefik/traefik_dynamic.yml
+    watch: false

@@ -10,18 +10,29 @@ depends_on:
   - REQ-009
   - REQ-030
   - REQ-092
+  - REQ-122
+  - REQ-123
   - TASK-009
   - TASK-111
   - TASK-112
   - TASK-113
+  - TASK-145
+  - TASK-146
   - ADR-004
   - ADR-087
+  - ADR-122
+  - ADR-123
+  - TC-123
+  - CR-119
+  - SR-123
 
 derived_from:
   - REQ-009
   - REQ-092
+  - REQ-123
   - ADR-004
   - ADR-087
+  - ADR-123
   - SEC-31
 
 documents:
@@ -98,13 +109,51 @@ routes:
     rewrite_redirects: true
     rewrite_cookie_path: true
 
-  # 4. Native prefix-aware backend (preserving full path, disabling redirect rewrites)
+  # 5. Tuned upstream with custom connection pooling and egress routing (REQ-123)
   - type: "upstream"
-    prefix: "/services/v2"
-    target: "http://localhost:9009"
-    strip_prefix: false
-    rewrite_redirects: false
+    prefix: "/services/microservice"
+    target: "https://api.internal.corp:8443"
+    transport:
+      max_idle_conns_per_host: 500       # Keepalive socket pool sizing
+      max_conns_per_host: 50             # Upstream backpressure limit
+      idle_conn_timeout: 45s             # Socket reclamation timeout
+      disable_compression: true          # Raw zero-allocation pass-through
+      force_attempt_http2: true          # Enable upstream HTTP/2 ALPN multiplexing
+      use_env_proxy: false               # Direct dialing (or true for HTTP_PROXY)
+      propagate_upstream_close: false    # Isolate downstream client keep-alives
+      tracing: false                     # false = raw speed; true = W3C traceparent context generation (REQ-124)
+
+## Upstream Transport Configuration (`ProxyTransportConfig`)
+
+Beginning with [`REQ-123`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-123.md) and [`REQ-124`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-124.md), Toron allows granular configuration of reverse proxy transport settings.
+
+### Global Defaults (`config.yaml`)
+
+```yaml
+proxy:
+  enabled: true
+  transport:
+    profile: "raw_speed"            # Presets: "raw_speed" (default) or "balanced"
+    max_idle_conns: 10000           # Global max idle connections
+    max_idle_conns_per_host: 1000   # Max idle keepalive connections per host
+    max_conns_per_host: 0           # Concurrency limit (0 = unconstrained; >0 throttles & queues)
+    idle_conn_timeout: 90s          # Keepalive socket retention
+    disable_compression: true       # true = raw byte pass-through; false = auto-decompress gzip
+    use_env_proxy: false            # true = honors HTTP_PROXY/NO_PROXY; false = direct socket dial
+    proxy_url: ""                   # Explicit forward proxy URL (e.g. http://squid.corp:3128)
+    propagate_upstream_close: false # false = isolates client keepalives; true = clean client teardown
+    force_attempt_http2: false      # true = ALPN h2 stream multiplexing to TLS origins
+    tracing: false                  # false = suppresses crypto/rand trace ID generation (raw speed); true = generates W3C traceparent
 ```
+
+### Route-Level Overrides (`routes.yaml`)
+
+Each route can override any transport knob under `transport`:
+- **Delicate microservices**: Set `max_conns_per_host: 25` to protect origin from connection flooding.
+- **External Partner APIs**: Set `use_env_proxy: true` or `proxy_url: "http://squid.corp:3128"`.
+- **Payload Inspection**: Set `disable_compression: false` to allow downstream middleware to inspect plaintext.
+- **Upstream Session Teardown**: Set `propagate_upstream_close: true` to let origin `Connection: close` tear down the client socket cleanly while still stripping hop-by-hop headers per RFC 7230.
+- **Distributed Tracing**: Set `tracing: true` on observability-critical routes to generate W3C `traceparent` headers with cryptographic random IDs, or leave `tracing: false` for raw performance.
 
 ## Programmatic Route Registration
 
@@ -121,5 +170,6 @@ if err := r.Proxy("/api/v2", "http://localhost:9090"); err != nil {
 
 - [Configuration Guide](../configuration.md)
 - [Configuration Options](../reference/config-options.md)
+- [Multi-Proxy Docker Benchmark](./docker-compare-benchmark.md)
 - [Web Application Firewall](../features/waf.md)
 - [Troubleshooting](../troubleshooting.md)

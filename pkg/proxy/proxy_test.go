@@ -1,6 +1,8 @@
 package proxy_test
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/x509"
 	"fmt"
 	"io"
@@ -8,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1271,3 +1275,418 @@ func TestProxy_HTTP2ToHTTP1_PseudoHeaderStripping(t *testing.T) {
 		t.Errorf("expected X-Normal-Header to be forwarded, got %q", receivedHeaders.Get("X-Normal-Header"))
 	}
 }
+
+// TC-123: Verification of Configurable Upstream Reverse Proxy Transport Architecture
+func TestProxy_TransportConfig_DefaultsAndCustom(t *testing.T) {
+	t.Run("TC-123.1: Raw Speed Defaults Preservation", func(t *testing.T) {
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{"http://127.0.0.1:9099"},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		tr := px.GetTransport()
+		if tr == nil {
+			t.Fatal("expected non-nil http.Transport")
+		}
+		if tr.MaxIdleConns != 10000 {
+			t.Errorf("expected MaxIdleConns 10000, got %d", tr.MaxIdleConns)
+		}
+		if tr.MaxIdleConnsPerHost != 1000 {
+			t.Errorf("expected MaxIdleConnsPerHost 1000, got %d", tr.MaxIdleConnsPerHost)
+		}
+		if tr.MaxConnsPerHost != 0 {
+			t.Errorf("expected MaxConnsPerHost 0, got %d", tr.MaxConnsPerHost)
+		}
+		if tr.IdleConnTimeout != 90*time.Second {
+			t.Errorf("expected IdleConnTimeout 90s, got %v", tr.IdleConnTimeout)
+		}
+		if !tr.DisableCompression {
+			t.Errorf("expected DisableCompression true, got false")
+		}
+		if tr.ForceAttemptHTTP2 {
+			t.Errorf("expected ForceAttemptHTTP2 false, got true")
+		}
+		if tr.Proxy != nil {
+			t.Errorf("expected Proxy nil for raw speed, got non-nil")
+		}
+	})
+
+	t.Run("TC-123.2/7: Custom Transport Tuning", func(t *testing.T) {
+		f := false
+		trTrue := true
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{"http://127.0.0.1:9099"},
+			Transport: proxy.ProxyTransportConfig{
+				MaxIdleConns:        500,
+				MaxIdleConnsPerHost: 50,
+				MaxConnsPerHost:     25,
+				IdleConnTimeout:     15 * time.Second,
+				DisableCompression:  &f,
+				ForceAttemptHTTP2:   &trTrue,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		tr := px.GetTransport()
+		if tr == nil {
+			t.Fatal("expected non-nil http.Transport")
+		}
+		if tr.MaxIdleConns != 500 {
+			t.Errorf("expected MaxIdleConns 500, got %d", tr.MaxIdleConns)
+		}
+		if tr.MaxIdleConnsPerHost != 50 {
+			t.Errorf("expected MaxIdleConnsPerHost 50, got %d", tr.MaxIdleConnsPerHost)
+		}
+		if tr.MaxConnsPerHost != 25 {
+			t.Errorf("expected MaxConnsPerHost 25, got %d", tr.MaxConnsPerHost)
+		}
+		if tr.IdleConnTimeout != 15*time.Second {
+			t.Errorf("expected IdleConnTimeout 15s, got %v", tr.IdleConnTimeout)
+		}
+		if tr.DisableCompression {
+			t.Errorf("expected DisableCompression false, got true")
+		}
+		if !tr.ForceAttemptHTTP2 {
+			t.Errorf("expected ForceAttemptHTTP2 true, got false")
+		}
+	})
+
+	t.Run("TC-123.3: Explicit Egress Proxy URL", func(t *testing.T) {
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{"http://127.0.0.1:9099"},
+			Transport: proxy.ProxyTransportConfig{
+				ProxyURL: "http://squid.corp:3128",
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		tr := px.GetTransport()
+		if tr == nil || tr.Proxy == nil {
+			t.Fatal("expected non-nil Proxy resolver on transport")
+		}
+		testReq, _ := http.NewRequest("GET", "http://example.com/test", nil)
+		proxyURL, err := tr.Proxy(testReq)
+		if err != nil {
+			t.Fatalf("tr.Proxy failed: %v", err)
+		}
+		if proxyURL == nil || proxyURL.String() != "http://squid.corp:3128" {
+			t.Errorf("expected proxy URL 'http://squid.corp:3128', got %v", proxyURL)
+		}
+	})
+}
+
+func TestProxy_TransportConfig_PropagateUpstreamClose(t *testing.T) {
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "close")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("origin-terminating"))
+	}))
+	defer upstreamServer.Close()
+
+	t.Run("TC-123.6: Default Raw Speed Isolates KeepAlive", func(t *testing.T) {
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{upstreamServer.URL},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		req, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+		// In raw speed mode, upstream Connection: close is stripped, so downstream res does not contain close
+		if res.Header.Get("Connection") == "close" {
+			t.Errorf("expected Connection header NOT to be 'close' in raw speed mode, got %q", res.Header.Get("Connection"))
+		}
+	})
+
+	t.Run("TC-123.6: PropagateUpstreamClose Enables Socket Teardown", func(t *testing.T) {
+		tClose := true
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{upstreamServer.URL},
+			Transport: proxy.ProxyTransportConfig{
+				PropagateUpstreamClose: &tClose,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		req, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+		if res.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection header to be 'close' when PropagateUpstreamClose is true, got %q", res.Header.Get("Connection"))
+		}
+	})
+}
+
+func TestProxy_TransportConfig_DisableCompressionToggle(t *testing.T) {
+	testPayload := "hello-world-decompressed-stream-data"
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If client asked for gzip, return gzipped body
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.WriteHeader(http.StatusOK)
+			var buf bytes.Buffer
+			gz := gzip.NewWriter(&buf)
+			_, _ = gz.Write([]byte(testPayload))
+			_ = gz.Close()
+			_, _ = w.Write(buf.Bytes())
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(testPayload))
+	}))
+	defer upstreamServer.Close()
+
+	t.Run("TC-123.5: DisableCompression false transparently decompresses", func(t *testing.T) {
+		f := false
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{upstreamServer.URL},
+			Transport: proxy.ProxyTransportConfig{
+				DisableCompression: &f,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		// Request without client Accept-Encoding
+		req, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+		bodyBytes := res.Body.Bytes()
+		if string(bodyBytes) != testPayload {
+			t.Errorf("expected decompressed body %q, got %q", testPayload, string(bodyBytes))
+		}
+	})
+}
+
+func TestProxy_TransportConfig_ConcurrencyBackpressure(t *testing.T) {
+	var currentActive int64
+	var maxObserved int64
+	var mu sync.Mutex
+
+	upstreamServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cur := atomic.AddInt64(&currentActive, 1)
+		mu.Lock()
+		if cur > maxObserved {
+			maxObserved = cur
+		}
+		mu.Unlock()
+		time.Sleep(30 * time.Millisecond)
+		atomic.AddInt64(&currentActive, -1)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstreamServer.Close()
+
+	t.Run("TC-123.4: MaxConnsPerHost throttles active connections", func(t *testing.T) {
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{upstreamServer.URL},
+			Transport: proxy.ProxyTransportConfig{
+				MaxConnsPerHost: 2,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		var wg sync.WaitGroup
+		for i := 0; i < 6; i++ {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				req, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+				res := httpparser.NewResponse()
+				px.ServeHTTP(req, res)
+			}()
+		}
+		wg.Wait()
+
+		mu.Lock()
+		observed := maxObserved
+		mu.Unlock()
+
+		if observed > 2 {
+			t.Errorf("expected at most 2 concurrent connections to upstream, got %d", observed)
+		}
+	})
+}
+
+func TestProxy_TransportConfig_Tracing(t *testing.T) {
+	var (
+		mu              sync.Mutex
+		lastTraceparent string
+	)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		lastTraceparent = r.Header.Get("traceparent")
+		mu.Unlock()
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	t.Run("TC-124.3: Tracing false with missing incoming traceparent omits header", func(t *testing.T) {
+		trFalse := false
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{upstream.URL},
+			Transport: proxy.ProxyTransportConfig{
+				Tracing: &trFalse,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", res.StatusCode)
+		}
+
+		mu.Lock()
+		observed := lastTraceparent
+		mu.Unlock()
+
+		if observed != "" {
+			t.Errorf("expected no traceparent header to upstream when tracing=false and incoming is empty, got %q", observed)
+		}
+	})
+
+	t.Run("TC-124.4: Tracing false with incoming traceparent propagates verbatim", func(t *testing.T) {
+		trFalse := false
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{upstream.URL},
+			Transport: proxy.ProxyTransportConfig{
+				Tracing: &trFalse,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		incoming := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+		req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+		req.Header.Set("traceparent", incoming)
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", res.StatusCode)
+		}
+
+		mu.Lock()
+		observed := lastTraceparent
+		mu.Unlock()
+
+		if observed != incoming {
+			t.Errorf("expected verbatim propagation %q, got %q", incoming, observed)
+		}
+	})
+
+	t.Run("TC-124.5: Tracing true with missing incoming traceparent generates W3C header", func(t *testing.T) {
+		trTrue := true
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{upstream.URL},
+			Transport: proxy.ProxyTransportConfig{
+				Tracing: &trTrue,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", res.StatusCode)
+		}
+
+		mu.Lock()
+		observed := lastTraceparent
+		mu.Unlock()
+
+		if observed == "" {
+			t.Fatal("expected generated traceparent header to upstream when tracing=true, got empty")
+		}
+		parts := strings.Split(observed, "-")
+		if len(parts) != 4 || parts[0] != "00" || len(parts[1]) != 32 || len(parts[2]) != 16 {
+			t.Errorf("malformed generated traceparent header: %q", observed)
+		}
+	})
+
+	t.Run("TC-124.6: Tracing true with incoming traceparent preserves traceID and updates spanID", func(t *testing.T) {
+		trTrue := true
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{upstream.URL},
+			Transport: proxy.ProxyTransportConfig{
+				Tracing: &trTrue,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		incoming := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+		req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+		req.Header.Set("traceparent", incoming)
+		res := httpparser.NewResponse()
+		px.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", res.StatusCode)
+		}
+
+		mu.Lock()
+		observed := lastTraceparent
+		mu.Unlock()
+
+		parts := strings.Split(observed, "-")
+		if len(parts) != 4 || parts[0] != "00" || parts[1] != "4bf92f3577b34da6a3ce929d0e0e4736" {
+			t.Errorf("expected preserved trace ID 4bf92f3577b34da6a3ce929d0e0e4736, got %q", observed)
+		}
+		if parts[2] == "00f067aa0ba902b7" {
+			t.Errorf("expected updated child span ID, got unchanged span ID %q", parts[2])
+		}
+	})
+}
+
+
+

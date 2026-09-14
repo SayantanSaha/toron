@@ -1,7 +1,10 @@
 import json
 import os
 import sys
-from http.server import HTTPServer, BaseHTTPRequestHandler
+try:
+    from http.server import ThreadingHTTPServer as ServerClass, BaseHTTPRequestHandler
+except ImportError:
+    from http.server import HTTPServer as ServerClass, BaseHTTPRequestHandler
 
 request_count = 0
 
@@ -74,7 +77,8 @@ class OriginHandler(BaseHTTPRequestHandler):
 
 def run():
     port = int(os.environ.get("PORT", "9102"))
-    server = HTTPServer(("0.0.0.0", port), OriginHandler)
+    server = ServerClass(("0.0.0.0", port), OriginHandler)
+    server.daemon_threads = True
     print(f"Python origin listening on port {port}")
     server.serve_forever()
 

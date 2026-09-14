@@ -493,6 +493,7 @@ func main() {
 					},
 					Excluded: pr.Auth.Excluded,
 				}
+				tc := pr.ResolveTransport(appCfg.Proxy.Transport)
 				opts := proxy.ProxyOptions{
 					Targets:             targets,
 					Algorithm:           proxy.Algorithm(algo),
@@ -526,6 +527,19 @@ func main() {
 						}
 						return appCfg.Server.TrustedProxies
 					}(),
+					Transport: proxy.ProxyTransportConfig{
+						Profile:                tc.Profile,
+						MaxIdleConns:           tc.MaxIdleConns,
+						MaxIdleConnsPerHost:    tc.MaxIdleConnsPerHost,
+						MaxConnsPerHost:        tc.MaxConnsPerHost,
+						IdleConnTimeout:        tc.IdleConnTimeout,
+						DisableCompression:     tc.DisableCompression,
+						UseEnvProxy:            tc.UseEnvProxy,
+						ProxyURL:               tc.ProxyURL,
+						PropagateUpstreamClose: tc.PropagateUpstreamClose,
+						ForceAttemptHTTP2:      tc.ForceAttemptHTTP2,
+						Tracing:                tc.Tracing,
+					},
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)

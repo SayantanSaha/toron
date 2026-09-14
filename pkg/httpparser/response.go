@@ -2,7 +2,6 @@ package httpparser
 
 import (
 	"bytes"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +12,9 @@ import (
 var headerReplacer = strings.NewReplacer("\r", "", "\n", "")
 
 func sanitizeHeader(s string) string {
+	if strings.IndexByte(s, '\r') == -1 && strings.IndexByte(s, '\n') == -1 {
+		return s
+	}
 	return headerReplacer.Replace(s)
 }
 
@@ -69,14 +71,21 @@ func (r *Response) Serialize(w io.Writer) error {
 	buf.Grow(256 + r.Body.Len())
 
 	// Write Status Line
-	fmt.Fprintf(&buf, "HTTP/1.1 %d %s\r\n", r.StatusCode, statusText)
+	buf.WriteString("HTTP/1.1 ")
+	buf.WriteString(strconv.Itoa(r.StatusCode))
+	buf.WriteString(" ")
+	buf.WriteString(statusText)
+	buf.WriteString("\r\n")
 
 	// Write Headers with CRLF Injection Sanitization
 	for key, values := range r.Header {
 		cleanKey := sanitizeHeader(key)
 		for _, val := range values {
 			cleanVal := sanitizeHeader(val)
-			fmt.Fprintf(&buf, "%s: %s\r\n", cleanKey, cleanVal)
+			buf.WriteString(cleanKey)
+			buf.WriteString(": ")
+			buf.WriteString(cleanVal)
+			buf.WriteString("\r\n")
 		}
 	}
 

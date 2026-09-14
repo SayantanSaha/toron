@@ -254,10 +254,101 @@ type StaticConfig struct {
 	Dir     string `yaml:"dir" json:"dir"`
 }
 
+// ProxyTransportConfig captures upstream reverse proxy transport settings (connection pooling, timeouts, compression, and egress routing).
+type ProxyTransportConfig struct {
+	Profile                string        `yaml:"profile,omitempty" json:"profile,omitempty"`
+	MaxIdleConns           int           `yaml:"max_idle_conns,omitempty" json:"max_idle_conns,omitempty"`
+	MaxIdleConnsPerHost    int           `yaml:"max_idle_conns_per_host,omitempty" json:"max_idle_conns_per_host,omitempty"`
+	MaxConnsPerHost        int           `yaml:"max_conns_per_host,omitempty" json:"max_conns_per_host,omitempty"`
+	IdleConnTimeout        time.Duration `yaml:"idle_conn_timeout,omitempty" json:"idle_conn_timeout,omitempty"`
+	DisableCompression     *bool         `yaml:"disable_compression,omitempty" json:"disable_compression,omitempty"`
+	UseEnvProxy            *bool         `yaml:"use_env_proxy,omitempty" json:"use_env_proxy,omitempty"`
+	ProxyURL               string        `yaml:"proxy_url,omitempty" json:"proxy_url,omitempty"`
+	PropagateUpstreamClose *bool         `yaml:"propagate_upstream_close,omitempty" json:"propagate_upstream_close,omitempty"`
+	ForceAttemptHTTP2      *bool         `yaml:"force_attempt_http2,omitempty" json:"force_attempt_http2,omitempty"`
+	Tracing                *bool         `yaml:"tracing,omitempty" json:"tracing,omitempty"`
+}
+
+// DefaultProxyTransportConfig returns the canonical transport configuration for the given profile.
+// Default profile is "raw_speed".
+func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
+	p := strings.ToLower(strings.TrimSpace(profile))
+	if p == "balanced" || p == "standard" {
+		f := false
+		t := true
+		return ProxyTransportConfig{
+			Profile:                "balanced",
+			MaxIdleConns:           1000,
+			MaxIdleConnsPerHost:    100,
+			MaxConnsPerHost:        200,
+			IdleConnTimeout:        30 * time.Second,
+			DisableCompression:     &f,
+			UseEnvProxy:            &t,
+			PropagateUpstreamClose: &t,
+			ForceAttemptHTTP2:      &t,
+			Tracing:                &t,
+		}
+	}
+	t := true
+	f := false
+	return ProxyTransportConfig{
+		Profile:                "raw_speed",
+		MaxIdleConns:           10000,
+		MaxIdleConnsPerHost:    1000,
+		MaxConnsPerHost:        0,
+		IdleConnTimeout:        90 * time.Second,
+		DisableCompression:     &t,
+		UseEnvProxy:            &f,
+		PropagateUpstreamClose: &f,
+		ForceAttemptHTTP2:      &f,
+		Tracing:                &f,
+	}
+}
+
+// MergeProxyTransportConfig merges route-level overrides onto base global config.
+func MergeProxyTransportConfig(base, override ProxyTransportConfig) ProxyTransportConfig {
+	res := base
+	if override.Profile != "" {
+		res.Profile = override.Profile
+	}
+	if override.MaxIdleConns > 0 {
+		res.MaxIdleConns = override.MaxIdleConns
+	}
+	if override.MaxIdleConnsPerHost > 0 {
+		res.MaxIdleConnsPerHost = override.MaxIdleConnsPerHost
+	}
+	if override.MaxConnsPerHost > 0 {
+		res.MaxConnsPerHost = override.MaxConnsPerHost
+	}
+	if override.IdleConnTimeout > 0 {
+		res.IdleConnTimeout = override.IdleConnTimeout
+	}
+	if override.DisableCompression != nil {
+		res.DisableCompression = override.DisableCompression
+	}
+	if override.UseEnvProxy != nil {
+		res.UseEnvProxy = override.UseEnvProxy
+	}
+	if override.ProxyURL != "" {
+		res.ProxyURL = override.ProxyURL
+	}
+	if override.PropagateUpstreamClose != nil {
+		res.PropagateUpstreamClose = override.PropagateUpstreamClose
+	}
+	if override.ForceAttemptHTTP2 != nil {
+		res.ForceAttemptHTTP2 = override.ForceAttemptHTTP2
+	}
+	if override.Tracing != nil {
+		res.Tracing = override.Tracing
+	}
+	return res
+}
+
 // ProxyConfig captures routing rules settings (static sites & upstream reverse proxies).
 type ProxyConfig struct {
-	Enabled bool               `yaml:"enabled" json:"enabled"`
-	Routes  []ProxyRouteConfig `yaml:"routes" json:"routes"`
+	Enabled   bool                 `yaml:"enabled" json:"enabled"`
+	Transport ProxyTransportConfig `yaml:"transport,omitempty" json:"transport,omitempty"`
+	Routes    []ProxyRouteConfig   `yaml:"routes" json:"routes"`
 }
 
 // ProxyRouteConfig describes a route rule that can serve either a static site or act as an upstream reverse proxy.
@@ -301,6 +392,21 @@ type ProxyRouteConfig struct {
 	MaxConnections      int                   `yaml:"max_connections,omitempty" json:"max_connections,omitempty"`
 	IdleTimeout         time.Duration         `yaml:"idle_timeout,omitempty" json:"idle_timeout,omitempty"`
 	MaxWorkers          int                   `yaml:"max_workers,omitempty" json:"max_workers,omitempty"`
+	Transport           *ProxyTransportConfig `yaml:"transport,omitempty" json:"transport,omitempty"`
+}
+
+// ResolveTransport merges the route's transport settings with global defaults.
+func (p *ProxyRouteConfig) ResolveTransport(global ProxyTransportConfig) ProxyTransportConfig {
+	baseProfile := global.Profile
+	if p.Transport != nil && p.Transport.Profile != "" {
+		baseProfile = p.Transport.Profile
+	}
+	base := DefaultProxyTransportConfig(baseProfile)
+	mergedGlobal := MergeProxyTransportConfig(base, global)
+	if p.Transport == nil {
+		return mergedGlobal
+	}
+	return MergeProxyTransportConfig(mergedGlobal, *p.Transport)
 }
 
 // GetType returns the normalized route target type ("static", "upstream", "tcp", or "udp").

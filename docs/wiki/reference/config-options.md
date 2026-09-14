@@ -246,6 +246,23 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `waf` | `object` | Route-level WAF overrides (`enabled`, `mode`, `allowed_ips`, `denied_ips`, `disabled_rules`) |
 | `auth` | `object` | Route-level authentication overrides (`type`, `jwt`, `api_key`, `basic`) |
 | `trusted_proxies` | `list` | Route-level trusted proxy CIDR subnets gating forwarded headers for this route |
+| `transport` | `object` | Route-level upstream transport override (`max_conns_per_host`, `disable_compression`, etc.) |
+
+## Section: `proxy.transport` / `routes[].transport` (REQ-123, REQ-124)
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `profile` | `string` | `"raw_speed"` | Transport preset profile: `"raw_speed"` (default) or `"balanced"` / `"standard"` |
+| `max_idle_conns` | `integer` | `10000` | Global maximum idle connections across all upstream target hosts |
+| `max_idle_conns_per_host` | `integer` | `1000` | Maximum idle keep-alive connections retained per upstream origin |
+| `max_conns_per_host` | `integer` | `0` | Total concurrent active connections per host (`0` = unconstrained; `>0` throttles & queues) |
+| `idle_conn_timeout` | `duration` | `"90s"` | Inactivity duration before closing idle persistent keep-alive sockets |
+| `disable_compression` | `boolean` | `true` | `true` = zero-copy raw byte passthrough; `false` = transparent gzip decompression |
+| `use_env_proxy` | `boolean` | `false` | `false` = direct socket dialing; `true` = honors `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY` |
+| `proxy_url` | `string` | `""` | Explicit forward proxy URL (e.g. `"http://squid.corp:3128"`) |
+| `propagate_upstream_close` | `boolean` | `false` | `false` = isolate client keep-alives; `true` = clean client teardown on origin close |
+| `force_attempt_http2` | `boolean` | `false` | `false` = HTTP/1.1 wire transport; `true` = ALPN `h2` stream multiplexing to TLS origins |
+| `tracing` | `boolean` | `false` | `false` = suppress CSPRNG trace ID generation for raw speed (REQ-124); `true` = generate W3C `traceparent` |
 
 ## Section: `logging`
 

@@ -1526,6 +1526,9 @@ func TestProxy_TransportConfig_ConcurrencyBackpressure(t *testing.T) {
 				req, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
 				res := httpparser.NewResponse()
 				px.ServeHTTP(req, res)
+				if res.StreamBody != nil {
+					_ = res.StreamBody.Close()
+				}
 			}()
 		}
 		wg.Wait()
@@ -1688,5 +1691,345 @@ func TestProxy_TransportConfig_Tracing(t *testing.T) {
 	})
 }
 
+func TestProxy_Transport_ResponseHeaderTimeoutEnforcement(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(150 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("delayed headers"))
+	}))
+	defer upstream.Close()
 
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets: []string{upstream.URL},
+		Transport: proxy.ProxyTransportConfig{
+			ResponseHeaderTimeout: 50 * time.Millisecond,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
 
+	req, _ := httpparser.NewRequest("GET", "/slow-headers", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	start := time.Now()
+	px.ServeHTTP(req, res)
+	elapsed := time.Since(start)
+
+	if res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 Bad Gateway on ResponseHeaderTimeout, got %d", res.StatusCode)
+	}
+	if elapsed > 140*time.Millisecond {
+		t.Fatalf("expected failure within ~50ms ResponseHeaderTimeout, took %v", elapsed)
+	}
+	bodyStr := res.Body.String()
+	if !strings.Contains(bodyStr, "timeout awaiting response headers") && !strings.Contains(bodyStr, "header timeout") && !strings.Contains(bodyStr, "Client.Timeout") && !strings.Contains(bodyStr, "Upstream unreachable") {
+		t.Fatalf("expected bad gateway message mentioning timeout, got: %s", bodyStr)
+	}
+}
+
+func TestProxy_Transport_BodyStreamingDecoupled(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		for i := 0; i < 3; i++ {
+			time.Sleep(100 * time.Millisecond)
+			_, _ = fmt.Fprintf(w, "data: chunk-%d\n\n", i)
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	trTrue := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets: []string{upstream.URL},
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse:        &trTrue,
+			ResponseHeaderTimeout: 2 * time.Second,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, _ := httpparser.NewRequest("GET", "/stream", "HTTP/1.1")
+	res := httpparser.NewResponse()
+	px.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.StreamBody == nil {
+		t.Fatal("expected res.StreamBody != nil")
+	}
+	defer res.StreamBody.Close()
+
+	bodyBytes, err := io.ReadAll(res.StreamBody)
+	if err != nil {
+		t.Fatalf("failed to read stream body: %v", err)
+	}
+	bodyStr := string(bodyBytes)
+	for i := 0; i < 3; i++ {
+		expectedChunk := fmt.Sprintf("data: chunk-%d\n\n", i)
+		if !strings.Contains(bodyStr, expectedChunk) {
+			t.Fatalf("expected stream body to contain %q, got: %s", expectedChunk, bodyStr)
+		}
+	}
+}
+
+func TestProxy_StreamingEligibilityMatrix(t *testing.T) {
+	cases := []struct {
+		name                string
+		streamResponse      bool
+		routeHasCompression bool
+		routeHasCache       bool
+		contentType         string
+		accelBuffering      string
+		expectedCanStream   bool
+	}{
+		{
+			name:                "Case 1: streamResponse false (balanced)",
+			streamResponse:      false,
+			routeHasCompression: false,
+			routeHasCache:       false,
+			contentType:         "text/event-stream",
+			accelBuffering:      "no",
+			expectedCanStream:   false,
+		},
+		{
+			name:                "Case 2: streamResponse true, no compression, no cache, json",
+			streamResponse:      true,
+			routeHasCompression: false,
+			routeHasCache:       false,
+			contentType:         "application/json",
+			expectedCanStream:   true,
+		},
+		{
+			name:                "Case 3: streamResponse true, compression true, json",
+			streamResponse:      true,
+			routeHasCompression: true,
+			routeHasCache:       false,
+			contentType:         "application/json",
+			expectedCanStream:   false,
+		},
+		{
+			name:                "Case 4: streamResponse true, cache true, json",
+			streamResponse:      true,
+			routeHasCompression: false,
+			routeHasCache:       true,
+			contentType:         "application/json",
+			expectedCanStream:   false,
+		},
+		{
+			name:                "Case 5: streamResponse true, compression & cache, text/event-stream",
+			streamResponse:      true,
+			routeHasCompression: true,
+			routeHasCache:       true,
+			contentType:         "text/event-stream",
+			expectedCanStream:   true,
+		},
+		{
+			name:                "Case 6: streamResponse true, uppercase TEXT/EVENT-STREAM; charset=utf-8",
+			streamResponse:      true,
+			routeHasCompression: true,
+			routeHasCache:       true,
+			contentType:         "TEXT/EVENT-STREAM; charset=utf-8",
+			expectedCanStream:   true,
+		},
+		{
+			name:                "Case 7: streamResponse true, X-Accel-Buffering no",
+			streamResponse:      true,
+			routeHasCompression: true,
+			routeHasCache:       true,
+			contentType:         "application/octet-stream",
+			accelBuffering:      "no",
+			expectedCanStream:   true,
+		},
+		{
+			name:                "Case 8: streamResponse true, compression & cache, X-Accel-Buffering yes",
+			streamResponse:      true,
+			routeHasCompression: true,
+			routeHasCache:       true,
+			contentType:         "application/json",
+			accelBuffering:      "yes",
+			expectedCanStream:   false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.contentType != "" {
+					w.Header().Set("Content-Type", tc.contentType)
+				}
+				if tc.accelBuffering != "" {
+					w.Header().Set("X-Accel-Buffering", tc.accelBuffering)
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = w.Write([]byte(`{"result":"payload"}`))
+			}))
+			defer upstream.Close()
+
+			px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+				Targets:             []string{upstream.URL},
+				RouteHasCompression: tc.routeHasCompression,
+				RouteHasCache:       tc.routeHasCache,
+				Transport: proxy.ProxyTransportConfig{
+					StreamResponse: &tc.streamResponse,
+				},
+			})
+			if err != nil {
+				t.Fatalf("failed to create proxy: %v", err)
+			}
+			defer px.Close()
+
+			req, _ := httpparser.NewRequest("GET", "/matrix", "HTTP/1.1")
+			res := httpparser.NewResponse()
+			px.ServeHTTP(req, res)
+
+			if res.StatusCode != http.StatusOK {
+				t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+			}
+
+			if tc.expectedCanStream {
+				if res.StreamBody == nil {
+					t.Fatalf("expected res.StreamBody != nil for canStream=true")
+				}
+				if res.Body.Len() != 0 {
+					t.Fatalf("expected res.Body.Len() == 0 for canStream=true, got %d", res.Body.Len())
+				}
+				_ = res.StreamBody.Close()
+			} else {
+				if res.StreamBody != nil {
+					t.Fatalf("expected res.StreamBody == nil for canStream=false")
+				}
+				if res.Body.Len() == 0 {
+					t.Fatalf("expected res.Body.Len() > 0 for canStream=false")
+				}
+			}
+		})
+	}
+}
+
+func TestProxy_WebSocketAlignedStreamHandOff(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Connection", "keep-alive, Upgrade")
+		w.Header().Set("Keep-Alive", "timeout=5")
+		w.Header().Set("Proxy-Authenticate", "Basic")
+		w.Header().Set("Proxy-Authorization", "Secret")
+		w.Header().Set("TE", "trailers")
+		w.Header().Set("Transfer-Encoding", "chunked")
+		w.Header().Set("Upgrade", "websocket")
+		w.Header().Set("X-Custom-Data", "valid-app-header")
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Location", "/v1/stream")
+		w.Header().Set("Set-Cookie", "session=xyz; Path=/v1/stream")
+		w.WriteHeader(http.StatusFound)
+		_, _ = w.Write([]byte("initial stream bytes from upstream"))
+	}))
+	defer upstream.Close()
+
+	trTrue := true
+	rewrTrue := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:           []string{upstream.URL},
+		RewriteRedirects:  &rewrTrue,
+		RewriteCookiePath: &rewrTrue,
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse: &trTrue,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, _ := httpparser.NewRequest("GET", "/public/stream", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	start := time.Now()
+	px.ServeHTTPWithPrefix(req, res, "/public/stream")
+	duration := time.Since(start)
+
+	// Subtest 4A: Zero-Copy Non-Blocking Return
+	if duration > 100*time.Millisecond {
+		t.Fatalf("expected immediate non-blocking return, took %v", duration)
+	}
+	if res.StreamBody == nil {
+		t.Fatal("expected res.StreamBody != nil")
+	}
+	if res.Body.Len() != 0 {
+		t.Fatalf("expected res.Body.Len() == 0, got %d", res.Body.Len())
+	}
+
+	// Subtest 4B: RFC 7230 §6.1 Hop-by-Hop Header Stripping
+	if res.Header.Get("X-Custom-Data") != "valid-app-header" {
+		t.Errorf("expected X-Custom-Data preserved, got %q", res.Header.Get("X-Custom-Data"))
+	}
+	for _, h := range []string{"Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "TE", "Transfer-Encoding", "Upgrade"} {
+		if res.Header.Get(h) != "" {
+			t.Errorf("expected hop-by-hop header %q to be stripped, got %q", h, res.Header.Get(h))
+		}
+	}
+
+	// Subtest 4D: Cookie & Redirect Rewriting
+	loc := res.Header.Get("Location")
+	if !strings.Contains(loc, "/public/stream") {
+		t.Errorf("expected rewritten Location containing /public/stream, got %q", loc)
+	}
+	cookie := res.Header.Get("Set-Cookie")
+	if !strings.Contains(cookie, "Path=/public/stream") {
+		t.Errorf("expected rewritten cookie path /public/stream, got %q", cookie)
+	}
+
+	// Subtest 4E: Body Stream Ownership Transfer
+	buf := make([]byte, 14)
+	n, err := io.ReadFull(res.StreamBody, buf)
+	if err != nil {
+		t.Fatalf("failed reading from res.StreamBody: %v", err)
+	}
+	if string(buf[:n]) != "initial stream" {
+		t.Fatalf("expected 'initial stream', got %q", string(buf[:n]))
+	}
+	_ = res.StreamBody.Close()
+
+	// Subtest 4C: Upstream Close Propagation
+	t.Run("Subtest 4C: Upstream Close Propagation", func(t *testing.T) {
+		closeUpstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Connection", "close")
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer closeUpstream.Close()
+
+		propClose := true
+		pxClose, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets: []string{closeUpstream.URL},
+			Transport: proxy.ProxyTransportConfig{
+				StreamResponse:         &trTrue,
+				PropagateUpstreamClose: &propClose,
+			},
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer pxClose.Close()
+
+		reqClose, _ := httpparser.NewRequest("GET", "/stream-close", "HTTP/1.1")
+		resClose := httpparser.NewResponse()
+		pxClose.ServeHTTP(reqClose, resClose)
+		if resClose.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection: close propagated, got %q", resClose.Header.Get("Connection"))
+		}
+		if resClose.StreamBody != nil {
+			_ = resClose.StreamBody.Close()
+		}
+	})
+}

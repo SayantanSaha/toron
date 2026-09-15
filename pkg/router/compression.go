@@ -127,8 +127,13 @@ func NewCompressionMiddleware(cfg CompressionConfig) MiddlewareFunc {
 				return
 			}
 
-			// WebSocket upgrades or raw hijacked connections must not be compressed
-			if res.StatusCode == http.StatusSwitchingProtocols || res.UpgradedConn != nil {
+			// WebSocket upgrades, raw hijacked connections, or live streaming responses must not be compressed
+			if res.StatusCode == http.StatusSwitchingProtocols || res.UpgradedConn != nil || res.StreamBody != nil {
+				return
+			}
+
+			// Streaming MIME or unbuffered responses must not be compressed (REQ-128)
+			if strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "text/event-stream") || strings.EqualFold(res.Header.Get("X-Accel-Buffering"), "no") {
 				return
 			}
 

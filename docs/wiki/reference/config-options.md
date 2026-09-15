@@ -263,6 +263,8 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `propagate_upstream_close` | `boolean` | `false` | `false` = isolate client keep-alives; `true` = clean client teardown on origin close |
 | `force_attempt_http2` | `boolean` | `false` | `false` = HTTP/1.1 wire transport; `true` = ALPN `h2` stream multiplexing to TLS origins |
 | `tracing` | `boolean` | `false` | `false` = suppress CSPRNG trace ID generation for raw speed (REQ-124); `true` = generate W3C `traceparent` |
+| `stream_response` | `boolean` | `true` (`raw_speed`) / `false` (`balanced`) | `true` = zero-copy socket streaming fast-path for unbuffered/SSE and pure routes; `false` = buffer in memory (REQ-125) |
+| `response_header_timeout` | `duration` | `"10s"` | Bounded timeout for upstream response header arrival (dial-to-first-byte), decoupling body streaming (REQ-125) |
 
 ## Section: `logging`
 

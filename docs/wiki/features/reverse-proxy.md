@@ -144,6 +144,8 @@ proxy:
     propagate_upstream_close: false # false = isolates client keepalives; true = clean client teardown
     force_attempt_http2: false      # true = ALPN h2 stream multiplexing to TLS origins
     tracing: false                  # false = suppresses crypto/rand trace ID generation (raw speed); true = generates W3C traceparent
+    stream_response: true           # true = zero-copy socket streaming fast-path (raw speed); false = buffers in memory (balanced)
+    response_header_timeout: 10s    # Bounded timeout for initial response headers; body streaming is decoupled
 ```
 
 ### Route-Level Overrides (`routes.yaml`)
@@ -154,6 +156,8 @@ Each route can override any transport knob under `transport`:
 - **Payload Inspection**: Set `disable_compression: false` to allow downstream middleware to inspect plaintext.
 - **Upstream Session Teardown**: Set `propagate_upstream_close: true` to let origin `Connection: close` tear down the client socket cleanly while still stripping hop-by-hop headers per RFC 7230.
 - **Distributed Tracing**: Set `tracing: true` on observability-critical routes to generate W3C `traceparent` headers with cryptographic random IDs, or leave `tracing: false` for raw performance.
+- **Long-Lived Live Streams (SSE)**: Toron handles Server-Sent Events (`text/event-stream`) and unbuffered feeds (`X-Accel-Buffering: no`) via a WebSocket-aligned direct socket relay with activity-refreshed write deadlines, automatically bypassing caching and compression (REQ-125, REQ-128).
+- **Buffered Fallback**: Set `stream_response: false` on routes where downstream inspection requires complete in-memory body capture.
 
 ## Programmatic Route Registration
 

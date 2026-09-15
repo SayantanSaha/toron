@@ -267,6 +267,8 @@ type ProxyTransportConfig struct {
 	PropagateUpstreamClose *bool         `yaml:"propagate_upstream_close,omitempty" json:"propagate_upstream_close,omitempty"`
 	ForceAttemptHTTP2      *bool         `yaml:"force_attempt_http2,omitempty" json:"force_attempt_http2,omitempty"`
 	Tracing                *bool         `yaml:"tracing,omitempty" json:"tracing,omitempty"`
+	StreamResponse         *bool         `yaml:"stream_response,omitempty" json:"stream_response,omitempty"`
+	ResponseHeaderTimeout  time.Duration `yaml:"response_header_timeout,omitempty" json:"response_header_timeout,omitempty"`
 }
 
 // DefaultProxyTransportConfig returns the canonical transport configuration for the given profile.
@@ -287,6 +289,8 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 			PropagateUpstreamClose: &t,
 			ForceAttemptHTTP2:      &t,
 			Tracing:                &t,
+			StreamResponse:         &f,
+			ResponseHeaderTimeout:  10 * time.Second,
 		}
 	}
 	t := true
@@ -302,6 +306,8 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 		PropagateUpstreamClose: &f,
 		ForceAttemptHTTP2:      &f,
 		Tracing:                &f,
+		StreamResponse:         &t,
+		ResponseHeaderTimeout:  10 * time.Second,
 	}
 }
 
@@ -340,6 +346,12 @@ func MergeProxyTransportConfig(base, override ProxyTransportConfig) ProxyTranspo
 	}
 	if override.Tracing != nil {
 		res.Tracing = override.Tracing
+	}
+	if override.StreamResponse != nil {
+		res.StreamResponse = override.StreamResponse
+	}
+	if override.ResponseHeaderTimeout > 0 {
+		res.ResponseHeaderTimeout = override.ResponseHeaderTimeout
 	}
 	return res
 }

@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"gopkg.in/yaml.v3"
+
 	"toron/pkg/config"
 	"toron/pkg/server"
 )
@@ -984,4 +986,121 @@ proxy:
 	})
 }
 
+func TestConfig_ProxyTransportConfig_StreamResponseAndTimeout(t *testing.T) {
+	t.Run("Subtest 1A (Preset Profile Defaults)", func(t *testing.T) {
+		raw := config.DefaultProxyTransportConfig("raw_speed")
+		if raw.StreamResponse == nil || !*raw.StreamResponse {
+			t.Fatalf("expected raw_speed StreamResponse == true, got %v", raw.StreamResponse)
+		}
+		if raw.ResponseHeaderTimeout != 10*time.Second {
+			t.Fatalf("expected raw_speed ResponseHeaderTimeout == 10s, got %v", raw.ResponseHeaderTimeout)
+		}
 
+		balanced := config.DefaultProxyTransportConfig("balanced")
+		if balanced.StreamResponse == nil || *balanced.StreamResponse {
+			t.Fatalf("expected balanced StreamResponse == false, got %v", balanced.StreamResponse)
+		}
+		if balanced.ResponseHeaderTimeout != 10*time.Second {
+			t.Fatalf("expected balanced ResponseHeaderTimeout == 10s, got %v", balanced.ResponseHeaderTimeout)
+		}
+	})
+
+	t.Run("Subtest 1B (Hierarchical Merge Logic)", func(t *testing.T) {
+		base := config.DefaultProxyTransportConfig("raw_speed")
+		f := false
+		override := config.ProxyTransportConfig{
+			StreamResponse:        &f,
+			ResponseHeaderTimeout: 5 * time.Second,
+		}
+		merged := config.MergeProxyTransportConfig(base, override)
+		if merged.StreamResponse == nil || *merged.StreamResponse {
+			t.Fatalf("expected merged StreamResponse == false, got %v", merged.StreamResponse)
+		}
+		if merged.ResponseHeaderTimeout != 5*time.Second {
+			t.Fatalf("expected merged ResponseHeaderTimeout == 5s, got %v", merged.ResponseHeaderTimeout)
+		}
+
+		baseBalanced := config.DefaultProxyTransportConfig("balanced")
+		tr := true
+		override2 := config.ProxyTransportConfig{
+			StreamResponse:        &tr,
+			ResponseHeaderTimeout: 0,
+		}
+		merged2 := config.MergeProxyTransportConfig(baseBalanced, override2)
+		if merged2.StreamResponse == nil || !*merged2.StreamResponse {
+			t.Fatalf("expected merged2 StreamResponse == true, got %v", merged2.StreamResponse)
+		}
+		if merged2.ResponseHeaderTimeout != 10*time.Second {
+			t.Fatalf("expected merged2 ResponseHeaderTimeout == 10s, got %v", merged2.ResponseHeaderTimeout)
+		}
+	})
+
+	t.Run("Subtest 1C (Route-Level Cascading & Precedence)", func(t *testing.T) {
+		globalRaw := config.DefaultProxyTransportConfig("raw_speed")
+		f := false
+		route1 := config.ProxyRouteConfig{
+			Prefix: "/r1",
+			Transport: &config.ProxyTransportConfig{
+				StreamResponse: &f,
+			},
+		}
+		res1 := route1.ResolveTransport(globalRaw)
+		if res1.StreamResponse == nil || *res1.StreamResponse {
+			t.Fatalf("expected route 1 StreamResponse == false, got %v", res1.StreamResponse)
+		}
+
+		globalBalanced := config.DefaultProxyTransportConfig("balanced")
+		tr := true
+		route2 := config.ProxyRouteConfig{
+			Prefix: "/r2",
+			Transport: &config.ProxyTransportConfig{
+				StreamResponse:        &tr,
+				ResponseHeaderTimeout: 3 * time.Second,
+			},
+		}
+		res2 := route2.ResolveTransport(globalBalanced)
+		if res2.StreamResponse == nil || !*res2.StreamResponse {
+			t.Fatalf("expected route 2 StreamResponse == true, got %v", res2.StreamResponse)
+		}
+		if res2.ResponseHeaderTimeout != 3*time.Second {
+			t.Fatalf("expected route 2 ResponseHeaderTimeout == 3s, got %v", res2.ResponseHeaderTimeout)
+		}
+
+		route3 := config.ProxyRouteConfig{
+			Prefix: "/r3",
+		}
+		res3 := route3.ResolveTransport(globalRaw)
+		if res3.StreamResponse == nil || !*res3.StreamResponse {
+			t.Fatalf("expected route 3 to inherit global StreamResponse == true, got %v", res3.StreamResponse)
+		}
+		if res3.ResponseHeaderTimeout != 10*time.Second {
+			t.Fatalf("expected route 3 to inherit global ResponseHeaderTimeout == 10s, got %v", res3.ResponseHeaderTimeout)
+		}
+	})
+
+	t.Run("Subtest 1D (YAML & JSON Deserialization)", func(t *testing.T) {
+		yamlData := []byte("stream_response: true\nresponse_header_timeout: 15s\n")
+		var tcYAML config.ProxyTransportConfig
+		if err := yaml.Unmarshal(yamlData, &tcYAML); err != nil {
+			t.Fatalf("failed to unmarshal YAML: %v", err)
+		}
+		if tcYAML.StreamResponse == nil || !*tcYAML.StreamResponse {
+			t.Fatalf("expected YAML StreamResponse == true, got %v", tcYAML.StreamResponse)
+		}
+		if tcYAML.ResponseHeaderTimeout != 15*time.Second {
+			t.Fatalf("expected YAML ResponseHeaderTimeout == 15s, got %v", tcYAML.ResponseHeaderTimeout)
+		}
+
+		jsonData := []byte(`{"stream_response": false, "response_header_timeout": 5000000000}`)
+		var tcJSON config.ProxyTransportConfig
+		if err := json.Unmarshal(jsonData, &tcJSON); err != nil {
+			t.Fatalf("failed to unmarshal JSON: %v", err)
+		}
+		if tcJSON.StreamResponse == nil || *tcJSON.StreamResponse {
+			t.Fatalf("expected JSON StreamResponse == false, got %v", tcJSON.StreamResponse)
+		}
+		if tcJSON.ResponseHeaderTimeout != 5*time.Second {
+			t.Fatalf("expected JSON ResponseHeaderTimeout == 5s, got %v", tcJSON.ResponseHeaderTimeout)
+		}
+	})
+}

@@ -108,19 +108,42 @@ type WeightedRoundRobinBalancer struct {
 	mu      sync.Mutex
 }
 
+func cloneUpstreamTarget(t *UpstreamTarget) *UpstreamTarget {
+	if t == nil {
+		return nil
+	}
+	return &UpstreamTarget{
+		URL:                 t.URL,
+		HealthCheckType:     t.HealthCheckType,
+		HealthCheckPath:     t.HealthCheckPath,
+		HealthCheckService:  t.HealthCheckService,
+		HealthCheckInterval: t.HealthCheckInterval,
+		ConsecutiveFailures: atomic.LoadInt32(&t.ConsecutiveFailures),
+		MaxFailures:         t.MaxFailures,
+		State:               t.GetState(),
+		LastStateChange:     t.LastStateChange,
+		CooldownPeriod:      t.CooldownPeriod,
+		Weight:              t.Weight,
+		EffectiveWeight:     t.EffectiveWeight,
+		CurrentWeight:       t.CurrentWeight,
+		ActiveConns:         atomic.LoadInt64(&t.ActiveConns),
+		AvgLatencyUS:        atomic.LoadInt64(&t.AvgLatencyUS),
+	}
+}
+
 func NewWeightedRoundRobinBalancer(targets []*UpstreamTarget) (*WeightedRoundRobinBalancer, error) {
 	if len(targets) == 0 {
 		return nil, ErrNoTargetsAvailable
 	}
 	copied := make([]*UpstreamTarget, len(targets))
 	for i, t := range targets {
-		cp := *t
+		cp := cloneUpstreamTarget(t)
 		if cp.Weight <= 0 {
 			cp.Weight = 1
 		}
 		cp.EffectiveWeight = cp.Weight
 		cp.CurrentWeight = 0
-		copied[i] = &cp
+		copied[i] = cp
 	}
 	return &WeightedRoundRobinBalancer{targets: copied}, nil
 }
@@ -179,11 +202,11 @@ func NewWeightedRandomBalancer(targets []*UpstreamTarget) (*WeightedRandomBalanc
 	}
 	copied := make([]*UpstreamTarget, len(targets))
 	for i, t := range targets {
-		cp := *t
+		cp := cloneUpstreamTarget(t)
 		if cp.Weight <= 0 {
 			cp.Weight = 1
 		}
-		copied[i] = &cp
+		copied[i] = cp
 	}
 	return &WeightedRandomBalancer{
 		targets: copied,
@@ -290,11 +313,11 @@ func NewWeightedLeastConnBalancer(targets []*UpstreamTarget) (*WeightedLeastConn
 	}
 	copied := make([]*UpstreamTarget, len(targets))
 	for i, t := range targets {
-		cp := *t
+		cp := cloneUpstreamTarget(t)
 		if cp.Weight <= 0 {
 			cp.Weight = 1
 		}
-		copied[i] = &cp
+		copied[i] = cp
 	}
 	return &WeightedLeastConnBalancer{targets: copied}, nil
 }
@@ -432,6 +455,9 @@ type ReverseProxy struct {
 	trustedProxies         []*net.IPNet
 	propagateUpstreamClose bool
 	tracing                bool
+	streamResponse         bool
+	routeHasCompression    bool
+	routeHasCache          bool
 }
 
 // GetTransport returns the underlying *http.Transport for telemetry and testing verification.
@@ -463,6 +489,8 @@ type ProxyTransportConfig struct {
 	PropagateUpstreamClose *bool
 	ForceAttemptHTTP2      *bool
 	Tracing                *bool
+	StreamResponse         *bool
+	ResponseHeaderTimeout  time.Duration
 }
 
 // DefaultProxyTransportConfig returns the canonical transport configuration for the given profile.
@@ -483,6 +511,8 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 			PropagateUpstreamClose: &t,
 			ForceAttemptHTTP2:      &t,
 			Tracing:                &t,
+			StreamResponse:         &f,
+			ResponseHeaderTimeout:  10 * time.Second,
 		}
 	}
 	t := true
@@ -498,6 +528,8 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 		PropagateUpstreamClose: &f,
 		ForceAttemptHTTP2:      &f,
 		Tracing:                &f,
+		StreamResponse:         &t,
+		ResponseHeaderTimeout:  10 * time.Second,
 	}
 }
 
@@ -529,6 +561,8 @@ type ProxyOptions struct {
 	TLSCACertPool       *x509.CertPool
 	TLSClientConfig     *tls.Config
 	TrustedProxies      []string
+	RouteHasCompression bool
+	RouteHasCache       bool
 	Transport           ProxyTransportConfig
 }
 
@@ -600,6 +634,15 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 	if opts.Transport.Tracing != nil {
 		tc.Tracing = opts.Transport.Tracing
 	}
+	if opts.Transport.StreamResponse != nil {
+		tc.StreamResponse = opts.Transport.StreamResponse
+	}
+	if opts.Transport.ResponseHeaderTimeout > 0 {
+		tc.ResponseHeaderTimeout = opts.Transport.ResponseHeaderTimeout
+	}
+	if tc.ResponseHeaderTimeout <= 0 {
+		tc.ResponseHeaderTimeout = 10 * time.Second
+	}
 
 	var proxyFunc func(*http.Request) (*url.URL, error)
 	if tc.ProxyURL != "" {
@@ -635,6 +678,7 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		MaxIdleConnsPerHost:   tc.MaxIdleConnsPerHost,
 		MaxConnsPerHost:       tc.MaxConnsPerHost,
 		IdleConnTimeout:       tc.IdleConnTimeout,
+		ResponseHeaderTimeout: tc.ResponseHeaderTimeout,
 		DisableCompression:    disableCompression,
 		WriteBufferSize:       64 * 1024,
 		ReadBufferSize:        64 * 1024,
@@ -651,7 +695,7 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 	}
 
 	client := &http.Client{
-		Timeout:   opts.Timeout,
+		Timeout:   0,
 		Transport: tr,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -721,6 +765,13 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		tracing = *tc.Tracing
 	}
 
+	streamResponse := false
+	if opts.Transport.StreamResponse != nil {
+		streamResponse = *opts.Transport.StreamResponse
+	} else if tc.StreamResponse != nil && opts.Transport.Profile != "" {
+		streamResponse = *tc.StreamResponse
+	}
+
 	return &ReverseProxy{
 		TargetURL:              upstreamTargets[0].URL,
 		Balancer:               lb,
@@ -733,6 +784,9 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		trustedProxies:         trustedProxies,
 		propagateUpstreamClose: propagateUpstreamClose,
 		tracing:                tracing,
+		streamResponse:         streamResponse,
+		routeHasCompression:    opts.RouteHasCompression,
+		routeHasCache:          opts.RouteHasCache,
 	}, nil
 }
 
@@ -1044,7 +1098,11 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		p.writeBadGateway(res, fmt.Sprintf("Upstream unreachable (%s): %v", targetURL.String(), err))
 		return
 	}
-	defer outResp.Body.Close()
+
+	contentType := strings.ToLower(outResp.Header.Get("Content-Type"))
+	isStreamingMIME := strings.HasPrefix(contentType, "text/event-stream")
+	isUnbuffered := strings.EqualFold(outResp.Header.Get("X-Accel-Buffering"), "no")
+	canStream := p.streamResponse && (!p.routeHasCompression && !p.routeHasCache || isStreamingMIME || isUnbuffered)
 
 	if outResp.StatusCode >= 500 {
 		targetNode.RecordFailure()
@@ -1100,9 +1158,18 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		res.Header.Set("Set-Cookie", fmt.Sprintf("%s=%s; Path=/; HttpOnly", stickyBalancer.CookieName(), cookieVal))
 	}
 
-	// Copy upstream body
+	if canStream {
+		res.StreamBody = outResp.Body
+		return
+	}
+
+	defer outResp.Body.Close()
+
+	// Copy upstream body using pooled copy buffer slab
 	if outResp.Body != nil {
-		_, _ = io.Copy(res.Body, outResp.Body)
+		bufPtr := httpparser.GetCopyBuffer()
+		_, _ = io.CopyBuffer(res.Body, outResp.Body, *bufPtr)
+		httpparser.PutCopyBuffer(bufPtr)
 	}
 
 	// Copy upstream trailers after reading body (e.g. grpc-status, grpc-message)

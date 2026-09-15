@@ -2068,3 +2068,213 @@ func TestServer_HTTP2_ExtendedConnectAllowed(t *testing.T) {
 	}
 }
 
+// TC-125.6: Server Socket Streaming Relay & Activity-Refreshed Deadlines
+func TestServer_StreamingRelay_ActivityRefreshedDeadlines(t *testing.T) {
+	r := router.New()
+
+	closedCh := make(chan struct{})
+	r.GET("/sse-feed", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: pr,
+			Closer: io.Closer(closerFunc(func() error {
+				close(closedCh)
+				return pr.Close()
+			})),
+		}
+
+		go func() {
+			defer pw.Close()
+			for i := 1; i <= 3; i++ {
+				_, _ = fmt.Fprintf(pw, "event: msg%d\ndata: tick\n\n", i)
+				time.Sleep(100 * time.Millisecond)
+			}
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.WriteTimeout = 150 * time.Millisecond
+	cfg.UpgradeIdleTimeout = 250 * time.Millisecond
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	start := time.Now()
+	_, err = fmt.Fprintf(conn, "GET /sse-feed HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	if err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	// Read status line
+	statusLine, err := reader.ReadString('\n')
+	if err != nil {
+		t.Fatalf("failed to read status line: %v", err)
+	}
+	ttfb := time.Since(start)
+	if ttfb > 100*time.Millisecond {
+		t.Errorf("expected fast TTFB, took %v", ttfb)
+	}
+	if !strings.Contains(statusLine, "200 OK") {
+		t.Fatalf("expected 200 OK, got: %s", statusLine)
+	}
+
+	// Read headers
+	headers := make(http.Header)
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			t.Fatalf("failed reading header line: %v", err)
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		parts := strings.SplitN(line, ":", 2)
+		if len(parts) == 2 {
+			headers.Add(strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]))
+		}
+	}
+
+	if headers.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("expected Content-Type text/event-stream, got %q", headers.Get("Content-Type"))
+	}
+	if headers.Get("Content-Length") != "" {
+		t.Errorf("expected Content-Length to be absent, got %q", headers.Get("Content-Length"))
+	}
+
+	// Read all chunks
+	var body bytes.Buffer
+	buf := make([]byte, 1024)
+	for {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			body.Write(buf[:n])
+		}
+		if err != nil {
+			break
+		}
+	}
+
+	bodyStr := body.String()
+	for i := 1; i <= 3; i++ {
+		expected := fmt.Sprintf("event: msg%d\ndata: tick\n\n", i)
+		if !strings.Contains(bodyStr, expected) {
+			t.Errorf("expected body to contain %q, got: %s", expected, bodyStr)
+		}
+	}
+
+	select {
+	case <-closedCh:
+		// Upstream stream body closed cleanly
+	case <-time.After(500 * time.Millisecond):
+		t.Errorf("expected StreamBody to be closed upon completion")
+	}
+}
+
+// TC-125.7: Slow-Read DoS Defense (Slow Client Disconnect)
+func TestServer_StreamingRelay_SlowReadClientDisconnect(t *testing.T) {
+	r := router.New()
+
+	closedCh := make(chan struct{})
+	r.GET("/infinite-stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: pr,
+			Closer: io.Closer(closerFunc(func() error {
+				select {
+				case <-closedCh:
+				default:
+					close(closedCh)
+				}
+				return pr.Close()
+			})),
+		}
+
+		go func() {
+			defer pw.Close()
+			chunk := bytes.Repeat([]byte("A"), 16*1024)
+			for {
+				if _, err := pw.Write(chunk); err != nil {
+					return
+				}
+			}
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.UpgradeIdleTimeout = 150 * time.Millisecond
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.SetReadBuffer(1024)
+	}
+
+	_, err = fmt.Fprintf(conn, "GET /infinite-stream HTTP/1.1\r\nHost: localhost\r\n\r\n")
+	if err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	// Read small initial slice
+	initBuf := make([]byte, 256)
+	_, _ = conn.Read(initBuf)
+
+	// Now client halts reading!
+	// Toron server will fill socket buffer and timeout after ~150ms write deadline
+	select {
+	case <-closedCh:
+		// StreamBody was closed because server aborted on write deadline!
+	case <-time.After(2 * time.Second):
+		t.Errorf("expected StreamBody.Close() within deadline after client halted read")
+	}
+}
+
+type closerFunc func() error
+
+func (f closerFunc) Close() error {
+	return f()
+}

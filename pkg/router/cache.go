@@ -226,8 +226,13 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 
 			res.Header.Set("X-Cache", "MISS")
 
-			// WebSocket upgrades or raw upgraded socket tunnels must never be cached
-			if res.StatusCode == http.StatusSwitchingProtocols || res.UpgradedConn != nil {
+			// WebSocket upgrades, raw upgraded socket tunnels, or live streaming responses must never be cached
+			if res.StatusCode == http.StatusSwitchingProtocols || res.UpgradedConn != nil || res.StreamBody != nil {
+				return
+			}
+
+			// Streaming MIME or unbuffered responses must never be cached (REQ-128)
+			if strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "text/event-stream") || strings.EqualFold(res.Header.Get("X-Accel-Buffering"), "no") {
 				return
 			}
 

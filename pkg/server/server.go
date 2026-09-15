@@ -308,6 +308,46 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			}
 		}
 
+		if res.StreamBody != nil {
+			defer res.StreamBody.Close()
+
+			if s.config.WriteTimeout > 0 {
+				_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+			}
+
+			if err := res.Serialize(conn); err != nil {
+				_ = req.CloseBody()
+				return fmt.Errorf("server: failed to write stream headers: %w", err)
+			}
+
+			idleTimeout := s.config.UpgradeIdleTimeout
+			if idleTimeout <= 0 {
+				idleTimeout = s.config.IdleTimeout
+			}
+			if idleTimeout <= 0 {
+				idleTimeout = 60 * time.Second
+			}
+
+			bufPtr := httpparser.GetCopyBuffer()
+			defer httpparser.PutCopyBuffer(bufPtr)
+			buf := *bufPtr
+
+			for {
+				n, readErr := res.StreamBody.Read(buf)
+				if n > 0 {
+					_ = conn.SetWriteDeadline(time.Now().Add(idleTimeout))
+					if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+						_ = req.CloseBody()
+						return nil
+					}
+				}
+				if readErr != nil {
+					_ = req.CloseBody()
+					return nil
+				}
+			}
+		}
+
 		if s.config.WriteTimeout > 0 {
 			_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
 		}
@@ -414,6 +454,36 @@ func (s *Server) http2AdapterHandler() http.Handler {
 			}
 			s.relayHTTP2UpgradedStream(w, r, res.UpgradedConn, idleTimeout)
 			return
+		}
+
+		if res.StreamBody != nil {
+			defer res.StreamBody.Close()
+
+			flusher, isFlusher := w.(http.Flusher)
+			bufPtr := httpparser.GetCopyBuffer()
+			defer httpparser.PutCopyBuffer(bufPtr)
+			buf := *bufPtr
+
+			for {
+				select {
+				case <-r.Context().Done():
+					return
+				default:
+				}
+
+				n, readErr := res.StreamBody.Read(buf)
+				if n > 0 {
+					if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+						return
+					}
+					if isFlusher {
+						flusher.Flush()
+					}
+				}
+				if readErr != nil {
+					return
+				}
+			}
 		}
 
 		if len(res.Body.Bytes()) > 0 {

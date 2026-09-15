@@ -7,6 +7,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,4 +123,59 @@ func TestServer_HTTP2ExtendedConnect(t *testing.T) {
 		t.Fatalf("expected non-nil UpgradedConn from upstream")
 	}
 	_ = res.UpgradedConn.Close()
+}
+
+type mockFlusherRecorder struct {
+	*httptest.ResponseRecorder
+	flushed int
+}
+
+func (m *mockFlusherRecorder) Flush() {
+	m.flushed++
+}
+
+// TC-125.9: HTTP/2 Streaming Adapter Flush Verification
+func TestServer_HTTP2Adapter_StreamingImmediateFlush(t *testing.T) {
+	r := router.New()
+	r.GET("/h2-stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = pr
+
+		go func() {
+			defer pw.Close()
+			for i := 1; i <= 3; i++ {
+				_, _ = fmt.Fprintf(pw, "data: event-%d\n\n", i)
+			}
+		}()
+	})
+
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	rec := &mockFlusherRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+	req := httptest.NewRequest("GET", "/h2-stream", nil)
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+	if rec.Header().Get("Content-Type") != "text/event-stream" {
+		t.Fatalf("expected Content-Type text/event-stream, got %q", rec.Header().Get("Content-Type"))
+	}
+	if rec.flushed < 1 {
+		t.Fatalf("expected flusher.Flush() called at least once, got %d", rec.flushed)
+	}
+	bodyStr := rec.Body.String()
+	for i := 1; i <= 3; i++ {
+		expected := fmt.Sprintf("data: event-%d\n\n", i)
+		if !strings.Contains(bodyStr, expected) {
+			t.Errorf("expected body to contain %q, got: %s", expected, bodyStr)
+		}
+	}
 }

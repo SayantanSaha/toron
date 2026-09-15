@@ -2,6 +2,7 @@ package router
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"sync/atomic"
@@ -432,4 +433,105 @@ func TestCache_VaryHeader(t *testing.T) {
 	if calls := atomic.LoadInt64(&customVaryCalls); calls != 2 {
 		t.Fatalf("expected responses with unsupported Vary dimensions not to be cached, got %d calls", calls)
 	}
+}
+
+func TestCacheMiddleware_StreamingBypass(t *testing.T) {
+	t.Run("Subtest 5B: Streaming response bypasses cache, Subtest 5C: standard response cached", func(t *testing.T) {
+		r := New()
+		cfg := DefaultCacheConfig()
+		cfg.DefaultTTL = 60 * time.Second
+		r.Use(NewCacheMiddleware(cfg))
+
+		var streamCalls int64
+		r.GET("/events", func(req *httpparser.Request, res *httpparser.Response) {
+			atomic.AddInt64(&streamCalls, 1)
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Content-Type", "text/event-stream")
+			res.StreamBody = io.NopCloser(strings.NewReader("event: live\n\n"))
+		})
+
+		var jsonCalls int64
+		r.GET("/api/data", func(req *httpparser.Request, res *httpparser.Response) {
+			atomic.AddInt64(&jsonCalls, 1)
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(strings.Repeat(`{"data":123},`, 50))
+		})
+
+		// 1. Streaming request
+		req1, _ := httpparser.NewRequest("GET", "/events", "HTTP/1.1")
+		res1 := httpparser.NewResponse()
+		r.ServeHTTP(req1, res1)
+
+		if res1.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("expected X-Cache MISS on streaming response, got %q", res1.Header.Get("X-Cache"))
+		}
+		if res1.Header.Get("Age") != "" {
+			t.Fatalf("expected Age header to be empty for streaming response, got %q", res1.Header.Get("Age"))
+		}
+
+		// 2. Second streaming request must also be MISS
+		req2, _ := httpparser.NewRequest("GET", "/events", "HTTP/1.1")
+		res2 := httpparser.NewResponse()
+		r.ServeHTTP(req2, res2)
+
+		if res2.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("expected X-Cache MISS on second streaming request, got %q", res2.Header.Get("X-Cache"))
+		}
+		if calls := atomic.LoadInt64(&streamCalls); calls != 2 {
+			t.Fatalf("expected streaming endpoint called twice (not cached), got %d", calls)
+		}
+
+		// 3. Standard JSON request (regression check)
+		reqJSON1, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+		resJSON1 := httpparser.NewResponse()
+		r.ServeHTTP(reqJSON1, resJSON1)
+		if resJSON1.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("expected first JSON request to be MISS, got %q", resJSON1.Header.Get("X-Cache"))
+		}
+
+		// 4. Second standard JSON request must be HIT
+		reqJSON2, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+		resJSON2 := httpparser.NewResponse()
+		r.ServeHTTP(reqJSON2, resJSON2)
+		if resJSON2.Header.Get("X-Cache") != "HIT" {
+			t.Fatalf("expected second JSON request to be HIT, got %q", resJSON2.Header.Get("X-Cache"))
+		}
+		if calls := atomic.LoadInt64(&jsonCalls); calls != 1 {
+			t.Fatalf("expected JSON endpoint called once due to cache hit, got %d", calls)
+		}
+	})
+
+	t.Run("X-Accel-Buffering: no bypasses cache", func(t *testing.T) {
+		r := New()
+		cfg := DefaultCacheConfig()
+		cfg.DefaultTTL = 60 * time.Second
+		r.Use(NewCacheMiddleware(cfg))
+
+		var unbufCalls int64
+		r.GET("/unbuffered", func(req *httpparser.Request, res *httpparser.Response) {
+			atomic.AddInt64(&unbufCalls, 1)
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Content-Type", "text/plain")
+			res.Header.Set("X-Accel-Buffering", "no")
+			_, _ = res.WriteString("realtime content")
+		})
+
+		req1, _ := httpparser.NewRequest("GET", "/unbuffered", "HTTP/1.1")
+		res1 := httpparser.NewResponse()
+		r.ServeHTTP(req1, res1)
+		if res1.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("expected MISS, got %s", res1.Header.Get("X-Cache"))
+		}
+
+		req2, _ := httpparser.NewRequest("GET", "/unbuffered", "HTTP/1.1")
+		res2 := httpparser.NewResponse()
+		r.ServeHTTP(req2, res2)
+		if res2.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("expected MISS on second request for unbuffered, got %s", res2.Header.Get("X-Cache"))
+		}
+		if calls := atomic.LoadInt64(&unbufCalls); calls != 2 {
+			t.Fatalf("expected unbuffered endpoint called twice, got %d", calls)
+		}
+	})
 }

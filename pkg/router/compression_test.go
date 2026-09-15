@@ -391,3 +391,81 @@ func TestCompression_WebSocketBypass(t *testing.T) {
 		t.Fatalf("expected no compression for 101 Switching Protocols, got %q", enc)
 	}
 }
+
+func TestCompressionMiddleware_StreamingBypass(t *testing.T) {
+	t.Run("Subtest 5A: res.StreamBody != nil bypasses compression", func(t *testing.T) {
+		r := New()
+		cfg := DefaultCompressionConfig()
+		cfg.MinLength = 10
+		r.Use(NewCompressionMiddleware(cfg))
+
+		r.GET("/stream", func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Content-Type", "text/event-stream")
+			res.StreamBody = io.NopCloser(strings.NewReader("event: data\ndata: hello\n\n"))
+		})
+
+		req, _ := httpparser.NewRequest("GET", "/stream", "HTTP/1.1")
+		req.Header.Set("Accept-Encoding", "gzip, zstd")
+		res := httpparser.NewResponse()
+
+		r.ServeHTTP(req, res)
+
+		if enc := res.Header.Get("Content-Encoding"); enc != "" {
+			t.Fatalf("expected no Content-Encoding for streaming response, got %q", enc)
+		}
+		if cl := res.Header.Get("Content-Length"); cl != "" {
+			t.Fatalf("expected no Content-Length for streaming response, got %q", cl)
+		}
+		if res.Body.Len() != 0 {
+			t.Fatalf("expected res.Body.Len() == 0, got %d", res.Body.Len())
+		}
+	})
+
+	t.Run("Subtest 5A2: text/event-stream MIME bypasses compression even without StreamBody", func(t *testing.T) {
+		r := New()
+		cfg := DefaultCompressionConfig()
+		cfg.MinLength = 10
+		r.Use(NewCompressionMiddleware(cfg))
+
+		r.GET("/sse", func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Content-Type", "text/event-stream")
+			_, _ = res.WriteString(strings.Repeat("data: message\n\n", 20))
+		})
+
+		req, _ := httpparser.NewRequest("GET", "/sse", "HTTP/1.1")
+		req.Header.Set("Accept-Encoding", "gzip")
+		res := httpparser.NewResponse()
+
+		r.ServeHTTP(req, res)
+
+		if enc := res.Header.Get("Content-Encoding"); enc != "" {
+			t.Fatalf("expected no Content-Encoding for text/event-stream, got %q", enc)
+		}
+	})
+
+	t.Run("Subtest 5A3: X-Accel-Buffering: no bypasses compression", func(t *testing.T) {
+		r := New()
+		cfg := DefaultCompressionConfig()
+		cfg.MinLength = 10
+		r.Use(NewCompressionMiddleware(cfg))
+
+		r.GET("/unbuffered", func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Content-Type", "text/plain")
+			res.Header.Set("X-Accel-Buffering", "no")
+			_, _ = res.WriteString(strings.Repeat("unbuffered message ", 20))
+		})
+
+		req, _ := httpparser.NewRequest("GET", "/unbuffered", "HTTP/1.1")
+		req.Header.Set("Accept-Encoding", "gzip")
+		res := httpparser.NewResponse()
+
+		r.ServeHTTP(req, res)
+
+		if enc := res.Header.Get("Content-Encoding"); enc != "" {
+			t.Fatalf("expected no Content-Encoding for X-Accel-Buffering: no, got %q", enc)
+		}
+	})
+}

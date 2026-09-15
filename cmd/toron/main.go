@@ -527,6 +527,8 @@ func main() {
 						}
 						return appCfg.Server.TrustedProxies
 					}(),
+					RouteHasCompression: appCfg.Server.Compression.Enabled,
+					RouteHasCache:       appCfg.Server.Cache.Enabled,
 					Transport: proxy.ProxyTransportConfig{
 						Profile:                tc.Profile,
 						MaxIdleConns:           tc.MaxIdleConns,
@@ -539,6 +541,8 @@ func main() {
 						PropagateUpstreamClose: tc.PropagateUpstreamClose,
 						ForceAttemptHTTP2:      tc.ForceAttemptHTTP2,
 						Tracing:                tc.Tracing,
+						StreamResponse:         tc.StreamResponse,
+						ResponseHeaderTimeout:  tc.ResponseHeaderTimeout,
 					},
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {

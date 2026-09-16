@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-10
+updated: 2026-09-16
 
 depends_on:
   - REQ-007
@@ -15,6 +15,7 @@ depends_on:
   - REQ-086
   - REQ-087
   - REQ-092
+  - REQ-126
   - TASK-007
   - TASK-019
   - TASK-027
@@ -28,6 +29,9 @@ depends_on:
   - TASK-111
   - TASK-112
   - TASK-113
+  - TASK-149
+  - ADR-126
+  - TC-126
 
 derived_from:
   - REQ-007
@@ -52,16 +56,51 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
 | `host` | `string` | `"0.0.0.0"` | Network interface IP binding |
-| `port` | `integer` | `8080` | TCP port to listen on |
-| `worker_pool_size` | `integer` | `128` | Concurrent worker pool count |
-| `read_timeout` | `duration` | `"5s"` | Socket read deadline timeout |
-| `write_timeout` | `duration` | `"5s"` | Socket write deadline timeout |
-| `idle_timeout` | `duration` | `"30s"` | Socket idle keep-alive timeout |
-| `upgrade_idle_timeout` | `duration` | `"60s"` | Maximum inactivity deadline on upgraded protocol/WebSocket streams before termination (defaults to `idle_timeout` or `60s` if omitted or <= 0) |
+| `port` | `integer` | `8080` | TCP port to listen on (1–65535) |
+| `worker_pool_size` | `integer` | `128` | Concurrent worker pool count (> 0) |
+| `read_timeout` | `duration` | `"5s"` | Maximum duration allowed for reading client request headers and payload. Subject to adaptive socket deadline amortization during rapid keep-alive bursts (bypasses kernel syscalls when >50% of the window remains). Set to `0` or `0s` to completely disable read deadlines (zero syscalls). Negative values strictly rejected |
+| `write_timeout` | `duration` | `"5s"` | Maximum duration allowed for writing responses. Amortized for discrete responses; automatically refreshed per chunk for persistent streaming (`res.StreamBody`) to support indefinite healthy streams while mitigating Slow-Read DoS (CWE-400). Set to `0` or `0s` to completely disable write deadlines (zero syscalls). Negative values strictly rejected |
+| `idle_timeout` | `duration` | `"30s"` | Inactivity deadline between transactions on persistent keep-alive connections. Strictly enforced immediately when a transaction completes and reader buffer is empty (`br.Buffered() == 0`), resetting amortization cache to prevent Slowloris starvation. Negative values strictly rejected |
+| `upgrade_idle_timeout` | `duration` | `"60s"` | Inactivity deadline on upgraded protocol/WebSocket/tunnel streams (`relayStreams`) before termination. Defaults to `idle_timeout` or `60s` if omitted or <= 0 as a fail-safe against unbounded tunnels (SEC-27, ADR-083). Negative values strictly rejected |
 | `max_header_bytes` | `integer` | `8192` (8 KB) | Maximum HTTP header size |
 | `max_body_bytes` | `integer` | `4194304` (4 MB) | Maximum HTTP body payload size |
 | `trusted_proxies` | `list` | `[]` | List of trusted proxy CIDR subnets gating `X-Forwarded-For` and `X-Real-IP` evaluation |
 | `admin_subnets` | `list` | `[]` | Allowed CIDR subnets permitted to access `/internal/api/*` administrative endpoints |
+
+### Server Connection Timeouts & Adaptive Amortization ([REQ-126](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md))
+
+Toron enforces strict socket connection timeouts to guarantee immunity against Slowloris socket exhaustion and Slow-Read Denial of Service attacks ([`REQ-005`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-005.md) §2, [`TASK-004`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-004.md) §3, [`ADR-083`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-083.md), [`ADR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-126.md)).
+
+#### Parameter Specifications
+
+- **`read_timeout`** (`time.Duration`):
+  Defines the maximum time Toron will wait to read the entire HTTP request headers and body. Under steady-state keep-alive traffic bursts, client connections are wrapped in an adaptive tracker ([`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23)). If an active kernel read deadline was already established and more than half the timeout window remains ($R > \tau/2$), redundant operating system calls to `SetReadDeadline` are safely bypassed, achieving $>99\%$ syscall reduction at high request rates.
+- **`write_timeout`** (`time.Duration`):
+  Defines the maximum duration allowed to serialize response headers and write body bytes to the client socket.
+  - **Discrete Responses**: Amortized identically to read deadlines during rapid keep-alive transactions.
+  - **Streaming Responses (`res.StreamBody`)**: For long-lived streaming connections (such as Server-Sent Events `text/event-stream`, live feeds, or unbuffered proxy streams), Toron refreshes the socket write deadline on **every transmitted chunk** (`ForceSetWriteDeadline(now + write_timeout)`). This allows active, healthy streams to remain connected indefinitely (hours or days) while ensuring that stalled or slow-reading clients (advertising a zero TCP window or reading below rate) are terminated within `write_timeout` after socket buffers saturate ([CWE-400](https://cwe.mitre.org/data/definitions/400.html) Slow-Read defense).
+- **`idle_timeout`** (`time.Duration`):
+  Defines the maximum duration an idle keep-alive connection can wait for the arrival of the next request. The moment an HTTP transaction completes and the socket reader buffer is empty (`br.Buffered() == 0`), Toron immediately invalidates the read amortization cache (`ResetReadAmortization()`) and forces an explicit kernel deadline (`ForceSetReadDeadline(now + idle_timeout)`). This prevents long active request read deadlines (e.g. 5s or 10s) from lingering into idle periods, guaranteeing that idle connections disconnect promptly after `idle_timeout`.
+- **`upgrade_idle_timeout`** (`time.Duration`):
+  Defines the maximum inactivity timeout for upgraded full-duplex protocols (WebSockets, RFC 8441 HTTP/2 CONNECT tunnels, L4 transparent TCP relays). In bidirectional relay loops ([`relayStreams`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L696-L770)), deadlines are amortized during active frame transfers, while silence across both directions terminates the connection after `upgrade_idle_timeout`. If set to `0` or omitted, Toron defaults to `idle_timeout` (or `60s` if `idle_timeout` is also 0) as a critical security fail-safe ([`SEC-27`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L384-L392), [`ADR-083`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-083.md)).
+
+#### Non-Negative Validation Rules
+All server timeout parameters are strictly validated by [`ValidateConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/loader.go#L175-L203) during startup and configuration dry-run (`toron -t`):
+- Any negative duration (e.g. `read_timeout: -5s`, `write_timeout: -1s`, `idle_timeout: -200ms`, `upgrade_idle_timeout: -10s`) is strictly rejected with an explicit error:
+  ```text
+  server.read_timeout must be non-negative, got -5s
+  ```
+- Startup halts immediately, preventing misconfigured services from deploying with invalid or negative timeout calculations.
+
+#### Zero-Timeout Mode (Benchmark & Isolated Environments)
+For performance engineers conducting raw benchmark evaluations or deploying in isolated, trusted private enclaves where maximum throughput is paramount:
+- Setting `read_timeout: 0` (or `0s`) or `write_timeout: 0` (or `0s`) explicitly disables socket deadline enforcement.
+- When configured to `0`, [`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L57-L64) clears any existing deadline via `conn.SetDeadline(time.Time{})` and executes **exactly zero socket deadline system calls** during steady-state request processing.
+- The configuration loader preserves explicit `0` values and does **not** overwrite them with default values (`validateConfigDefaults`).
+
+> [!WARNING]
+> Disabling connection deadlines (`read_timeout: 0`, `write_timeout: 0`) removes Slowloris and Slow-Read DoS protections. Only utilize zero-timeout mode in trusted networks, closed benchmark clusters, or behind upstream edge load balancers with their own deadline enforcement.
+
 
 ## Section: `server.http2`
 

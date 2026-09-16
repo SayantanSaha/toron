@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-10
+updated: 2026-09-16
 
 depends_on:
   - REQ-009
@@ -12,17 +12,24 @@ depends_on:
   - REQ-092
   - REQ-122
   - REQ-123
+  - REQ-125
+  - REQ-126
   - TASK-009
   - TASK-111
   - TASK-112
   - TASK-113
   - TASK-145
   - TASK-146
+  - TASK-148
+  - TASK-149
   - ADR-004
   - ADR-087
   - ADR-122
   - ADR-123
+  - ADR-125
+  - ADR-126
   - TC-123
+  - TC-126
   - CR-119
   - SR-123
 
@@ -30,9 +37,13 @@ derived_from:
   - REQ-009
   - REQ-092
   - REQ-123
+  - REQ-125
+  - REQ-126
   - ADR-004
   - ADR-087
   - ADR-123
+  - ADR-125
+  - ADR-126
   - SEC-31
 
 documents:
@@ -41,6 +52,7 @@ documents:
 related_to:
   - index.md
   - configuration.md
+  - features/event-reactor.md
 ---
 
 # Reverse Proxy and Gateway Routing
@@ -156,8 +168,42 @@ Each route can override any transport knob under `transport`:
 - **Payload Inspection**: Set `disable_compression: false` to allow downstream middleware to inspect plaintext.
 - **Upstream Session Teardown**: Set `propagate_upstream_close: true` to let origin `Connection: close` tear down the client socket cleanly while still stripping hop-by-hop headers per RFC 7230.
 - **Distributed Tracing**: Set `tracing: true` on observability-critical routes to generate W3C `traceparent` headers with cryptographic random IDs, or leave `tracing: false` for raw performance.
-- **Long-Lived Live Streams (SSE)**: Toron handles Server-Sent Events (`text/event-stream`) and unbuffered feeds (`X-Accel-Buffering: no`) via a WebSocket-aligned direct socket relay with activity-refreshed write deadlines, automatically bypassing caching and compression (REQ-125, REQ-128).
+- **Long-Lived Live Streams (SSE)**: Toron handles Server-Sent Events (`text/event-stream`) and unbuffered feeds (`X-Accel-Buffering: no`) via a WebSocket-aligned direct socket relay with activity-refreshed write deadlines, automatically bypassing caching and compression ([`REQ-125`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [`REQ-126`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md)).
 - **Buffered Fallback**: Set `stream_response: false` on routes where downstream inspection requires complete in-memory body capture.
+
+## Persistent Streaming & Slow-Read Protection ([REQ-125](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [REQ-126](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md))
+
+When proxying real-time upstream endpoints—such as Server-Sent Events (SSE `text/event-stream`), live telemetry feeds, or unbuffered data pipelines (`stream_response: true`)—Toron uses an active streaming response handle (`res.StreamBody`) paired with **Activity-Refreshed Write Deadlines** implemented by [`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23).
+
+### How It Works
+
+1. **Header Phase**: Toron writes the HTTP status line and upstream response headers under an amortized `write_timeout` window.
+2. **Chunk Relay Loop**: In [`pkg/server/server.go:347-363`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L347-L363), Toron allocates a pooled 32 KB copy buffer and transfers chunks from `res.StreamBody` to the downstream client socket.
+3. **Per-Chunk Write Deadline Refresh**: Prior to transmitting each chunk (`n > 0`), Toron forces a write deadline update to `time.Now().Add(write_timeout)`:
+   ```go
+   if s.config.WriteTimeout > 0 {
+       _ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+   }
+   if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+       _ = req.CloseBody()
+       return nil
+   }
+   ```
+4. **Infinite Stream Longevity**: As long as the downstream client consumes chunks in a timely manner, each emitted chunk extends the socket deadline. Healthy SSE streams or live telemetry feeds can remain open indefinitely (hours, days, or weeks) without being killed by the static 5-second `write_timeout`.
+
+### Slow-Read Denial of Service ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)) Defense
+
+Without write deadlines, malicious or stalled clients could advertise a zero TCP receive window (`win 0`) or consume bytes at 1 byte/minute, hanging proxy worker goroutines and pinning origin handles indefinitely until thread pool exhaustion occurs.
+
+Toron prevents this exploit:
+- If a client stops reading, the kernel socket send buffer saturates.
+- `conn.Write(buf[:n])` blocks waiting for window space.
+- After `write_timeout` (e.g. 5s) of write starvation, the operating system kernel times out the socket write.
+- `conn.Write` unblocks with `os.ErrDeadlineExceeded`.
+- Toron immediately exits the streaming loop, executes `defer res.StreamBody.Close()` to sever the upstream backend connection, and closes the client socket.
+- The worker goroutine terminates immediately and frees all resources ([`TC-126.5`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L295-L324)).
+
+For detailed low-level deadline amortization algorithms and idle timeout mechanics, see [Event Reactor Core Architecture](./event-reactor.md).
 
 ## Programmatic Route Registration
 

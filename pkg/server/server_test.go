@@ -2230,6 +2230,7 @@ func TestServer_StreamingRelay_SlowReadClientDisconnect(t *testing.T) {
 	})
 
 	cfg := server.DefaultConfig()
+	cfg.WriteTimeout = 150 * time.Millisecond
 	cfg.UpgradeIdleTimeout = 150 * time.Millisecond
 
 	srv := server.New(cfg, r)
@@ -2277,4 +2278,802 @@ type closerFunc func() error
 
 func (f closerFunc) Close() error {
 	return f()
+}
+
+// --- TC-126: Socket Deadline Amortization & Streaming Timeout Suites ---
+
+type countingListener struct {
+	net.Listener
+	mu          sync.Mutex
+	activeConns []*countingConn
+}
+
+func (l *countingListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	cc := &countingConn{Conn: c}
+	l.mu.Lock()
+	l.activeConns = append(l.activeConns, cc)
+	l.mu.Unlock()
+	return cc, nil
+}
+
+type countingConn struct {
+	net.Conn
+	readDeadlines  atomic.Uint64
+	writeDeadlines atomic.Uint64
+}
+
+func (c *countingConn) SetReadDeadline(t time.Time) error {
+	c.readDeadlines.Add(1)
+	return c.Conn.SetReadDeadline(t)
+}
+
+func (c *countingConn) SetWriteDeadline(t time.Time) error {
+	c.writeDeadlines.Add(1)
+	return c.Conn.SetWriteDeadline(t)
+}
+
+func (c *countingConn) SetDeadline(t time.Time) error {
+	c.readDeadlines.Add(1)
+	c.writeDeadlines.Add(1)
+	return c.Conn.SetDeadline(t)
+}
+
+// TC-126.1: Deadline Amortization & Syscall Reduction Verification (>80% required, verify >99% on bursts)
+func TestServer_DeadlineAmortization_SyscallReduction(t *testing.T) {
+	r := router.New()
+	r.GET("/burst", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("OK")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.ReadTimeout = 5 * time.Second
+	cfg.WriteTimeout = 5 * time.Second
+	cfg.IdleTimeout = 30 * time.Second
+	cfg.HTTP2Enabled = false
+
+	srv := server.New(cfg, r)
+	rawLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer rawLn.Close()
+
+	countingLn := &countingListener{Listener: rawLn}
+	go func() {
+		_ = srv.Serve(countingLn)
+	}()
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	clientConn, err := net.Dial("tcp", rawLn.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer clientConn.Close()
+
+	reqBytes := []byte("GET /burst HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
+	reader := bufio.NewReader(clientConn)
+
+	start := time.Now()
+	numRequests := 1000
+	for i := 0; i < numRequests; i++ {
+		if _, err := clientConn.Write(reqBytes); err != nil {
+			t.Fatalf("request %d write failed: %v", i, err)
+		}
+		resp, err := http.ReadResponse(reader, nil)
+		if err != nil {
+			t.Fatalf("request %d read failed: %v", i, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK on request %d, got %d", i, resp.StatusCode)
+		}
+	}
+	duration := time.Since(start)
+
+	countingLn.mu.Lock()
+	var totalRead, totalWrite uint64
+	for _, cc := range countingLn.activeConns {
+		totalRead += cc.readDeadlines.Load()
+		totalWrite += cc.writeDeadlines.Load()
+	}
+	countingLn.mu.Unlock()
+
+	if duration > 2500*time.Millisecond {
+		t.Logf("warning: 1000 requests took %v (> 2.5s)", duration)
+	}
+
+	if totalRead > 5 {
+		t.Errorf("expected total SetReadDeadline <= 5, got %d", totalRead)
+	}
+	if totalWrite > 5 {
+		t.Errorf("expected total SetWriteDeadline <= 5, got %d", totalWrite)
+	}
+
+	reductionRead := float64(numRequests-int(totalRead)) / float64(numRequests) * 100.0
+	reductionWrite := float64(numRequests-int(totalWrite)) / float64(numRequests) * 100.0
+
+	if reductionRead < 80.0 {
+		t.Errorf("expected read syscall reduction > 80%%, got %.2f%%", reductionRead)
+	}
+	if reductionWrite < 80.0 {
+		t.Errorf("expected write syscall reduction > 80%%, got %.2f%%", reductionWrite)
+	}
+}
+
+// TC-126.3: Strict Idle Timeout State Machine Alignment (br.Buffered() == 0 Reset)
+func TestServer_IdleTimeout_StrictEnforcement(t *testing.T) {
+	r := router.New()
+	r.GET("/ping", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("pong")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.ReadTimeout = 10 * time.Second
+	cfg.IdleTimeout = 200 * time.Millisecond
+	cfg.HTTP2Enabled = false
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /ping HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatalf("failed to read response: %v", err)
+	}
+	_ = resp.Body.Close()
+
+	// Connection is now idle waiting for next request. Client halts sending.
+	start := time.Now()
+	buf := make([]byte, 128)
+	_, readErr := conn.Read(buf)
+	duration := time.Since(start)
+
+	if readErr == nil {
+		t.Fatalf("expected EOF or error on idle timeout, got data")
+	}
+
+	// Must disconnect around 200ms (+ CI tolerance), proving 10s ReadTimeout didn't bleed into idle
+	if duration < 150*time.Millisecond || duration > 600*time.Millisecond {
+		t.Errorf("expected idle disconnect in ~200ms, took %v", duration)
+	}
+}
+
+// TC-126.4: Long-Lived Streaming Survival (> 10s or past WriteTimeout)
+func TestServer_Streaming_SurvivesPastWriteTimeout(t *testing.T) {
+	r := router.New()
+
+	closedCh := make(chan struct{})
+	r.GET("/sse-long", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: pr,
+			Closer: io.Closer(closerFunc(func() error {
+				select {
+				case <-closedCh:
+				default:
+					close(closedCh)
+				}
+				return pr.Close()
+			})),
+		}
+
+		go func() {
+			defer pw.Close()
+			// Emit 6 chunks spaced 400ms apart (total 2.4s > 800ms WriteTimeout)
+			for i := 1; i <= 6; i++ {
+				chunk := fmt.Sprintf("event: msg%d\ndata: tick\n\n", i)
+				if _, err := pw.Write([]byte(chunk)); err != nil {
+					return
+				}
+				time.Sleep(400 * time.Millisecond)
+			}
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.WriteTimeout = 800 * time.Millisecond
+	cfg.IdleTimeout = 5 * time.Second
+	cfg.HTTP2Enabled = false
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	if _, err := fmt.Fprintf(conn, "GET /sse-long HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatalf("failed to send request: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	resp, err := http.ReadResponse(reader, nil)
+	if err != nil {
+		t.Fatalf("failed to read response headers: %v", err)
+	}
+
+	if resp.Header.Get("Content-Type") != "text/event-stream" {
+		t.Errorf("expected text/event-stream, got %s", resp.Header.Get("Content-Type"))
+	}
+
+	var chunksReceived []string
+	chunkBuf := make([]byte, 256)
+	for {
+		n, err := resp.Body.Read(chunkBuf)
+		if n > 0 {
+			chunksReceived = append(chunksReceived, string(chunkBuf[:n]))
+		}
+		if err != nil {
+			break
+		}
+	}
+	_ = resp.Body.Close()
+
+	fullBody := strings.Join(chunksReceived, "")
+	for i := 1; i <= 6; i++ {
+		expected := fmt.Sprintf("event: msg%d\ndata: tick\n\n", i)
+		if !strings.Contains(fullBody, expected) {
+			t.Errorf("expected chunk %d in body, got: %s", i, fullBody)
+		}
+	}
+
+	select {
+	case <-closedCh:
+	case <-time.After(1 * time.Second):
+		t.Fatalf("expected StreamBody.Close() to be called")
+	}
+}
+
+// TC-126.5: Slow-Read Client Teardown / CWE-400 Mitigation
+func TestServer_Streaming_SlowReadClientTerminated(t *testing.T) {
+	r := router.New()
+
+	closedCh := make(chan struct{})
+	r.GET("/infinite-stream-cwe400", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: pr,
+			Closer: io.Closer(closerFunc(func() error {
+				select {
+				case <-closedCh:
+				default:
+					close(closedCh)
+				}
+				return pr.Close()
+			})),
+		}
+
+		go func() {
+			defer pw.Close()
+			chunk := bytes.Repeat([]byte("X"), 32*1024)
+			for {
+				if _, err := pw.Write(chunk); err != nil {
+					return
+				}
+			}
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.WriteTimeout = 200 * time.Millisecond
+	cfg.HTTP2Enabled = false
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.SetReadBuffer(1024)
+	}
+
+	if _, err := fmt.Fprintf(conn, "GET /infinite-stream-cwe400 HTTP/1.1\r\nHost: localhost\r\n\r\n"); err != nil {
+		t.Fatalf("failed to send request: %v", err)
+	}
+
+	initBuf := make([]byte, 256)
+	_, _ = conn.Read(initBuf)
+
+	// Halt reading: socket send buffer fills, write deadline expires
+	select {
+	case <-closedCh:
+		// Succeeded: Server aborted on write timeout and closed stream
+	case <-time.After(2 * time.Second):
+		t.Fatalf("expected server to terminate stalled client within write timeout")
+	}
+}
+
+// Helper for TCP pipe pair
+func tcpPipe() (net.Conn, net.Conn, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer ln.Close()
+
+	ch := make(chan net.Conn, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			errCh <- err
+			return
+		}
+		ch <- c
+	}()
+
+	c1, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		return nil, nil, err
+	}
+
+	select {
+	case c2 := <-ch:
+		return c1, c2, nil
+	case err := <-errCh:
+		_ = c1.Close()
+		return nil, nil, err
+	case <-time.After(2 * time.Second):
+		_ = c1.Close()
+		return nil, nil, fmt.Errorf("tcpPipe timeout")
+	}
+}
+
+// TC-126.6: Bidirectional Stream Relaying Amortization (relayStreams)
+func TestServer_RelayStreams_AmortizationAndIdle(t *testing.T) {
+	t.Run("Subtest 6A (Syscall Amortization under High-Rate Bidirectional Data)", func(t *testing.T) {
+		connA1, connA2, err := tcpPipe()
+		if err != nil {
+			t.Fatalf("failed tcpPipe A: %v", err)
+		}
+		defer connA1.Close()
+		defer connA2.Close()
+
+		connB1, connB2, err := tcpPipe()
+		if err != nil {
+			t.Fatalf("failed tcpPipe B: %v", err)
+		}
+		defer connB1.Close()
+		defer connB2.Close()
+
+		trackerA := server.NewConnDeadlineTracker(connA1)
+		trackerB := server.NewConnDeadlineTracker(connB1)
+
+		go server.RelayStreams(trackerA, trackerB, 200*time.Millisecond)
+
+		var wgRelay sync.WaitGroup
+		wgRelay.Add(2)
+
+		// Reader on B2
+		go func() {
+			defer wgRelay.Done()
+			buf := make([]byte, 64)
+			for i := 0; i < 500; i++ {
+				_, err := io.ReadFull(connB2, buf)
+				if err != nil {
+					t.Errorf("read B2 error at %d: %v", i, err)
+					return
+				}
+			}
+		}()
+
+		// Reader on A2
+		go func() {
+			defer wgRelay.Done()
+			buf := make([]byte, 64)
+			for i := 0; i < 500; i++ {
+				_, err := io.ReadFull(connA2, buf)
+				if err != nil {
+					t.Errorf("read A2 error at %d: %v", i, err)
+					return
+				}
+			}
+		}()
+
+		// Writer on A2
+		msgA := bytes.Repeat([]byte("A"), 64)
+		for i := 0; i < 500; i++ {
+			if _, err := connA2.Write(msgA); err != nil {
+				t.Fatalf("write A2 error at %d: %v", i, err)
+			}
+		}
+
+		// Writer on B2
+		msgB := bytes.Repeat([]byte("B"), 64)
+		for i := 0; i < 500; i++ {
+			if _, err := connB2.Write(msgB); err != nil {
+				t.Fatalf("write B2 error at %d: %v", i, err)
+			}
+		}
+
+		wgRelay.Wait()
+
+		rA, wA := trackerA.SyscallCounts()
+		rB, wB := trackerB.SyscallCounts()
+
+		if rA > 2 {
+			t.Errorf("expected trackerA read syscalls <= 2, got %d", rA)
+		}
+		if wA > 2 {
+			t.Errorf("expected trackerA write syscalls <= 2, got %d", wA)
+		}
+		if rB > 2 {
+			t.Errorf("expected trackerB read syscalls <= 2, got %d", rB)
+		}
+		if wB > 2 {
+			t.Errorf("expected trackerB write syscalls <= 2, got %d", wB)
+		}
+	})
+
+	t.Run("Subtest 6B (Inactivity Idle Disconnect)", func(t *testing.T) {
+		connA1, connA2, err := tcpPipe()
+		if err != nil {
+			t.Fatalf("failed tcpPipe A: %v", err)
+		}
+		defer connA2.Close()
+		connB1, connB2, err := tcpPipe()
+		if err != nil {
+			t.Fatalf("failed tcpPipe B: %v", err)
+		}
+		defer connB2.Close()
+
+		go server.RelayStreams(connA1, connB1, 200*time.Millisecond)
+
+		// Initial handshake
+		_, _ = connA2.Write([]byte("ping"))
+		b := make([]byte, 4)
+		_, _ = io.ReadFull(connB2, b)
+
+		// Now halt both sides
+		start := time.Now()
+		buf := make([]byte, 64)
+		_, errA := connA2.Read(buf)
+		elapsed := time.Since(start)
+
+		if errA == nil {
+			t.Fatalf("expected EOF on connA2 after idle timeout")
+		}
+		if elapsed < 150*time.Millisecond || elapsed > 600*time.Millisecond {
+			t.Errorf("expected idle disconnect in ~200ms, took %v", elapsed)
+		}
+	})
+
+	t.Run("Subtest 6C (Heartbeat Stream Survival)", func(t *testing.T) {
+		connA1, connA2, err := tcpPipe()
+		if err != nil {
+			t.Fatalf("failed tcpPipe A: %v", err)
+		}
+		defer connA2.Close()
+		connB1, connB2, err := tcpPipe()
+		if err != nil {
+			t.Fatalf("failed tcpPipe B: %v", err)
+		}
+		defer connB2.Close()
+
+		go server.RelayStreams(connA1, connB1, 200*time.Millisecond)
+
+		stopPing := make(chan struct{})
+		go func() {
+			ticker := time.NewTicker(70 * time.Millisecond)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					if _, err := connA2.Write([]byte("P")); err != nil {
+						return
+					}
+				case <-stopPing:
+					return
+				}
+			}
+		}()
+
+		// Read pings for 500ms (> 2 full idle timeouts of 200ms)
+		readBuf := make([]byte, 1)
+		deadline := time.Now().Add(500 * time.Millisecond)
+		for time.Now().Before(deadline) {
+			_ = connB2.SetReadDeadline(time.Now().Add(150 * time.Millisecond))
+			_, err := connB2.Read(readBuf)
+			if err != nil {
+				t.Fatalf("unexpected read error during heartbeat window: %v", err)
+			}
+		}
+
+		// Stop heartbeats and verify disconnection within ~200ms
+		close(stopPing)
+		start := time.Now()
+		_ = connB2.SetReadDeadline(time.Now().Add(1 * time.Second))
+		buf := make([]byte, 64)
+		for {
+			_, err := connB2.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+		elapsed := time.Since(start)
+		if elapsed < 150*time.Millisecond || elapsed > 600*time.Millisecond {
+			t.Errorf("expected disconnect in ~200ms after pings ceased, took %v", elapsed)
+		}
+	})
+}
+
+// TC-126.7: Zero-Timeout Configuration Verification (read_timeout: 0, write_timeout: 0)
+func TestServer_ZeroTimeout_NoSyscalls(t *testing.T) {
+	r := router.New()
+	r.GET("/bench", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("OK")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.ReadTimeout = 0
+	cfg.WriteTimeout = 0
+	cfg.IdleTimeout = 0
+	cfg.HTTP2Enabled = false
+
+	srv := server.New(cfg, r)
+	rawLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer rawLn.Close()
+
+	countingLn := &countingListener{Listener: rawLn}
+	go func() {
+		_ = srv.Serve(countingLn)
+	}()
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	clientConn, err := net.Dial("tcp", rawLn.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer clientConn.Close()
+
+	reqBytes := []byte("GET /bench HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n")
+	reader := bufio.NewReader(clientConn)
+
+	for i := 0; i < 50; i++ {
+		if _, err := clientConn.Write(reqBytes); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+		resp, err := http.ReadResponse(reader, nil)
+		if err != nil {
+			t.Fatalf("read failed: %v", err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", resp.StatusCode)
+		}
+	}
+
+	countingLn.mu.Lock()
+	var totalRead, totalWrite uint64
+	for _, cc := range countingLn.activeConns {
+		totalRead += cc.readDeadlines.Load()
+		totalWrite += cc.writeDeadlines.Load()
+	}
+	countingLn.mu.Unlock()
+
+	if totalRead != 0 {
+		t.Errorf("expected 0 read deadline syscalls with zero-timeout, got %d", totalRead)
+	}
+	if totalWrite != 0 {
+		t.Errorf("expected 0 write deadline syscalls with zero-timeout, got %d", totalWrite)
+	}
+}
+
+// TC-126.10: Concurrency & Data Race Cleanliness
+func TestServer_DeadlineAmortization_ConcurrencyRaceSafety(t *testing.T) {
+	r := router.New()
+	r.GET("/fast", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("fast")
+	})
+	r.GET("/stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+		pr, pw := io.Pipe()
+		res.StreamBody = struct {
+			io.Reader
+			io.Closer
+		}{Reader: pr, Closer: pr}
+		go func() {
+			defer pw.Close()
+			for i := 0; i < 5; i++ {
+				_, _ = pw.Write([]byte("data: event\n\n"))
+				time.Sleep(20 * time.Millisecond)
+			}
+		}()
+	})
+	r.GET("/slow-read", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+		pr, pw := io.Pipe()
+		res.StreamBody = struct {
+			io.Reader
+			io.Closer
+		}{Reader: pr, Closer: pr}
+		go func() {
+			defer pw.Close()
+			for i := 0; i < 20; i++ {
+				if _, err := pw.Write(bytes.Repeat([]byte("Z"), 8192)); err != nil {
+					return
+				}
+			}
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.ReadTimeout = 1 * time.Second
+	cfg.WriteTimeout = 300 * time.Millisecond
+	cfg.IdleTimeout = 300 * time.Millisecond
+
+	srv := server.New(cfg, r)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() { _ = srv.Shutdown(context.Background()) }()
+
+	var wg sync.WaitGroup
+
+	// Group 1: 20 rapid keep-alive clients (15 requests each)
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			reader := bufio.NewReader(conn)
+			for j := 0; j < 15; j++ {
+				_, _ = conn.Write([]byte("GET /fast HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"))
+				resp, err := http.ReadResponse(reader, nil)
+				if err != nil {
+					return
+				}
+				_ = resp.Body.Close()
+			}
+		}()
+	}
+
+	// Group 2: 10 streaming clients
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			_, _ = conn.Write([]byte("GET /stream HTTP/1.1\r\nHost: localhost\r\n\r\n"))
+			buf := make([]byte, 512)
+			for {
+				_, err := conn.Read(buf)
+				if err != nil {
+					return
+				}
+			}
+		}()
+	}
+
+	// Group 3: 10 slow-read clients
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			if tc, ok := conn.(*net.TCPConn); ok {
+				_ = tc.SetReadBuffer(512)
+			}
+			_, _ = conn.Write([]byte("GET /slow-read HTTP/1.1\r\nHost: localhost\r\n\r\n"))
+			buf := make([]byte, 128)
+			_, _ = conn.Read(buf)
+			// halt reading; wait for server timeout
+			time.Sleep(400 * time.Millisecond)
+		}()
+	}
+
+	// Group 4: 10 idle clients
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", ln.Addr().String())
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			reader := bufio.NewReader(conn)
+			_, _ = conn.Write([]byte("GET /fast HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"))
+			resp, err := http.ReadResponse(reader, nil)
+			if err != nil {
+				return
+			}
+			_ = resp.Body.Close()
+			// Stalled waiting for idle timeout
+			time.Sleep(400 * time.Millisecond)
+		}()
+	}
+
+	wg.Wait()
 }

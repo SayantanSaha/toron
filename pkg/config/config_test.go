@@ -1104,3 +1104,73 @@ func TestConfig_ProxyTransportConfig_StreamResponseAndTimeout(t *testing.T) {
 		}
 	})
 }
+
+// TC-126.8: Configuration Schema Validation & Invariant Protection
+func TestConfig_ServerTimeouts_ValidationAndZeroSupport(t *testing.T) {
+	t.Run("Subtest 8A (Negative ReadTimeout Rejection)", func(t *testing.T) {
+		cfg := config.DefaultAppConfig()
+		cfg.Server.ReadTimeout = -1 * time.Second
+		err := config.ValidateConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "server.read_timeout must be non-negative") {
+			t.Fatalf("expected error containing 'server.read_timeout must be non-negative', got %v", err)
+		}
+	})
+
+	t.Run("Subtest 8B (Negative WriteTimeout Rejection)", func(t *testing.T) {
+		cfg := config.DefaultAppConfig()
+		cfg.Server.WriteTimeout = -500 * time.Millisecond
+		err := config.ValidateConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "server.write_timeout must be non-negative") {
+			t.Fatalf("expected error containing 'server.write_timeout must be non-negative', got %v", err)
+		}
+	})
+
+	t.Run("Subtest 8C (Negative IdleTimeout Rejection)", func(t *testing.T) {
+		cfg := config.DefaultAppConfig()
+		cfg.Server.IdleTimeout = -2 * time.Second
+		err := config.ValidateConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "server.idle_timeout must be non-negative") {
+			t.Fatalf("expected error containing 'server.idle_timeout must be non-negative', got %v", err)
+		}
+	})
+
+	t.Run("Subtest 8D (Negative UpgradeIdleTimeout Rejection)", func(t *testing.T) {
+		cfg := config.DefaultAppConfig()
+		cfg.Server.UpgradeIdleTimeout = -1 * time.Second
+		err := config.ValidateConfig(cfg)
+		if err == nil || !strings.Contains(err.Error(), "server.upgrade_idle_timeout must be non-negative") {
+			t.Fatalf("expected error containing 'server.upgrade_idle_timeout must be non-negative', got %v", err)
+		}
+	})
+
+	t.Run("Subtest 8E (Zero Values Accepted Without Overwrite)", func(t *testing.T) {
+		yamlData := `
+server:
+  port: 8080
+  read_timeout: 0s
+  write_timeout: 0s
+  idle_timeout: 0s
+  upgrade_idle_timeout: 0s
+`
+		cfg := config.DefaultAppConfig()
+		if err := yaml.Unmarshal([]byte(yamlData), cfg); err != nil {
+			t.Fatalf("failed to unmarshal yaml: %v", err)
+		}
+		if err := config.ValidateConfig(cfg); err != nil {
+			t.Fatalf("unexpected validation error: %v", err)
+		}
+		if cfg.Server.ReadTimeout != 0 {
+			t.Errorf("expected ReadTimeout 0, got %v", cfg.Server.ReadTimeout)
+		}
+		if cfg.Server.WriteTimeout != 0 {
+			t.Errorf("expected WriteTimeout 0, got %v", cfg.Server.WriteTimeout)
+		}
+		if cfg.Server.IdleTimeout != 0 {
+			t.Errorf("expected IdleTimeout 0, got %v", cfg.Server.IdleTimeout)
+		}
+		if cfg.Server.UpgradeIdleTimeout != 0 {
+			t.Errorf("expected UpgradeIdleTimeout 0, got %v", cfg.Server.UpgradeIdleTimeout)
+		}
+	})
+}
+

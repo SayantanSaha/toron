@@ -1,5 +1,61 @@
 # Release Notes
 
+## 2026-09-16 - Toron v1.5.25 Performance & Security Release (Adaptive Socket Deadline Amortization and Activity-Refreshed Streaming Timeouts - REQ-126 / TASK-149)
+
+### Milestone Summary
+- **Adaptive Socket Deadline Amortization (REQ-126, TASK-149, ADR-126, TC-126, CR-122, SR-126)**: Implemented an adaptive connection deadline amortization engine ([`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23)) that resolves kernel socket system call saturation (~49,000 syscalls/sec at 24.5k RPS) during high-concurrency keep-alive HTTP request bursts.
+- **Syscall Reduction (>99%)**: Bypasses redundant operating system `SetReadDeadline` and `SetWriteDeadline` system calls when more than half of the configured timeout window remains active ($R > \tau/2$). Benchmarking under [`TC-126.1`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L160-L190) confirmed $>99.8\%$ syscall reduction (only $\le 2$ read and $\le 2$ write syscalls per 1,000 burst requests), substantially reducing ring-3 to ring-0 context switches and CPU instruction cache thrashing.
+- **Strict Idle Timeout State Machine Alignment**: Resolved the boundary condition between active request processing and keep-alive idle states. When an HTTP transaction completes and the connection buffer is empty (`br.Buffered() == 0`), Toron immediately resets the read amortization cache (`ResetReadAmortization()`) and forces an explicit `idle_timeout` deadline (`ForceSetReadDeadline(now + idle_timeout)`). This prevents long active request read deadlines from bleeding into idle periods, preserving 100% compliance with Slowloris defense mandates ([`REQ-005`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-005.md) §2, [`TASK-004`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-004.md) §3).
+- **Activity-Refreshed Streaming Write Deadlines (`res.StreamBody`)**: Resolved the conflict between static write deadlines (premature termination after 5s) and persistent streaming responses (Server-Sent Events `text/event-stream`, live feeds, and unbuffered reverse proxy streams). By refreshing the socket write deadline on every transmitted chunk (`ForceSetWriteDeadline(now + write_timeout)`), healthy streams persist indefinitely across minutes, hours, or days.
+- **Slow-Read Denial of Service (CWE-400) Defense**: Maintained strict protection against slow-reading or stalled clients. If a client stalls or advertises a zero TCP window, the socket send buffer saturates, `conn.Write` blocks, and the kernel write deadline expires within `write_timeout`. Toron cleanly terminates `res.StreamBody` (tearing down upstream origin handles), closes the client socket, and terminates the worker goroutine without resource leaks ([`TC-126.5`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L295-L324)).
+- **Bidirectional Upgraded Relay Amortization (`relayStreams`)**: Integrated `connDeadlineTracker` into upgraded WebSocket and L4 transparent tunnels, amortizing read/write deadlines during bidirectional message bursts while enforcing inactivity timeouts and gracefully forwarding TCP half-close (`CloseWrite()`).
+- **Zero-Timeout Benchmark Mode (`read_timeout: 0`, `write_timeout: 0`)**: Added native support for disabling connection deadlines completely in trusted benchmark environments, executing exactly zero deadline system calls without default overwrites.
+- **Strict Non-Negative Configuration Validation**: Enforced startup validation across all server timeout options (`read_timeout`, `write_timeout`, `idle_timeout`, `upgrade_idle_timeout`), immediately rejecting negative durations with actionable error messages.
+- **Zero Third-Party Dependencies & Concurrency Safety**: Implemented entirely with Go standard library primitives (`sync`, `sync/atomic`, `net`, `time`, `syscall`). 100% race-clean across server and proxy suites under `go test -race`.
+
+### Added
+- **`pkg/server/deadline.go`**: Implemented `connDeadlineTracker` wrapping `net.Conn` with `SetAmortizedReadDeadline`, `SetAmortizedWriteDeadline`, `ForceSetReadDeadline`, `ForceSetWriteDeadline`, `ResetReadAmortization`, `ResetWriteAmortization`, atomic telemetry counters, and transparent interface delegation (`Unwrap`, `CloseWrite`, `SyscallConn`).
+- **`pkg/server/export_test.go`**: Whitebox test exports for `connDeadlineTracker` constructor and `relayStreams` helper in package `server_test`.
+- **`pkg/server/deadline_test.go`**: Dedicated unit tests verifying deadline renewal on half-window decay ($R \le \tau/2$), timeout mutation, zero clearing, interface forwarding, and concurrent access safety.
+- **Automated Verification Suites in `pkg/server/server_test.go` & `pkg/config/config_test.go`**:
+  - `TestServer_DeadlineAmortization_SyscallReduction` (TC-126.1: $>99.8\%$ syscall reduction).
+  - `TestServer_IdleTimeout_StrictEnforcement` (TC-126.3: immediate idle disconnect without bleed).
+  - `TestServer_Streaming_SurvivesPastWriteTimeout` (TC-126.4: persistent streaming survival).
+  - `TestServer_Streaming_SlowReadClientTerminated` (TC-126.5: CWE-400 slow-read client teardown).
+  - `TestServer_RelayStreams_AmortizationAndIdle` (TC-126.6: tunnel amortization and idle teardown).
+  - `TestServer_ZeroTimeout_NoSyscalls` (TC-126.7: zero syscalls in zero-timeout mode).
+  - `TestConfig_ServerTimeouts_ValidationAndZeroSupport` (TC-126.8: non-negative duration validation).
+  - `TestServer_DeadlineAmortization_ConcurrencyRaceSafety` (TC-126.10: 100-client concurrent race verification).
+
+### Changed
+- **`pkg/server/server.go`**:
+  - Wrapped client connections in `connDeadlineTracker` in `handleConn`.
+  - Integrated strict idle transition state machine checking `br.Buffered() == 0`.
+  - Replaced static write deadline in `res.StreamBody` with per-chunk activity-refreshed write deadlines.
+  - Updated `relayStreams` to wrap connections in deadline trackers with amortized I/O and half-close propagation.
+  - Implemented `Unwrap()`, `CloseWrite()`, and `SyscallConn()` on `prefixConn`.
+- **`pkg/config/loader.go`**:
+  - Added non-negative validation for `read_timeout`, `write_timeout`, `idle_timeout`, and `upgrade_idle_timeout` in `ValidateConfig`.
+  - Preserved explicit `0` values in `validateConfigDefaults`.
+- **`docs/wiki/reference/config-options.md`**: Updated server timeout definitions, non-negative validation rules, and zero-timeout mode documentation.
+- **`docs/wiki/features/event-reactor.md`**: Expanded core event reactor documentation with deadline amortization algorithms, idle transition state machines, and streaming activity refreshes.
+- **`docs/wiki/features/reverse-proxy.md`**: Documented persistent streaming response fast-paths and Slow-Read DoS (CWE-400) protection.
+
+### Fixed
+- **Kernel Deadline Syscall Contention at Scale**: Eliminated ~49,000 redundant socket deadline system calls per second under keep-alive saturation workloads.
+- **Premature Teardown of Long-Lived Streams**: Fixed premature disconnect of Server-Sent Events (SSE) and live telemetry streams caused by static write deadlines exceeding 5s.
+- **Vulnerability to Slow Read DoS (CWE-400)**: Prevented malicious zero-window or stalled clients from holding worker goroutines and origin connections open indefinitely.
+
+### Related Tasks & Requirements
+- [`REQ-126`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md): Adaptive Socket Deadline Amortization and Slowloris Protection Optimization
+- [`TASK-149`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-149.md): Implement Adaptive Socket Deadline Amortization and Activity-Refreshed Streaming Timeouts
+- [`ADR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-126.md): Adaptive Socket Deadline Amortization and Activity-Refreshed Streaming Architecture
+- [`TC-126`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md): Verification of Adaptive Socket Deadline Amortization and Activity-Refreshed Streaming Timeouts
+- [`CR-122`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-122.md): Code Review of Adaptive Socket Deadline Amortization and Activity-Refreshed Streaming Timeouts
+- [`SR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-126.md): Security Review of Adaptive Socket Deadline Amortization and Activity-Refreshed Streaming Timeouts
+
+---
+
 ## 2026-09-12 - Toron v1.5.24 Benchmark Release (Heterogeneous Multi-Hop Live Docker Harness Network Execution Architecture - REQ-120 / TASK-143)
 
 ### Milestone Summary

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"strconv"
 	"strings"
 	"sync"
@@ -124,6 +125,13 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 	if err != nil {
 		if errors.Is(err, ErrHeaderTooLarge) {
 			return nil, ErrHeaderTooLarge
+		}
+		if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
+			return nil, err
+		}
+		var netErr net.Error
+		if errors.As(err, &netErr) {
+			return nil, err
 		}
 		return nil, fmt.Errorf("%w: %v", ErrBadRequest, err)
 	}

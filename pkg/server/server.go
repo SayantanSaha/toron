@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"golang.org/x/net/http2"
@@ -43,6 +44,24 @@ func (c *prefixConn) Read(b []byte) (n int, err error) {
 		return n, nil
 	}
 	return c.Conn.Read(b)
+}
+
+func (c *prefixConn) Unwrap() net.Conn {
+	return c.Conn
+}
+
+func (c *prefixConn) CloseWrite() error {
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return fmt.Errorf("CloseWrite not supported")
+}
+
+func (c *prefixConn) SyscallConn() (syscall.RawConn, error) {
+	if sc, ok := c.Conn.(syscall.Conn); ok {
+		return sc.SyscallConn()
+	}
+	return nil, syscall.EINVAL
 }
 
 // Server orchestrates the reactor, router, HTTP/1.1, and HTTP/2 request processing lifecycle.
@@ -182,6 +201,8 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 	}
 
+	tracker := newConnDeadlineTracker(conn)
+	conn = tracker
 	br := bufio.NewReader(conn)
 	firstRequest := true
 	for {
@@ -196,7 +217,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			timeout = s.config.IdleTimeout
 		}
 		if timeout > 0 {
-			_ = conn.SetReadDeadline(time.Now().Add(timeout))
+			_ = tracker.SetAmortizedReadDeadline(timeout)
 		}
 
 		req, err := httpparser.ParseRequest(br, opts)
@@ -234,7 +255,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			}
 
 			if s.config.WriteTimeout > 0 {
-				_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+				_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
 			}
 			_ = res.Serialize(conn)
 			return err
@@ -279,7 +300,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 
 		if res.UpgradedConn != nil || res.StatusCode == http.StatusSwitchingProtocols {
 			if s.config.WriteTimeout > 0 {
-				_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+				_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
 			}
 
 			if err := res.Serialize(conn); err != nil {
@@ -312,20 +333,12 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			defer res.StreamBody.Close()
 
 			if s.config.WriteTimeout > 0 {
-				_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+				_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
 			}
 
 			if err := res.Serialize(conn); err != nil {
 				_ = req.CloseBody()
 				return fmt.Errorf("server: failed to write stream headers: %w", err)
-			}
-
-			idleTimeout := s.config.UpgradeIdleTimeout
-			if idleTimeout <= 0 {
-				idleTimeout = s.config.IdleTimeout
-			}
-			if idleTimeout <= 0 {
-				idleTimeout = 60 * time.Second
 			}
 
 			bufPtr := httpparser.GetCopyBuffer()
@@ -335,7 +348,9 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			for {
 				n, readErr := res.StreamBody.Read(buf)
 				if n > 0 {
-					_ = conn.SetWriteDeadline(time.Now().Add(idleTimeout))
+					if s.config.WriteTimeout > 0 {
+						_ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+					}
 					if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
 						_ = req.CloseBody()
 						return nil
@@ -349,7 +364,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		if s.config.WriteTimeout > 0 {
-			_ = conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+			_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
 		}
 
 		if err := res.Serialize(conn); err != nil {
@@ -685,14 +700,17 @@ func relayStreams(conn1, conn2 net.Conn, idleTimeout time.Duration) {
 		idleTimeout = 60 * time.Second
 	}
 
-	_ = conn1.SetDeadline(time.Now().Add(idleTimeout))
-	_ = conn2.SetDeadline(time.Now().Add(idleTimeout))
+	tracker1 := toDeadlineTracker(conn1)
+	tracker2 := toDeadlineTracker(conn2)
+
+	_ = tracker1.ForceSetReadDeadline(time.Now().Add(idleTimeout))
+	_ = tracker2.ForceSetReadDeadline(time.Now().Add(idleTimeout))
 
 	var closeOnce sync.Once
 	closeBoth := func() {
 		closeOnce.Do(func() {
-			_ = conn1.Close()
-			_ = conn2.Close()
+			_ = tracker1.Close()
+			_ = tracker2.Close()
 		})
 	}
 	defer closeBoth()
@@ -701,7 +719,7 @@ func relayStreams(conn1, conn2 net.Conn, idleTimeout time.Duration) {
 	logTimeout := func() {
 		logOnce.Do(func() {
 			log.Printf("[Server] Upgraded connection idle timeout reached (%s), terminating stream between %s and %s",
-				idleTimeout, conn1.RemoteAddr(), conn2.RemoteAddr())
+				idleTimeout, tracker1.RemoteAddr(), tracker2.RemoteAddr())
 		})
 	}
 
@@ -709,15 +727,16 @@ func relayStreams(conn1, conn2 net.Conn, idleTimeout time.Duration) {
 	var wg sync.WaitGroup
 	wg.Add(2)
 
-	copyDirection := func(src, dst net.Conn) {
+	copyDirection := func(src, dst *connDeadlineTracker) {
 		defer wg.Done()
 		buf := make([]byte, 32*1024)
 
 		for {
-			_ = src.SetReadDeadline(time.Now().Add(idleTimeout))
+			_ = src.SetAmortizedReadDeadline(idleTimeout)
 			n, readErr := src.Read(buf)
 			if n > 0 {
-				_ = dst.SetWriteDeadline(time.Now().Add(idleTimeout))
+				_ = dst.SetAmortizedWriteDeadline(idleTimeout)
+				_ = dst.SetAmortizedReadDeadline(idleTimeout)
 				if _, writeErr := dst.Write(buf[:n]); writeErr != nil {
 					var netErr net.Error
 					if errors.As(writeErr, &netErr) && netErr.Timeout() {
@@ -731,10 +750,8 @@ func relayStreams(conn1, conn2 net.Conn, idleTimeout time.Duration) {
 			if readErr != nil {
 				if errors.Is(readErr, io.EOF) {
 					if halfClosed.CompareAndSwap(false, true) {
-						if tc, ok := dst.(interface{ CloseWrite() error }); ok {
-							if err := tc.CloseWrite(); err == nil {
-								return
-							}
+						if err := dst.CloseWrite(); err == nil {
+							return
 						}
 					}
 					closeBoth()
@@ -750,8 +767,8 @@ func relayStreams(conn1, conn2 net.Conn, idleTimeout time.Duration) {
 		}
 	}
 
-	go copyDirection(conn1, conn2)
-	go copyDirection(conn2, conn1)
+	go copyDirection(tracker1, tracker2)
+	go copyDirection(tracker2, tracker1)
 
 	wg.Wait()
 }

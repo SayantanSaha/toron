@@ -185,6 +185,18 @@ func ValidateConfig(cfg *AppConfig) error {
 		return fmt.Errorf("server.worker_pool_size must be greater than 0, got %d", cfg.Server.WorkerPoolSize)
 	}
 
+	if cfg.Server.ReadTimeout < 0 {
+		return fmt.Errorf("server.read_timeout must be non-negative, got %v", cfg.Server.ReadTimeout)
+	}
+
+	if cfg.Server.WriteTimeout < 0 {
+		return fmt.Errorf("server.write_timeout must be non-negative, got %v", cfg.Server.WriteTimeout)
+	}
+
+	if cfg.Server.IdleTimeout < 0 {
+		return fmt.Errorf("server.idle_timeout must be non-negative, got %v", cfg.Server.IdleTimeout)
+	}
+
 	if cfg.Server.UpgradeIdleTimeout < 0 {
 		return fmt.Errorf("server.upgrade_idle_timeout must be non-negative, got %v", cfg.Server.UpgradeIdleTimeout)
 	}

@@ -133,7 +133,7 @@ func NewCompressionMiddleware(cfg CompressionConfig) MiddlewareFunc {
 			}
 
 			// Streaming MIME or unbuffered responses must not be compressed (REQ-128)
-			if strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "text/event-stream") || strings.EqualFold(res.Header.Get("X-Accel-Buffering"), "no") {
+			if strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "text/event-stream") || strings.EqualFold(strings.TrimSpace(res.Header.Get("X-Accel-Buffering")), "no") {
 				return
 			}
 

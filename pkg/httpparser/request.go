@@ -51,7 +51,58 @@ func (h Header) Del(key string) {
 }
 
 func canonicalKey(s string) string {
-	return strings.ToLower(strings.TrimSpace(s))
+	s = strings.TrimSpace(s)
+	switch s {
+	case "Accept", "accept":
+		return "accept"
+	case "Content-Type", "content-type":
+		return "content-type"
+	case "X-Accel-Buffering", "x-accel-buffering":
+		return "x-accel-buffering"
+	case "Cache-Control", "cache-control":
+		return "cache-control"
+	case "Accept-Encoding", "accept-encoding":
+		return "accept-encoding"
+	case "Content-Encoding", "content-encoding":
+		return "content-encoding"
+	case "Content-Length", "content-length":
+		return "content-length"
+	case "Connection", "connection":
+		return "connection"
+	case "Authorization", "authorization":
+		return "authorization"
+	case "Vary", "vary":
+		return "vary"
+	case "Pragma", "pragma":
+		return "pragma"
+	case "Host", "host":
+		return "host"
+	case "Upgrade", "upgrade":
+		return "upgrade"
+	case "Age", "age":
+		return "age"
+	case "X-Cache", "x-cache":
+		return "x-cache"
+	case "Set-Cookie", "set-cookie":
+		return "set-cookie"
+	case "Set-Cookie2", "set-cookie2":
+		return "set-cookie2"
+	case "Location", "location":
+		return "location"
+	case "TE", "te":
+		return "te"
+	case "Trailers", "trailers":
+		return "trailers"
+	case "Transfer-Encoding", "transfer-encoding":
+		return "transfer-encoding"
+	case "Proxy-Authenticate", "proxy-authenticate":
+		return "proxy-authenticate"
+	case "Proxy-Authorization", "proxy-authorization":
+		return "proxy-authorization"
+	case "Keep-Alive", "keep-alive":
+		return "keep-alive"
+	}
+	return strings.ToLower(s)
 }
 
 // Request represents an HTTP/1.1 request.

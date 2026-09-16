@@ -469,3 +469,195 @@ func TestCompressionMiddleware_StreamingBypass(t *testing.T) {
 		}
 	})
 }
+
+// TC-128.6: text/event-stream Compression Bypass
+func TestCompression_TextEventStream_Bypass(t *testing.T) {
+	r := New()
+	cfg := DefaultCompressionConfig()
+	cfg.MinLength = 10
+	r.Use(NewCompressionMiddleware(cfg))
+
+	rawPayload := strings.Repeat("data: {\"event\":\"update\"}\n\n", 50)
+	r.GET("/api/stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+		_, _ = res.WriteString(rawPayload)
+	})
+
+	req, _ := httpparser.NewRequest("GET", "/api/stream", "HTTP/1.1")
+	req.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	res := httpparser.NewResponse()
+
+	r.ServeHTTP(req, res)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if enc := res.Header.Get("Content-Encoding"); enc != "" {
+		t.Fatalf("expected empty Content-Encoding, got %q", enc)
+	}
+	if res.Body.String() != rawPayload {
+		t.Fatalf("expected body to match raw payload verbatim")
+	}
+}
+
+// TC-128.7: text/event-stream with parameters Compression Bypass
+func TestCompression_TextEventStream_WithParameters_Bypass(t *testing.T) {
+	r := New()
+	cfg := DefaultCompressionConfig()
+	cfg.MinLength = 10
+	r.Use(NewCompressionMiddleware(cfg))
+
+	rawPayload := strings.Repeat("data: {\"event\":\"tick\"}\n\n", 40)
+	r.GET("/events/params", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = res.WriteString(rawPayload)
+	})
+
+	r.GET("/events/uppercase", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "TEXT/EVENT-STREAM; CHARSET=UTF-8")
+		_, _ = res.WriteString(rawPayload)
+	})
+
+	// Subtest 1: With parameters
+	req1, _ := httpparser.NewRequest("GET", "/events/params", "HTTP/1.1")
+	req1.Header.Set("Accept-Encoding", "gzip, zstd, br")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if enc := res1.Header.Get("Content-Encoding"); enc != "" {
+		t.Fatalf("expected empty Content-Encoding with charset=utf-8, got %q", enc)
+	}
+	if res1.Body.String() != rawPayload {
+		t.Fatalf("expected raw payload preserved")
+	}
+
+	// Subtest 2: Uppercase MIME with parameters
+	req2, _ := httpparser.NewRequest("GET", "/events/uppercase", "HTTP/1.1")
+	req2.Header.Set("Accept-Encoding", "gzip")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if enc := res2.Header.Get("Content-Encoding"); enc != "" {
+		t.Fatalf("expected empty Content-Encoding for uppercase MIME, got %q", enc)
+	}
+	if res2.Body.String() != rawPayload {
+		t.Fatalf("expected raw payload preserved for uppercase MIME")
+	}
+}
+
+// TC-128.8: X-Accel-Buffering: no Compression Bypass
+func TestCompression_XAccelBufferingNo_Bypass(t *testing.T) {
+	r := New()
+	cfg := DefaultCompressionConfig()
+	cfg.MinLength = 10
+	r.Use(NewCompressionMiddleware(cfg))
+
+	rawPayload := strings.Repeat("uncompressed plain text chunk ", 40)
+	r.GET("/live-unbuffered", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		res.Header.Set("X-Accel-Buffering", "no")
+		_, _ = res.WriteString(rawPayload)
+	})
+
+	req, _ := httpparser.NewRequest("GET", "/live-unbuffered", "HTTP/1.1")
+	req.Header.Set("Accept-Encoding", "gzip, br, zstd")
+	res := httpparser.NewResponse()
+
+	r.ServeHTTP(req, res)
+
+	if enc := res.Header.Get("Content-Encoding"); enc != "" {
+		t.Fatalf("expected empty Content-Encoding for X-Accel-Buffering: no, got %q", enc)
+	}
+	if res.Body.String() != rawPayload {
+		t.Fatalf("expected uncompressed raw body to be preserved verbatim")
+	}
+
+	// Whitespace test: "  no \t "
+	r.GET("/live-unbuffered-whitespace", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		res.Header.Set("X-Accel-Buffering", "  no \t ")
+		_, _ = res.WriteString(rawPayload)
+	})
+
+	req2, _ := httpparser.NewRequest("GET", "/live-unbuffered-whitespace", "HTTP/1.1")
+	req2.Header.Set("Accept-Encoding", "gzip, br, zstd")
+	res2 := httpparser.NewResponse()
+
+	r.ServeHTTP(req2, res2)
+
+	if enc := res2.Header.Get("Content-Encoding"); enc != "" {
+		t.Fatalf("expected empty Content-Encoding for X-Accel-Buffering with whitespace, got %q", enc)
+	}
+	if res2.Body.String() != rawPayload {
+		t.Fatalf("expected uncompressed raw body to be preserved verbatim")
+	}
+}
+
+// TC-128.9: Standard MIME Type Regression Protection
+func TestCompression_StandardText_Compressed(t *testing.T) {
+	r := New()
+	cfg := DefaultCompressionConfig()
+	cfg.MinLength = 10
+	r.Use(NewCompressionMiddleware(cfg))
+
+	plainText := strings.Repeat("standard compressible plain text content ", 20)
+	htmlText := strings.Repeat("<html><body><h1>Standard HTML Content</h1></body></html>", 20)
+	jsonText := strings.Repeat(`{"message":"standard compressible json content"},`, 20)
+
+	r.GET("/plain", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString(plainText)
+	})
+
+	r.GET("/html", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/html")
+		_, _ = res.WriteString(htmlText)
+	})
+
+	r.GET("/json", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		_, _ = res.WriteString(jsonText)
+	})
+
+	endpoints := []struct {
+		path     string
+		original string
+	}{
+		{"/plain", plainText},
+		{"/html", htmlText},
+		{"/json", jsonText},
+	}
+
+	for _, ep := range endpoints {
+		req, _ := httpparser.NewRequest("GET", ep.path, "HTTP/1.1")
+		req.Header.Set("Accept-Encoding", "gzip")
+		res := httpparser.NewResponse()
+
+		r.ServeHTTP(req, res)
+
+		if enc := res.Header.Get("Content-Encoding"); enc != "gzip" {
+			t.Fatalf("%s: expected Content-Encoding 'gzip', got %q", ep.path, enc)
+		}
+
+		gz, err := gzip.NewReader(res.Body)
+		if err != nil {
+			t.Fatalf("%s: failed to create gzip reader: %v", ep.path, err)
+		}
+		decompressed, err := io.ReadAll(gz)
+		gz.Close()
+		if err != nil {
+			t.Fatalf("%s: failed reading gzip payload: %v", ep.path, err)
+		}
+		if string(decompressed) != ep.original {
+			t.Fatalf("%s: decompressed payload mismatch", ep.path)
+		}
+	}
+}

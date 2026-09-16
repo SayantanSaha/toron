@@ -241,3 +241,20 @@ func BenchmarkValidateHTTP2Request(b *testing.B) {
 		_ = ValidateHTTP2Request(stdReq)
 	}
 }
+
+func TestCanonicalKey_Accept(t *testing.T) {
+	if got := canonicalKey("Accept"); got != "accept" {
+		t.Fatalf("expected accept, got %q", got)
+	}
+	if got := canonicalKey("accept"); got != "accept" {
+		t.Fatalf("expected accept, got %q", got)
+	}
+	h := make(Header)
+	h.Set("Accept", "text/html")
+	if val := h.Get("accept"); val != "text/html" {
+		t.Fatalf("expected text/html, got %q", val)
+	}
+	if val := h.Get("Accept"); val != "text/html" {
+		t.Fatalf("expected text/html, got %q", val)
+	}
+}

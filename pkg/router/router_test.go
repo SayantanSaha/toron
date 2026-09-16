@@ -1254,11 +1254,11 @@ func TestRouter_SpecificityOrdering_NoCanaryShadowing(t *testing.T) {
 	// Multi-Tier Specificity Hierarchy Verification (TC-095-06)
 	r2 := router.New()
 	specs := []router.PrefixRouteSpec{
-		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                                     // Route A
-		{TargetType: router.RouteTypeUpstream, Prefix: "/api/v1/auth", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                               // Route B
-		{TargetType: router.RouteTypeUpstream, Prefix: "/api/v1", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                                    // Route C
-		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "api.example.com", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                         // Route D
-		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "api.example.com", Headers: map[string]string{"X-Tier": "gold"}, Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},         // Route E
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                                              // Route A
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api/v1/auth", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                                      // Route B
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api/v1", Host: "", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                                           // Route C
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "api.example.com", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                                                               // Route D
+		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "api.example.com", Headers: map[string]string{"X-Tier": "gold"}, Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}},                 // Route E
 		{TargetType: router.RouteTypeUpstream, Prefix: "/api", Host: "api.example.com", Headers: map[string]string{"X-Tier": "gold"}, Method: "POST", Opts: proxy.ProxyOptions{Targets: []string{genericServer.URL}}}, // Route F
 	}
 
@@ -1628,4 +1628,3 @@ func TestRouter_ADR062_Canonicalization(t *testing.T) {
 		t.Errorf("expected 200 OK 'status' for /api/v1/../v1/status, got %d %q", res3.StatusCode, res3.Body.String())
 	}
 }
-

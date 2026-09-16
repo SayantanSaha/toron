@@ -111,6 +111,13 @@ func (rc *ResponseCache) Set(key string, entry *CachedResponse) {
 	rc.entries[key] = entry
 }
 
+// Len returns the current number of cached entries stored in memory.
+func (rc *ResponseCache) Len() int {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return len(rc.entries)
+}
+
 // Clear flushes all cached entries from memory.
 func (rc *ResponseCache) Clear() {
 	rc.mu.Lock()
@@ -159,7 +166,11 @@ func ParseCacheControl(header string) CacheControlDirectives {
 
 // NewCacheMiddleware creates an HTTP response caching middleware honoring RFC 7234 rules.
 func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
-	cache := NewResponseCache(cfg)
+	return NewCacheMiddlewareWithStore(cfg, NewResponseCache(cfg))
+}
+
+// NewCacheMiddlewareWithStore creates an HTTP response caching middleware using a caller-provided ResponseCache.
+func NewCacheMiddlewareWithStore(cfg CacheConfig, cache *ResponseCache) MiddlewareFunc {
 
 	return func(next HandlerFunc) HandlerFunc {
 		return func(req *httpparser.Request, res *httpparser.Response) {
@@ -225,6 +236,7 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 			next(req, res)
 
 			res.Header.Set("X-Cache", "MISS")
+			res.Header.Del("Age")
 
 			// WebSocket upgrades, raw upgraded socket tunnels, or live streaming responses must never be cached
 			if res.StatusCode == http.StatusSwitchingProtocols || res.UpgradedConn != nil || res.StreamBody != nil {
@@ -232,7 +244,7 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 			}
 
 			// Streaming MIME or unbuffered responses must never be cached (REQ-128)
-			if strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "text/event-stream") || strings.EqualFold(res.Header.Get("X-Accel-Buffering"), "no") {
+			if strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "text/event-stream") || strings.EqualFold(strings.TrimSpace(res.Header.Get("X-Accel-Buffering")), "no") {
 				return
 			}
 
@@ -246,9 +258,9 @@ func NewCacheMiddleware(cfg CacheConfig) MiddlewareFunc {
 				return
 			}
 
-			// Evaluate response Cache-Control headers
+			// Evaluate response Cache-Control headers (RFC 7234 §5.2.2.2 Enforcement)
 			resCC := ParseCacheControl(res.Header.Get("Cache-Control"))
-			if resCC.NoStore || resCC.Private {
+			if resCC.NoStore || resCC.NoCache || resCC.Private {
 				return
 			}
 

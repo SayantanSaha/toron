@@ -34,10 +34,13 @@ depends_on:
   - TC-123
   - TC-126
   - TC-127
+  - TC-128
   - CR-119
   - CR-123
+  - CR-124
   - SR-123
   - SR-127
+  - SR-128
 
 derived_from:
   - REQ-009
@@ -46,12 +49,14 @@ derived_from:
   - REQ-125
   - REQ-126
   - REQ-127
+  - REQ-128
   - ADR-004
   - ADR-087
   - ADR-123
   - ADR-125
   - ADR-126
   - ADR-127
+  - ADR-128
   - SEC-31
 
 documents:
@@ -176,12 +181,50 @@ Each route can override any transport knob under `transport`:
 - **Payload Inspection**: Set `disable_compression: false` to allow downstream middleware to inspect plaintext.
 - **Upstream Session Teardown**: Set `propagate_upstream_close: true` to let origin `Connection: close` tear down the client socket cleanly while still stripping hop-by-hop headers per RFC 7230.
 - **Distributed Tracing**: Set `tracing: true` on observability-critical routes to generate W3C `traceparent` headers with cryptographic random IDs, or leave `tracing: false` for raw performance.
-- **Long-Lived Live Streams (SSE)**: Toron handles Server-Sent Events (`text/event-stream`) and unbuffered feeds (`X-Accel-Buffering: no`) via a WebSocket-aligned direct socket relay with activity-refreshed write deadlines, automatically bypassing caching and compression ([`REQ-125`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [`REQ-126`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md)).
+- **Long-Lived Live Streams (SSE)**: Toron handles Server-Sent Events (`text/event-stream`) and unbuffered feeds (`X-Accel-Buffering: no`) via a WebSocket-aligned direct socket relay with activity-refreshed write deadlines, automatically activating the socket streaming fast-path even on routes where caching and compression are globally enabled ([`REQ-125`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [`REQ-126`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md), [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md)).
 - **Buffered Fallback**: Set `stream_response: false` on routes where downstream inspection requires complete in-memory body capture.
 
-## Persistent Streaming & Slow-Read Protection ([REQ-125](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [REQ-126](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md))
+## Persistent Streaming & Content-Aware Fast-Path ([REQ-125](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [REQ-126](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md), [REQ-128](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md))
 
 When proxying real-time upstream endpoints—such as Server-Sent Events (SSE `text/event-stream`), live telemetry feeds, or unbuffered data pipelines (`stream_response: true`)—Toron uses an active streaming response handle (`res.StreamBody`) paired with **Activity-Refreshed Write Deadlines** implemented by [`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23).
+
+### Content-Aware Streaming Fast-Path Activation (`canStream`)
+
+A critical architectural challenge in modern API gateways is handling mixed-traffic routes. A single prefix like `/api/v1/*` often serves both standard REST endpoints (JSON, HTML, binary assets) and real-time streaming endpoints (SSE feeds, AI token streams, telemetry).
+
+When compression or caching are enabled on a route, standard responses must be buffered in memory (`canStream = false`) to allow downstream middleware to transform or store the body. However, evaluating streaming eligibility solely at the route level created a severe failure mode:
+1. **Prior Defect**: If a route had compression or caching active, `canStream` evaluated to `false` for **all** upstream responses on that route.
+2. **Buffer Trapping & Memory Exhaustion ([CWE-400](https://cwe.mitre.org/data/definitions/400.html))**: Live Server-Sent Events were forced into the buffered fallback path (`io.CopyBuffer(res.Body, outResp.Body)`). Because SSE streams are continuous and potentially infinite, `io.CopyBuffer` blocked indefinitely, accumulating events in memory until an Out-Of-Memory (OOM) panic killed the proxy process.
+
+Under [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md) and [`ADR-128`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-128.md) ([`TASK-151`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-151.md)), Toron implements **Content-Aware Streaming Eligibility** in [`pkg/proxy/proxy.go:1102-1106`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L1102-L1106):
+
+```go
+contentType := strings.ToLower(outResp.Header.Get("Content-Type"))
+isStreamingMIME := strings.HasPrefix(contentType, "text/event-stream")
+isUnbuffered := strings.EqualFold(strings.TrimSpace(outResp.Header.Get("X-Accel-Buffering")), "no")
+canStream := p.streamResponse && ((!p.routeHasCompression && !p.routeHasCache) || isStreamingMIME || isUnbuffered)
+```
+
+#### Fast-Path Activation Matrix
+
+Because Toron's caching and compression middlewares unconditionally exempt `text/event-stream` and `X-Accel-Buffering: no` from processing ([`response-caching.md`](./response-caching.md), [`compression.md`](./compression.md)), the reverse proxy safely activates the direct socket streaming fast-path for streaming responses regardless of route middleware configuration:
+
+| Route Configuration | Upstream Response Type | `canStream` | Execution Path |
+| :--- | :--- | :--- | :--- |
+| **Pure Proxy Route** (no cache/compression) | Any HTTP response | `true` | Direct socket streaming fast-path (`res.StreamBody = outResp.Body`) |
+| **Middleware-Enabled Route** (cache/compression on) | `Content-Type: text/event-stream` | **`true`** | **Direct socket streaming fast-path (`res.StreamBody = outResp.Body`)** |
+| **Middleware-Enabled Route** (cache/compression on) | `X-Accel-Buffering: no` | **`true`** | **Direct socket streaming fast-path (`res.StreamBody = outResp.Body`)** |
+| **Middleware-Enabled Route** (cache/compression on) | Standard asset (`application/json`, `text/html`) | `false` | Buffered in `res.Body` via copy buffer slab for middleware processing |
+| **Disabled Streaming** (`stream_response: false`) | Any HTTP response | `false` | Buffered in `res.Body` for downstream inspection |
+
+### Stream Ownership Transfer & Clean Teardown Protocol
+
+When `canStream == true`, Toron executes a clean ownership hand-off protocol:
+1. **Direct Socket Assignment**: `res.StreamBody = outResp.Body` transfers ownership of the live upstream body reader directly to the response handle.
+2. **Hop-by-Hop Cleanliness (RFC 7230 §6.1)**: Hop-by-hop headers (`Connection`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailers`, `Transfer-Encoding`, `Upgrade`) are stripped before hand-off.
+3. **Non-Blocking Proxy Return**: `ReverseProxy.ServeHTTPWithPrefix` returns immediately to the server reactor without blocking on payload transmission or closing `outResp.Body`.
+4. **Guaranteed Upstream Teardown**: In [`pkg/server/server.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go), `Server.handleConn` registers `defer res.StreamBody.Close()`. When the stream completes, encounters a network I/O error, or the downstream client disconnects, the upstream socket is guaranteed to close cleanly, releasing backend connections without resource leaks.
+5. **Gateway Routing Preservation**: 3xx redirect rewriting (`RewriteRedirectLocation`), cookie path rewriting (`RewriteCookiePath`), and sticky session cookies remain fully functional on streaming responses.
 
 ### How It Works
 

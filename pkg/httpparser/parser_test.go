@@ -729,6 +729,3 @@ func BenchmarkParseRequest_PooledBody(b *testing.B) {
 		_ = req.CloseBody()
 	}
 }
-
-
-

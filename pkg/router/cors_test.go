@@ -228,4 +228,3 @@ func TestCORS_RuntimeCredentialedWildcardDisallowed(t *testing.T) {
 		t.Errorf("expected Vary: Origin on GET response, got %q", vary)
 	}
 }
-

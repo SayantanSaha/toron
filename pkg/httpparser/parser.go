@@ -72,7 +72,8 @@ func (p *pooledBodyReader) Close() error {
 // validHeaderTokenTable defines RFC 7230 §3.2.6 token characters:
 // token = 1*tchar
 // tchar = "!" / "#" / "$" / "%" / "&" / "'" / "*" / "+" / "-" / "." /
-//         "^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
+//
+//	"^" / "_" / "`" / "|" / "~" / DIGIT / ALPHA
 var validHeaderTokenTable = func() [256]bool {
 	var table [256]bool
 	for c := '0'; c <= '9'; c++ {

@@ -535,3 +535,356 @@ func TestCacheMiddleware_StreamingBypass(t *testing.T) {
 		}
 	})
 }
+
+// TC-128.1: RFC 7234 §5.2.2.2 Origin Cache-Control: no-cache Bypass
+func TestCache_RFC7234_OriginNoCache_Bypass(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	var handlerHits int64
+	r.GET("/api/dynamic", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&handlerHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		res.Header.Set("Cache-Control", "no-cache")
+		_, _ = res.WriteString(`{"timestamp": 123456789}`)
+	})
+
+	// Request 1: cache miss
+	req1, _ := httpparser.NewRequest("GET", "/api/dynamic", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if res1.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", res1.StatusCode)
+	}
+	if xCache := res1.Header.Get("X-Cache"); xCache != "MISS" {
+		t.Fatalf("expected X-Cache 'MISS', got %q", xCache)
+	}
+	if age := res1.Header.Get("Age"); age != "" {
+		t.Fatalf("expected empty Age header, got %q", age)
+	}
+	if hits := atomic.LoadInt64(&handlerHits); hits != 1 {
+		t.Fatalf("expected 1 handler hit, got %d", hits)
+	}
+
+	// Request 2: identical request must also be MISS and invoke handler
+	req2, _ := httpparser.NewRequest("GET", "/api/dynamic", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", res2.StatusCode)
+	}
+	if xCache := res2.Header.Get("X-Cache"); xCache != "MISS" {
+		t.Fatalf("expected X-Cache 'MISS' on second request, got %q", xCache)
+	}
+	if age := res2.Header.Get("Age"); age != "" {
+		t.Fatalf("expected empty Age header on second request, got %q", age)
+	}
+	if hits := atomic.LoadInt64(&handlerHits); hits != 2 {
+		t.Fatalf("expected 2 handler hits, got %d", hits)
+	}
+
+	if store.Len() != 0 {
+		t.Fatalf("expected 0 cached entries, got %d", store.Len())
+	}
+}
+
+// TC-128.2: Origin Cache-Control: no-cache with max-age Precedence
+func TestCache_OriginNoCache_WithMaxAge_Bypass(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	var handlerHits int64
+	r.GET("/api/no-cache-with-maxage", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&handlerHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		res.Header.Set("Cache-Control", "no-cache, max-age=3600")
+		_, _ = res.WriteString(`{"status":"fresh"}`)
+	})
+
+	req1, _ := httpparser.NewRequest("GET", "/api/no-cache-with-maxage", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if xCache := res1.Header.Get("X-Cache"); xCache != "MISS" {
+		t.Fatalf("expected X-Cache 'MISS', got %q", xCache)
+	}
+	if age := res1.Header.Get("Age"); age != "" {
+		t.Fatalf("expected empty Age header, got %q", age)
+	}
+
+	req2, _ := httpparser.NewRequest("GET", "/api/no-cache-with-maxage", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if xCache := res2.Header.Get("X-Cache"); xCache != "MISS" {
+		t.Fatalf("expected X-Cache 'MISS' on second request, got %q", xCache)
+	}
+	if age := res2.Header.Get("Age"); age != "" {
+		t.Fatalf("expected empty Age header on second request, got %q", age)
+	}
+	if hits := atomic.LoadInt64(&handlerHits); hits != 2 {
+		t.Fatalf("expected 2 handler hits, got %d", hits)
+	}
+
+	if store.Len() != 0 {
+		t.Fatalf("expected 0 cached entries, got %d", store.Len())
+	}
+}
+
+// TC-128.3: Content-Type: text/event-stream Cache Exemption
+func TestCache_TextEventStream_Bypass(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	var standardHits, paramsHits, upperHits int64
+
+	r.GET("/events/standard", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&standardHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+		_, _ = res.WriteString("data: event\n\n")
+	})
+
+	r.GET("/events/params", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&paramsHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = res.WriteString("data: event\n\n")
+	})
+
+	r.GET("/events/uppercase", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&upperHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "TEXT/EVENT-STREAM")
+		_, _ = res.WriteString("data: event\n\n")
+	})
+
+	// Subtest 3A (Standard text/event-stream)
+	for i := 0; i < 2; i++ {
+		req, _ := httpparser.NewRequest("GET", "/events/standard", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+		if res.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("iteration %d: expected X-Cache MISS, got %q", i, res.Header.Get("X-Cache"))
+		}
+		if res.Header.Get("Age") != "" {
+			t.Fatalf("iteration %d: expected empty Age header, got %q", i, res.Header.Get("Age"))
+		}
+	}
+	if hits := atomic.LoadInt64(&standardHits); hits != 2 {
+		t.Fatalf("expected 2 hits on /events/standard, got %d", hits)
+	}
+
+	// Subtest 3B (MIME Parameters - charset=utf-8)
+	for i := 0; i < 2; i++ {
+		req, _ := httpparser.NewRequest("GET", "/events/params", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+		if res.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("iteration %d: expected X-Cache MISS, got %q", i, res.Header.Get("X-Cache"))
+		}
+		if res.Header.Get("Age") != "" {
+			t.Fatalf("iteration %d: expected empty Age header, got %q", i, res.Header.Get("Age"))
+		}
+	}
+	if hits := atomic.LoadInt64(&paramsHits); hits != 2 {
+		t.Fatalf("expected 2 hits on /events/params, got %d", hits)
+	}
+
+	// Subtest 3C (Case-Insensitive TEXT/EVENT-STREAM)
+	for i := 0; i < 2; i++ {
+		req, _ := httpparser.NewRequest("GET", "/events/uppercase", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+		if res.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("iteration %d: expected X-Cache MISS, got %q", i, res.Header.Get("X-Cache"))
+		}
+		if res.Header.Get("Age") != "" {
+			t.Fatalf("iteration %d: expected empty Age header, got %q", i, res.Header.Get("Age"))
+		}
+	}
+	if hits := atomic.LoadInt64(&upperHits); hits != 2 {
+		t.Fatalf("expected 2 hits on /events/uppercase, got %d", hits)
+	}
+
+	// Subtest 3D (Cache Memory Inspection)
+	if store.Len() != 0 {
+		t.Fatalf("expected 0 cached entries across all SSE endpoints, got %d", store.Len())
+	}
+}
+
+// TC-128.4: X-Accel-Buffering: no Cache Exemption
+func TestCache_XAccelBufferingNo_Bypass(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	var unbufHits int64
+	r.GET("/unbuffered-feed", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&unbufHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		res.Header.Set("X-Accel-Buffering", "no")
+		_, _ = res.WriteString("live feed")
+	})
+
+	req1, _ := httpparser.NewRequest("GET", "/unbuffered-feed", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("expected X-Cache MISS, got %q", res1.Header.Get("X-Cache"))
+	}
+
+	req2, _ := httpparser.NewRequest("GET", "/unbuffered-feed", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("expected X-Cache MISS on second request, got %q", res2.Header.Get("X-Cache"))
+	}
+	if res2.Header.Get("Age") != "" {
+		t.Fatalf("expected empty Age header, got %q", res2.Header.Get("Age"))
+	}
+	if hits := atomic.LoadInt64(&unbufHits); hits != 2 {
+		t.Fatalf("expected 2 hits on unbuffered feed, got %d", hits)
+	}
+
+	// Test case variations: "No" and "NO"
+	var caseHits int64
+	r.GET("/unbuffered-mixed-case", func(req *httpparser.Request, res *httpparser.Response) {
+		h := atomic.AddInt64(&caseHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		if h%2 == 1 {
+			res.Header.Set("X-Accel-Buffering", "No")
+		} else {
+			res.Header.Set("X-Accel-Buffering", "NO")
+		}
+		_, _ = res.WriteString("live feed variation")
+	})
+
+	for i := 0; i < 2; i++ {
+		req, _ := httpparser.NewRequest("GET", "/unbuffered-mixed-case", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+		if res.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("case variation %d: expected X-Cache MISS, got %q", i, res.Header.Get("X-Cache"))
+		}
+		if res.Header.Get("Age") != "" {
+			t.Fatalf("case variation %d: expected empty Age header, got %q", i, res.Header.Get("Age"))
+		}
+	}
+	if hits := atomic.LoadInt64(&caseHits); hits != 2 {
+		t.Fatalf("expected 2 hits on mixed case unbuffered feed, got %d", hits)
+	}
+
+	// Test whitespace variation: "  no  "
+	var wsHits int64
+	r.GET("/unbuffered-whitespace", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&wsHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		res.Header.Set("X-Accel-Buffering", "  no  ")
+		_, _ = res.WriteString("live feed whitespace")
+	})
+
+	for i := 0; i < 2; i++ {
+		req, _ := httpparser.NewRequest("GET", "/unbuffered-whitespace", "HTTP/1.1")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+		if res.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("whitespace variation %d: expected X-Cache MISS, got %q", i, res.Header.Get("X-Cache"))
+		}
+		if res.Header.Get("Age") != "" {
+			t.Fatalf("whitespace variation %d: expected empty Age header, got %q", i, res.Header.Get("Age"))
+		}
+	}
+	if hits := atomic.LoadInt64(&wsHits); hits != 2 {
+		t.Fatalf("expected 2 hits on whitespace unbuffered feed, got %d", hits)
+	}
+
+	if store.Len() != 0 {
+		t.Fatalf("expected 0 cached entries for unbuffered responses, got %d", store.Len())
+	}
+}
+
+// TC-128.5: Standard Cacheable Response Regression Protection
+func TestCache_StandardResponses_StillCached(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	var jsonHits int64
+	r.GET("/api/standard-cached", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&jsonHits, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		res.Header.Set("Cache-Control", "public, max-age=60")
+		_, _ = res.WriteString(`{"cached": true}`)
+	})
+
+	req1, _ := httpparser.NewRequest("GET", "/api/standard-cached", "HTTP/1.1")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("expected first request X-Cache MISS, got %q", res1.Header.Get("X-Cache"))
+	}
+	if hits := atomic.LoadInt64(&jsonHits); hits != 1 {
+		t.Fatalf("expected 1 hit, got %d", hits)
+	}
+
+	req2, _ := httpparser.NewRequest("GET", "/api/standard-cached", "HTTP/1.1")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.Header.Get("X-Cache") != "HIT" {
+		t.Fatalf("expected second request X-Cache HIT, got %q", res2.Header.Get("X-Cache"))
+	}
+	if res2.Header.Get("Age") == "" {
+		t.Fatalf("expected Age header on second request (cache HIT)")
+	}
+	if hits := atomic.LoadInt64(&jsonHits); hits != 1 {
+		t.Fatalf("expected handler not called on second request, got %d hits", hits)
+	}
+
+	if store.Len() != 1 {
+		t.Fatalf("expected exactly 1 cached entry, got %d", store.Len())
+	}
+}
+
+// TC-128.13: Zero Dynamic Heap Allocation for Header Inspection Guards
+func TestCache_ZeroAllocations_HeaderGuards(t *testing.T) {
+	res := httpparser.NewResponse()
+	res.Header.Set("Content-Type", "text/event-stream; charset=utf-8")
+	res.Header.Set("X-Accel-Buffering", "no")
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		ct := strings.ToLower(res.Header.Get("Content-Type"))
+		_ = strings.HasPrefix(ct, "text/event-stream")
+		_ = strings.EqualFold(strings.TrimSpace(res.Header.Get("X-Accel-Buffering")), "no")
+	})
+
+	if allocs > 0 {
+		t.Fatalf("expected 0 allocs for header inspection guards, got %f", allocs)
+	}
+}
+
+// TestRouter_HeaderInspectionGuards_ZeroAllocation is an alias verifying TC-128.13 per spec.
+func TestRouter_HeaderInspectionGuards_ZeroAllocation(t *testing.T) {
+	TestCache_ZeroAllocations_HeaderGuards(t)
+}

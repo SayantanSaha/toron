@@ -1853,6 +1853,15 @@ func TestProxy_StreamingEligibilityMatrix(t *testing.T) {
 			expectedCanStream:   true,
 		},
 		{
+			name:                "Case 7b: streamResponse true, X-Accel-Buffering whitespace no",
+			streamResponse:      true,
+			routeHasCompression: true,
+			routeHasCache:       true,
+			contentType:         "application/octet-stream",
+			accelBuffering:      "  no  ",
+			expectedCanStream:   true,
+		},
+		{
 			name:                "Case 8: streamResponse true, compression & cache, X-Accel-Buffering yes",
 			streamResponse:      true,
 			routeHasCompression: true,
@@ -2032,4 +2041,269 @@ func TestProxy_WebSocketAlignedStreamHandOff(t *testing.T) {
 			_ = resClose.StreamBody.Close()
 		}
 	})
+}
+
+// TC-128.10: SSE Direct Socket Fast-Path Activation on Route with Compression & Cache Enabled
+func TestProxy_SSE_WithCompressionAndCacheEnabled(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+			return
+		}
+
+		chunks := []string{
+			"data: {\"seq\":1}\n\n",
+			"data: {\"seq\":2}\n\n",
+			"data: {\"seq\":3}\n\n",
+		}
+
+		for _, chunk := range chunks {
+			_, _ = w.Write([]byte(chunk))
+			flusher.Flush()
+			time.Sleep(20 * time.Millisecond)
+		}
+	}))
+	defer upstream.Close()
+
+	trTrue := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:             []string{upstream.URL},
+		RouteHasCompression: true,
+		RouteHasCache:       true,
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse: &trTrue,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	// Client 1 sends request with compression headers
+	req1, _ := httpparser.NewRequest("GET", "/events", "HTTP/1.1")
+	req1.Header.Set("Accept", "text/event-stream")
+	req1.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	res1 := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req1, res1, "/events")
+
+	if res1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res1.StatusCode)
+	}
+	if res1.StreamBody == nil {
+		t.Fatalf("expected res1.StreamBody != nil (socket fast-path activated)")
+	}
+	if res1.Body.Len() != 0 {
+		t.Fatalf("expected res1.Body.Len() == 0, got %d", res1.Body.Len())
+	}
+
+	body1, err := io.ReadAll(res1.StreamBody)
+	if err != nil {
+		t.Fatalf("failed to read from StreamBody: %v", err)
+	}
+	_ = res1.StreamBody.Close()
+
+	expectedAllChunks := "data: {\"seq\":1}\n\ndata: {\"seq\":2}\n\ndata: {\"seq\":3}\n\n"
+	if string(body1) != expectedAllChunks {
+		t.Fatalf("expected %q, got %q", expectedAllChunks, string(body1))
+	}
+
+	// Client 2 sends identical request - must also receive live stream, not cached body
+	req2, _ := httpparser.NewRequest("GET", "/events", "HTTP/1.1")
+	req2.Header.Set("Accept", "text/event-stream")
+	req2.Header.Set("Accept-Encoding", "gzip, deflate, br, zstd")
+	res2 := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req2, res2, "/events")
+
+	if res2.StreamBody == nil {
+		t.Fatalf("expected res2.StreamBody != nil on second connection")
+	}
+	if res2.Body.Len() != 0 {
+		t.Fatalf("expected res2.Body.Len() == 0 on second connection")
+	}
+
+	body2, err := io.ReadAll(res2.StreamBody)
+	if err != nil {
+		t.Fatalf("failed to read from StreamBody 2: %v", err)
+	}
+	_ = res2.StreamBody.Close()
+
+	if string(body2) != expectedAllChunks {
+		t.Fatalf("expected Client 2 to receive live stream %q, got %q", expectedAllChunks, string(body2))
+	}
+}
+
+// TC-128.11: X-Accel-Buffering: no Direct Socket Fast-Path Activation
+func TestProxy_XAccelBufferingNo_DirectSocketFastPath(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("X-Accel-Buffering", "no")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("streaming unbuffered binary payload"))
+	}))
+	defer upstream.Close()
+
+	trTrue := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:             []string{upstream.URL},
+		RouteHasCompression: true,
+		RouteHasCache:       true,
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse: &trTrue,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, _ := httpparser.NewRequest("GET", "/stream-unbuf", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/stream-unbuf")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.StreamBody == nil {
+		t.Fatalf("expected res.StreamBody != nil due to X-Accel-Buffering: no")
+	}
+	if res.Body.Len() != 0 {
+		t.Fatalf("expected res.Body.Len() == 0, got %d", res.Body.Len())
+	}
+
+	data, err := io.ReadAll(res.StreamBody)
+	if err != nil {
+		t.Fatalf("failed to read from stream body: %v", err)
+	}
+	_ = res.StreamBody.Close()
+
+	if string(data) != "streaming unbuffered binary payload" {
+		t.Fatalf("payload mismatch: %q", string(data))
+	}
+}
+
+// TC-128.12: Standard Response Route Buffering
+func TestProxy_StandardJSON_RouteBuffering(t *testing.T) {
+	jsonPayload := `{"status":"ok","count":42}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(jsonPayload))
+	}))
+	defer upstream.Close()
+
+	trTrue := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:             []string{upstream.URL},
+		RouteHasCompression: true,
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse: &trTrue,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, _ := httpparser.NewRequest("GET", "/api/status", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/api/status")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.StreamBody != nil {
+		t.Fatalf("expected res.StreamBody == nil for standard json on compression route")
+	}
+	if res.Body.Len() == 0 {
+		t.Fatalf("expected res.Body.Len() > 0 (buffered payload)")
+	}
+	if res.Body.String() != jsonPayload {
+		t.Fatalf("expected body %q, got %q", jsonPayload, res.Body.String())
+	}
+}
+
+// TC-128.14: Concurrency, Thread-Safety & Race Cleanliness
+func TestProxy_Concurrency_RaceSafety(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/events" {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.Header().Set("Cache-Control", "no-cache")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("data: ping\n\n"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":"sample"}`))
+	}))
+	defer upstream.Close()
+
+	trTrue := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:             []string{upstream.URL},
+		RouteHasCompression: true,
+		RouteHasCache:       true,
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse: &trTrue,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	var wg sync.WaitGroup
+	const concurrency = 50
+
+	// 50 concurrent SSE streaming requests
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req, _ := httpparser.NewRequest("GET", "/events", "HTTP/1.1")
+			req.Header.Set("Accept", "text/event-stream")
+			req.Header.Set("Accept-Encoding", "gzip, br")
+			res := httpparser.NewResponse()
+
+			px.ServeHTTPWithPrefix(req, res, "/events")
+
+			if res.StreamBody != nil {
+				_, _ = io.ReadAll(res.StreamBody)
+				_ = res.StreamBody.Close()
+			}
+		}()
+	}
+
+	// 50 concurrent standard requests
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req, _ := httpparser.NewRequest("GET", "/api/data", "HTTP/1.1")
+			req.Header.Set("Accept-Encoding", "gzip")
+			res := httpparser.NewResponse()
+
+			px.ServeHTTPWithPrefix(req, res, "/api/data")
+
+			if res.StreamBody != nil {
+				_ = res.StreamBody.Close()
+			}
+		}()
+	}
+
+	wg.Wait()
+}
+
+// TestProxy_Router_StreamingConcurrencyRaceSafety is an alias verifying TC-128.14 per spec.
+func TestProxy_Router_StreamingConcurrencyRaceSafety(t *testing.T) {
+	TestProxy_Concurrency_RaceSafety(t)
 }

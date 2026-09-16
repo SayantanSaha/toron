@@ -438,5 +438,3 @@ func TestVerifyJWT_ExpirationEnforcement(t *testing.T) {
 		}
 	})
 }
-
-

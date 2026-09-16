@@ -1101,8 +1101,8 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 
 	contentType := strings.ToLower(outResp.Header.Get("Content-Type"))
 	isStreamingMIME := strings.HasPrefix(contentType, "text/event-stream")
-	isUnbuffered := strings.EqualFold(outResp.Header.Get("X-Accel-Buffering"), "no")
-	canStream := p.streamResponse && (!p.routeHasCompression && !p.routeHasCache || isStreamingMIME || isUnbuffered)
+	isUnbuffered := strings.EqualFold(strings.TrimSpace(outResp.Header.Get("X-Accel-Buffering")), "no")
+	canStream := p.streamResponse && ((!p.routeHasCompression && !p.routeHasCache) || isStreamingMIME || isUnbuffered)
 
 	if outResp.StatusCode >= 500 {
 		targetNode.RecordFailure()

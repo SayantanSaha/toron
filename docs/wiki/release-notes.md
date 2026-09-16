@@ -1,5 +1,77 @@
 # Release Notes
 
+## 2026-09-16 - Toron v1.5.27 Release (Streaming Response Middleware Exemptions and RFC 7234 Origin Cache-Control Enforcement - REQ-128 / TASK-151)
+
+### Milestone Summary
+- **Streaming Response Middleware Exemptions & RFC 7234 §5.2.2.2 Enforcement (REQ-128, TASK-151, ADR-128, TC-128, CR-124, SR-128)**: Delivered a comprehensive architectural and code-level resolution eliminating real-time streaming corruption, stream freezing, and compression event starvation across Server-Sent Events (SSE `text/event-stream`) and dynamic HTTP responses.
+- **RFC 7234 §5.2.2.2 Origin Cache-Control Enforcement (`resCC.NoCache`)**: Strictly excluded origin responses specifying `Cache-Control: no-cache` from admission to `ResponseCache` in [`pkg/router/cache.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go#L261-L265). In a shared proxy cache without conditional origin revalidation (such as `If-None-Match` or `If-Modified-Since`), `no-cache` strictly overrides `max-age` directives (e.g. `Cache-Control: no-cache, max-age=3600`). This eliminates Web Cache Deception and Shared Cache Information Exposure ([CWE-524](https://cwe.mitre.org/data/definitions/524.html)), preventing private dynamic responses or telemetry feeds from being captured in shared memory and served to other tenants.
+- **Server-Sent Events (SSE) & Unbuffered Stream Cache Exemption**: Established an unconditional cache exclusion guard in `pkg/router/cache.go` for responses bearing `Content-Type: text/event-stream` (case-insensitive, with or without parameters) and reverse proxy unbuffered hints (`X-Accel-Buffering: no`). Completely eliminated the root-cause defect where SSE live feeds fell back to `DefaultTTL = 60s`, cloning an initial chunk snapshot into cache and serving static dead streams with `X-Cache: HIT` to subsequent clients.
+- **Deterministic Cache Bypass Response Semantics**: Guaranteed that all bypassed responses emit `X-Cache: MISS` in response headers, strictly delete and omit the `Age` header, and bypass `cache.Set`, resulting in zero byte cloning and zero entries stored in `ResponseCache`. Client requests specifying `Cache-Control: no-cache` or `Pragma: no-cache` continue to bypass cache lookups unconditionally.
+- **Streaming Response Compression Exemption**: Resolved live stream event starvation in [`pkg/router/compression.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/compression.go#L135-L138). Previously, wildcard `"text/"` in `DefaultCompressionConfig.Types` matched `text/event-stream`, causing the compression middleware to trap streaming chunks in RAM compressor accumulators until stream termination. Implemented an early pre-compression inspection guard bypassing compression for `text/event-stream` and `X-Accel-Buffering: no`, ensuring raw uncompressed chunks pass through immediately with unmodified (empty) `Content-Encoding` and zero compressor pool writer checkouts (`zstdPool`, `brotliPool`, `gzipPool`, `deflatePool`).
+- **Content-Aware Reverse Proxy Fast-Path Activation (`canStream`)**: Refined reverse proxy streaming eligibility in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L1102-L1106) (`canStream := p.streamResponse && ((!p.routeHasCompression && !p.routeHasCache) || isStreamingMIME || isUnbuffered)`). Previously, routes with caching or compression enabled globally forced `canStream = false`, buffering infinite SSE streams into `res.Body` and risking Denial of Service via memory exhaustion ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)). Now, streaming MIME and unbuffered responses activate direct socket streaming (`res.StreamBody = outResp.Body`) unconditionally even on routes where compression or caching are enabled.
+- **RFC 7230 §6.1 Hop-by-Hop Header Stripping & Stream Hand-Off**: Upstream hop-by-hop headers (`Connection`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailers`, `Transfer-Encoding`, `Upgrade`) are filtered prior to socket hand-off. The server streaming engine guarantees deferred socket closure (`defer res.StreamBody.Close()`) on stream completion, client disconnect, or I/O error, eliminating resource leaks.
+- **Zero-Allocation Exemption Guards**: Header inspection guards utilize zero-alloc string comparisons (`strings.ToLower`, `strings.HasPrefix`, `strings.EqualFold`) and fast-path canonical header key lookup for 23 common headers in [`pkg/httpparser/request.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/request.go#L44-L95), executing with zero dynamic heap allocations.
+- **Microbenchmark & Concurrency Verification**: Verified across all 14 test cases in [`TC-128`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-128.md), achieving 100% pass rate under `go test -race ./pkg/router/... ./pkg/proxy/... ./pkg/server/...` with zero data races, zero heap allocation regressions, and zero third-party dependencies.
+
+### Added
+- **`pkg/router/cache_test.go`**:
+  - `TestCache_RFC7234_OriginNoCache_Bypass`: Verifies responses with `Cache-Control: no-cache` are never stored in cache, emit `X-Cache: MISS`, omit `Age`, and execute handler on every request (TC-128.1).
+  - `TestCache_OriginNoCache_WithMaxAge_Bypass`: Verifies `no-cache` strictly overrides `max-age` directives (TC-128.2).
+  - `TestCache_TextEventStream_Bypass`: Verifies `text/event-stream`, parameter variations (`charset=utf-8`), and uppercase MIME variants bypass cache admission (TC-128.3).
+  - `TestCache_XAccelBufferingNo_Bypass`: Verifies `X-Accel-Buffering: no` responses bypass cache admission (TC-128.4).
+  - `TestCache_StandardResponses_StillCached`: Regression test verifying cacheable responses (`public, max-age=60`) continue to be cached and served with `X-Cache: HIT` and `Age` header (TC-128.5).
+  - `TestCache_ZeroAllocationGuards`: Validates that header inspection checks execute with $\le 1.0$ allocs/op using `testing.AllocsPerRun` (TC-128.13).
+- **`pkg/router/compression_test.go`**:
+  - `TestCompression_TextEventStream_Bypass`: Verifies `text/event-stream` bypasses compression, emits uncompressed payload immediately, and preserves empty `Content-Encoding` (TC-128.6).
+  - `TestCompression_TextEventStream_WithParams_Bypass`: Verifies MIME parameter variants bypass compression (TC-128.7).
+  - `TestCompression_XAccelBufferingNo_Bypass`: Verifies `X-Accel-Buffering: no` unbuffered responses bypass compression (TC-128.8).
+  - `TestCompression_StandardText_Compressed`: Regression test verifying standard text payloads (`text/plain`, `text/html`, `application/json`) continue to be compressed when `Accept-Encoding` matches (TC-128.9).
+- **`pkg/proxy/proxy_test.go`**:
+  - `TestProxy_SSE_WithCompressionAndCacheEnabled`: End-to-end integration test confirming SSE responses activate `canStream = true` and stream chunks in real-time on routes with compression and caching enabled (TC-128.10).
+  - `TestProxy_XAccelBufferingNo_DirectSocketFastPath`: Confirms `X-Accel-Buffering: no` activates direct socket streaming fast-path (TC-128.11).
+  - `TestProxy_StandardJSON_RouteBuffering`: Verifies standard JSON responses on compression routes buffer appropriately for transformation (TC-128.12).
+  - `TestProxy_Streaming_ConcurrentRaceSafety`: Validates concurrent streaming and cached/compressed requests under 50 parallel workers with zero data races (TC-128.14).
+- **`pkg/router/cache.go`**:
+  - Exposed `ResponseCache.Len() int` for atomic inspection of active in-memory cache entries.
+  - Added `NewCacheMiddlewareWithStore(cfg CacheConfig, cache *ResponseCache) MiddlewareFunc` to enable test harness injection.
+
+### Changed
+- **`pkg/router/cache.go`**:
+  - In `CacheMiddleware`, added inspection of `resCC.NoCache` alongside `resCC.NoStore` and `resCC.Private`, strictly enforcing RFC 7234 §5.2.2.2.
+  - Added pre-status guard checking `strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "text/event-stream")` and `strings.EqualFold(strings.TrimSpace(res.Header.Get("X-Accel-Buffering")), "no")`.
+  - Explicitly deleted `Age` header (`res.Header.Del("Age")`) on cache bypass and ensured `X-Cache: MISS` is set.
+- **`pkg/router/compression.go`**:
+  - Positioned streaming response inspection guard immediately after connection upgrade and `res.StreamBody` checks, strictly prior to status code and payload length evaluation.
+  - Exempted `text/event-stream` and `X-Accel-Buffering: no` from compressor pool checkout, compression transformation, and `Content-Encoding` mutation.
+- **`pkg/proxy/proxy.go`**:
+  - Refined `canStream` calculation in `ServeHTTPWithPrefix` to activate direct socket streaming (`res.StreamBody = outResp.Body`) when `isStreamingMIME` or `isUnbuffered` evaluate to `true`, even if `routeHasCompression` or `routeHasCache` are active.
+  - Added explicit grouping parentheses to prevent boolean operator ambiguity.
+- **`pkg/httpparser/request.go`**:
+  - Optimized `canonicalKey` with a rodata switch covering 23 common HTTP headers, eliminating dynamic heap allocations during header parsing and lookups.
+- **`docs/wiki/features/response-caching.md`**:
+  - Documented RFC 7234 §5.2.2.2 origin `no-cache` enforcement, streaming MIME cache exemptions, and cache bypass header semantics.
+- **`docs/wiki/features/compression.md`**:
+  - Documented streaming compression exemptions for `text/event-stream` and `X-Accel-Buffering: no`, zero-buffering passthrough, and compressor pool bypass.
+- **`docs/wiki/features/reverse-proxy.md`**:
+  - Documented content-aware streaming fast-path activation (`canStream`), WebSocket-aligned stream hand-off, and memory exhaustion (CWE-400) prevention.
+
+### Fixed
+- **SSE Stream Freezing Defect & Web Cache Deception (CWE-524)**: Prevented shared in-memory response cache from capturing dynamic `no-cache` or `text/event-stream` responses and serving frozen static snapshots to subsequent clients.
+- **SSE Event Starvation via Wildcard Compression**: Eliminated the defect where wildcard `"text/"` trapped Server-Sent Events in compressor memory accumulators until connection termination, restoring immediate $< 1\text{ms}$ event delivery.
+- **Denial of Service via Unbounded Memory Buffering (CWE-400)**: Prevented infinite upstream SSE streams from being forced into `res.Body` buffer accumulation on routes with caching or compression enabled.
+- **Improper Cache Directive Evaluation (RFC 7234 §5.2.2.2)**: Fixed precedence defect where `max-age` previously caused `no-cache` responses to be admitted to shared storage without origin revalidation.
+
+### Related Tasks & Requirements
+- [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md): Streaming Response Middleware Exemptions and RFC 7234 Origin Cache-Control Enforcement
+- [`TASK-151`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-151.md): Implement Streaming Response Middleware Exemptions and RFC 7234 Origin Cache-Control Enforcement
+- [`ADR-128`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-128.md): Streaming Response Middleware Exemptions and RFC 7234 Origin Cache-Control Enforcement Architecture
+- [`TC-128`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-128.md): Test Specification for Streaming Response Middleware Exemptions and RFC 7234 Origin Cache-Control Enforcement
+- [`CR-124`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-124.md): Code Review of Streaming Response Middleware Exemptions and RFC 7234 Origin Cache-Control Enforcement
+- [`SR-128`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-128.md): Security Review of Streaming Response Middleware Exemptions and RFC 7234 Origin Cache-Control Enforcement
+- Relevant Standards & CWEs: RFC 7234 §5.2.2.2, RFC 7230 §6.1, [CWE-524](https://cwe.mitre.org/data/definitions/524.html), [CWE-400](https://cwe.mitre.org/data/definitions/400.html)
+
+---
+
 ## 2026-09-16 - Toron v1.5.26 Performance Release (Explicit Client Socket TCP_NODELAY Configuration, 60s Keep-Alive Probing, and Zero-Allocation Response Serialization - REQ-127 / TASK-150)
 
 ### Milestone Summary

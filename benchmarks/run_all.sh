@@ -24,6 +24,8 @@ NO_HISTORY=false
 SESSION_NAME=""
 CUSTOM_SESSION_DIR=""
 MULTIHOP_MODE="standalone"
+SUITE_TIER="quick"
+SUITE_DURATION="5s"
 
 cleanup() {
     if [ -n "${SERVER_PID}" ]; then
@@ -42,6 +44,8 @@ print_usage() {
     echo "Options:"
     echo "  --auto-start          Automatically compile and launch local Toron server in background"
     echo "  -t <host:port>        Target host:port (default: 127.0.0.1:8080)"
+    echo "  -d <duration>         Duration for stages (default: 5s, e.g. 5s, 60s, 300s)"
+    echo "  --tier <tier>         Duration tier preset (quick=5s, medium/steady=60s, soak=300s, all=5s,60s,300s)"
     echo "  --docker              Run multi-hop stage with multi-container Docker Compose cluster"
     echo "  --no-history          Disable historical retention (only update canonical benchmarks/results)"
     echo "  --session-name <name> Optional custom suffix for the historical run directory"
@@ -54,6 +58,21 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         --auto-start) AUTO_START=true; shift ;;
         -t) TARGET_HOST="$2"; shift 2 ;;
+        -d)
+            SUITE_DURATION="$2"
+            shift 2
+            ;;
+        --tier)
+            SUITE_TIER="$2"
+            case "$SUITE_TIER" in
+                quick) SUITE_DURATION="5s" ;;
+                medium|steady) SUITE_DURATION="60s" ;;
+                soak) SUITE_DURATION="300s" ;;
+                all) SUITE_DURATION="5s,60s,300s" ;;
+                *) echo "[-] Error: Unknown tier '$SUITE_TIER'. Valid tiers: quick, medium, soak, all"; exit 1 ;;
+            esac
+            shift 2
+            ;;
         --docker) MULTIHOP_MODE="docker"; shift ;;
         --no-history) NO_HISTORY=true; export TORON_NO_HISTORY=true; shift ;;
         --session-name) SESSION_NAME="$2"; shift 2 ;;
@@ -84,6 +103,8 @@ echo "          TORON AUTOMATED RESEARCH EVALUATION & BENCHMARK SUITE           
 echo "================================================================================"
 echo " Target Endpoint:    http://${TARGET_HOST}"
 echo " Auto-Start Mode:    ${AUTO_START}"
+echo " Suite Tier:         ${SUITE_TIER}"
+echo " Suite Duration:     ${SUITE_DURATION}"
 echo " Canonical Results:  ${RESULTS_DIR}"
 if [ -n "${ACTIVE_SESSION_DIR}" ]; then
     echo " History Directory:  ${ACTIVE_SESSION_DIR}"
@@ -102,8 +123,8 @@ if [ "$AUTO_START" = "true" ]; then
     echo "[*] Building Toron executable..."
     (cd "${ROOT_DIR}" && go build -o "${RESULTS_DIR}/toron_eval" ./cmd/toron)
 
-    echo "[*] Launching Toron server in background..."
-    "${RESULTS_DIR}/toron_eval" -config "${ROOT_DIR}/config.yaml" -routes "${ROOT_DIR}/routes.yaml" > "${RESULTS_DIR}/server.log" 2>&1 &
+    echo "[*] Launching Toron server in background with GODEBUG=gctrace=1..."
+    GODEBUG=gctrace=1 "${RESULTS_DIR}/toron_eval" -config "${ROOT_DIR}/config.yaml" -routes "${ROOT_DIR}/routes.yaml" > "${RESULTS_DIR}/server.log" 2> "${RESULTS_DIR}/server_gc_trace.log" &
     SERVER_PID=$!
     echo "      Server process launched (PID: ${SERVER_PID}). Waiting for socket readiness..."
 
@@ -127,16 +148,22 @@ if [ "$AUTO_START" = "true" ]; then
     echo "[✓] Toron server is online and responding."
     if [ -n "${ACTIVE_SESSION_DIR}" ]; then
         cp -f "${RESULTS_DIR}/server.log" "${ACTIVE_SESSION_DIR}/server.log"
+        if [ -f "${RESULTS_DIR}/server_gc_trace.log" ]; then
+            cp -f "${RESULTS_DIR}/server_gc_trace.log" "${ACTIVE_SESSION_DIR}/server_gc_trace.log"
+        fi
     fi
 fi
 
+# Determine first duration if multi-duration string passed to wrk2
+FIRST_DUR=$(echo "${SUITE_DURATION}" | cut -d',' -f1)
+
 echo ""
 echo "[2/6] Executing Baseline High-Throughput & Tail Latency Benchmark (wrk2 harness)..."
-bash "${SCRIPT_DIR}/wrk2/run_wrk2.sh" -u "http://${TARGET_HOST}/health" -c 100 -d 5s -r 5000
+bash "${SCRIPT_DIR}/wrk2/run_wrk2.sh" -u "http://${TARGET_HOST}/health" -c 100 -d "${FIRST_DUR}" -r 5000
 
 echo ""
 echo "[3/6] Executing High-Concurrency Saturation Stress Testing with 10% Adversarial Injection (BMK-04)..."
-bash "${SCRIPT_DIR}/wrk2/run_saturation_stress.sh" -u "http://${TARGET_HOST}/health" -c 50 -d 5s -r 5000 -a 0.10
+bash "${SCRIPT_DIR}/wrk2/run_saturation_stress.sh" -u "http://${TARGET_HOST}/health" -c 50 -d "${SUITE_DURATION}" -r 5000 -a 0.10 --tier "${SUITE_TIER}"
 
 echo ""
 echo "[4/6] Executing Differential Protocol Security Fuzzer (Equation 7 & K=1,000 Trials, BMK-01, BMK-02)..."
@@ -159,7 +186,7 @@ echo "[6/6] Executing 10-Task Controlled Ablation Experiment Suite (TASK-061 to 
 bash "${SCRIPT_DIR}/ablation/run_ablation.sh"
 
 SUITE_END_TIME=$(date +%s)
-SUITE_DURATION=$((SUITE_END_TIME - SUITE_START_TIME))
+SUITE_DURATION_ELAPSED=$((SUITE_END_TIME - SUITE_START_TIME))
 
 # Finalize master session recording in manifest.json
 if [ -n "${ACTIVE_SESSION_DIR}" ]; then
@@ -174,6 +201,7 @@ if [ -n "${ACTIVE_SESSION_DIR}" ]; then
         "benchmark_c100_r5000.raw.txt"
         "saturation_stress_report.json"
         "saturation_stress_report.md"
+        "server_gc_trace.log"
         "differential_fuzz_report.json"
         "differential_fuzz_report.md"
         "multihop_report.json"
@@ -181,6 +209,12 @@ if [ -n "${ACTIVE_SESSION_DIR}" ]; then
         "ablation_study_report.json"
         "ablation_study_report.md"
     )
+    for dur in 5s 60s 300s; do
+        if [ -f "${RESULTS_DIR}/saturation_stress_${dur}.json" ]; then
+            ALL_FILES+=("saturation_stress_${dur}.json" "saturation_stress_${dur}.md")
+        fi
+    done
+
     for f in "${ALL_FILES[@]}"; do
         if [ -f "${RESULTS_DIR}/${f}" ]; then
             cp -f "${RESULTS_DIR}/${f}" "${ACTIVE_SESSION_DIR}/${f}"
@@ -189,8 +223,8 @@ if [ -n "${ACTIVE_SESSION_DIR}" ]; then
 
     STAGES_JSON='[
       {"name": "microbenchmarks", "status": "success", "artifacts": ["microbenchmarks.raw.txt"]},
-      {"name": "wrk2", "status": "success", "parameters": {"concurrency": 100, "rate": 5000, "duration": "5s"}, "artifacts": ["benchmark_c100_r5000.json", "benchmark_c100_r5000.csv", "benchmark_c100_r5000.raw.txt"]},
-      {"name": "saturation_stress", "status": "success", "parameters": {"concurrency": 50, "rate": 5000, "duration": "5s", "attack_ratio": 0.10}, "artifacts": ["saturation_stress_report.json", "saturation_stress_report.md"]},
+      {"name": "wrk2", "status": "success", "parameters": {"concurrency": 100, "rate": 5000, "duration": "'"${FIRST_DUR}"'"}, "artifacts": ["benchmark_c100_r5000.json", "benchmark_c100_r5000.csv", "benchmark_c100_r5000.raw.txt"]},
+      {"name": "saturation_stress", "status": "success", "parameters": {"concurrency": 50, "rate": 5000, "duration": "'"${SUITE_DURATION}"'", "duration_tier": "'"${SUITE_TIER}"'", "attack_ratio": 0.10}, "artifacts": ["saturation_stress_report.json", "saturation_stress_report.md", "server_gc_trace.log"]},
       {"name": "differential_fuzzer", "status": "success", "parameters": {"trials": 1000, "warmup": 50}, "artifacts": ["differential_fuzz_report.json", "differential_fuzz_report.md"]},
       {"name": "multihop", "status": "success", "parameters": {"mode": "'"${MULTIHOP_MODE}"'"}, "artifacts": ["multihop_report.json", "multihop_report.md"]},
       {"name": "ablation", "status": "success", "parameters": {"tasks": 10}, "artifacts": ["ablation_study_report.json", "ablation_study_report.md"]}
@@ -202,7 +236,7 @@ if [ -n "${ACTIVE_SESSION_DIR}" ]; then
         -session-dir "${ACTIVE_SESSION_DIR}" \
         -suite "all" \
         -status "success" \
-        -duration "${SUITE_DURATION}" \
+        -duration "${SUITE_DURATION_ELAPSED}" \
         -command "$0 $*" \
         -artifacts "${ARTIFACTS_LIST}" \
         -stages-json "${STAGES_JSON}"

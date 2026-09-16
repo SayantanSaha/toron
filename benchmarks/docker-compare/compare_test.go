@@ -1,9 +1,14 @@
 package main
 
 import (
+	"math"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
+
+	"toron/benchmarks/telemetry/gcparser"
 )
 
 func TestFilterProxies(t *testing.T) {
@@ -154,5 +159,281 @@ func TestReportGeneration(t *testing.T) {
 	mdData, err := os.ReadFile(mdPath)
 	if err != nil || len(mdData) == 0 {
 		t.Fatalf("Markdown report was not written or empty: %v", err)
+	}
+}
+
+func TestParseDurationTiers(t *testing.T) {
+	cases := []struct {
+		name         string
+		durationStr  string
+		tierStr      string
+		expectedDurs []time.Duration
+		expectedT    []string
+		expectErr    bool
+	}{
+		{
+			name:         "tier quick",
+			durationStr:  "",
+			tierStr:      "quick",
+			expectedDurs: []time.Duration{5 * time.Second},
+			expectedT:    []string{"quick"},
+		},
+		{
+			name:         "tier medium",
+			durationStr:  "",
+			tierStr:      "medium",
+			expectedDurs: []time.Duration{60 * time.Second},
+			expectedT:    []string{"medium"},
+		},
+		{
+			name:         "tier steady alias",
+			durationStr:  "",
+			tierStr:      "steady",
+			expectedDurs: []time.Duration{60 * time.Second},
+			expectedT:    []string{"medium"},
+		},
+		{
+			name:         "tier soak",
+			durationStr:  "",
+			tierStr:      "soak",
+			expectedDurs: []time.Duration{300 * time.Second},
+			expectedT:    []string{"soak"},
+		},
+		{
+			name:         "tier all",
+			durationStr:  "",
+			tierStr:      "all",
+			expectedDurs: []time.Duration{5 * time.Second, 60 * time.Second, 300 * time.Second},
+			expectedT:    []string{"quick", "medium", "soak"},
+		},
+		{
+			name:        "invalid tier",
+			durationStr: "",
+			tierStr:     "infinite",
+			expectErr:   true,
+		},
+		{
+			name:         "custom duration single quick",
+			durationStr:  "10s",
+			tierStr:      "",
+			expectedDurs: []time.Duration{10 * time.Second},
+			expectedT:    []string{"quick"},
+		},
+		{
+			name:         "custom duration single medium",
+			durationStr:  "45s",
+			tierStr:      "",
+			expectedDurs: []time.Duration{45 * time.Second},
+			expectedT:    []string{"medium"},
+		},
+		{
+			name:         "custom duration single soak",
+			durationStr:  "150s",
+			tierStr:      "",
+			expectedDurs: []time.Duration{150 * time.Second},
+			expectedT:    []string{"soak"},
+		},
+		{
+			name:         "custom comma-separated multi-tier",
+			durationStr:  "5s,60s,300s",
+			tierStr:      "",
+			expectedDurs: []time.Duration{5 * time.Second, 60 * time.Second, 300 * time.Second},
+			expectedT:    []string{"quick", "medium", "soak"},
+		},
+		{
+			name:         "empty defaults to 5s quick",
+			durationStr:  "",
+			tierStr:      "",
+			expectedDurs: []time.Duration{5 * time.Second},
+			expectedT:    []string{"quick"},
+		},
+		{
+			name:        "invalid duration",
+			durationStr: "invalid-time",
+			tierStr:     "",
+			expectErr:   true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			durs, tiers, err := parseDurationTiers(tc.durationStr, tc.tierStr)
+			if tc.expectErr {
+				if err == nil {
+					t.Fatalf("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(durs) != len(tc.expectedDurs) {
+				t.Fatalf("expected %d durations, got %d", len(tc.expectedDurs), len(durs))
+			}
+			for i := range durs {
+				if durs[i] != tc.expectedDurs[i] {
+					t.Errorf("duration[%d] = %v; want %v", i, durs[i], tc.expectedDurs[i])
+				}
+				if tiers[i] != tc.expectedT[i] {
+					t.Errorf("tier[%d] = %s; want %s", i, tiers[i], tc.expectedT[i])
+				}
+			}
+		})
+	}
+}
+
+func TestComputeTimeSeriesStats(t *testing.T) {
+	t.Run("empty samples", func(t *testing.T) {
+		res := computeTimeSeriesStats(nil)
+		if res == nil {
+			t.Fatal("expected non-nil struct")
+		}
+		if res.PeakMemoryMB != 0 || res.GrowthSlope != 0 {
+			t.Fatalf("expected 0 values for empty samples, got %+v", res)
+		}
+	})
+
+	t.Run("single sample", func(t *testing.T) {
+		res := computeTimeSeriesStats([]TimeSeriesSample{
+			{ElapsedSec: 0, CPUPercent: 50.0, MemoryMB: 100.0},
+		})
+		if res.PeakMemoryMB != 100.0 || res.MeanMemoryMB != 100.0 {
+			t.Errorf("expected 100.0 MB memory, got peak=%f, mean=%f", res.PeakMemoryMB, res.MeanMemoryMB)
+		}
+		if res.PeakCPU != 50.0 || res.MeanCPU != 50.0 {
+			t.Errorf("expected 50.0 CPU, got peak=%f, mean=%f", res.PeakCPU, res.MeanCPU)
+		}
+		if res.GrowthSlope != 0 {
+			t.Errorf("expected slope 0 with 1 sample, got %f", res.GrowthSlope)
+		}
+	})
+
+	t.Run("linear growth slope", func(t *testing.T) {
+		// 10 MB at t=0s, 20 MB at t=60s
+		// Growth rate: (20 - 10) MB / 60 s = 0.16667 MB/s = 10.0 MB/min
+		samples := []TimeSeriesSample{
+			{ElapsedSec: 0, CPUPercent: 40.0, MemoryMB: 10.0},
+			{ElapsedSec: 60, CPUPercent: 60.0, MemoryMB: 20.0},
+		}
+		res := computeTimeSeriesStats(samples)
+		if math.Abs(res.GrowthSlope-10.0) > 1e-4 {
+			t.Errorf("expected GrowthSlope ~ 10.0 MB/min, got %f", res.GrowthSlope)
+		}
+		if res.PeakMemoryMB != 20.0 {
+			t.Errorf("expected peak memory 20.0, got %f", res.PeakMemoryMB)
+		}
+		if res.MeanMemoryMB != 15.0 {
+			t.Errorf("expected mean memory 15.0, got %f", res.MeanMemoryMB)
+		}
+		if res.PeakCPU != 60.0 || res.MeanCPU != 50.0 {
+			t.Errorf("expected peak CPU 60.0, mean CPU 50.0; got %f, %f", res.PeakCPU, res.MeanCPU)
+		}
+	})
+}
+
+func TestReportGenerationWithGCTelemetry(t *testing.T) {
+	tempDir := t.TempDir()
+	jsonPath := filepath.Join(tempDir, "report_gc.json")
+	mdPath := filepath.Join(tempDir, "report_gc.md")
+
+	report := DockerCompareReport{
+		Timestamp:       "2026-09-14T10:00:00Z",
+		HostOS:          "darwin",
+		HostArch:        "arm64",
+		NumCPU:          8,
+		Concurrency:     50,
+		DurationSeconds: 60.0,
+		Results: []BenchmarkCellResult{
+			{
+				ProxyID:       "toron",
+				ProxyName:     "Toron (v1.0.0)",
+				BackendID:     "fast",
+				BackendName:   "Go Fast Echo",
+				TargetURL:     "http://127.0.0.1:8881/fast/health",
+				Concurrency:   50,
+				DurationSec:   60.0,
+				DurationTier:  "medium",
+				TotalRequests: 300000,
+				SuccessCount:  300000,
+				ActualRPS:     5000.0,
+				Latencies: LatencyStats{
+					P50: 0.7,
+					P99: 2.1,
+				},
+				Telemetry: ResourceTelemetry{
+					CPUPercent: 45.2,
+					MemoryMB:   28.4,
+				},
+				GCTelemetry: &gcparser.GCTelemetry{
+					Enabled:          true,
+					TotalCycles:      12,
+					CyclesPerSecond:  0.2,
+					GCCPUPercent:     0.8,
+					TotalReclaimedMB: 48.0,
+					PauseTimesMs: gcparser.GCPauseStatistics{
+						P50STWMs: 0.120,
+						P99STWMs: 0.250,
+						MaxSTWMs: 0.310,
+					},
+					HeapMetricsMB: gcparser.GCHeapStatistics{
+						InitialLiveHeapMB:  10.0,
+						FinalLiveHeapMB:    12.0,
+						HeapGrowthSlopeMBm: 0.05,
+					},
+				},
+				TimeSeries: &ResourceTimeSeries{
+					PeakMemoryMB: 30.0,
+					MeanMemoryMB: 28.0,
+					GrowthSlope:  0.02,
+				},
+			},
+			{
+				ProxyID:       "nginx",
+				ProxyName:     "NGINX (1.25)",
+				BackendID:     "fast",
+				DurationSec:   60.0,
+				DurationTier:  "medium",
+				TotalRequests: 280000,
+				SuccessCount:  280000,
+				ActualRPS:     4666.0,
+				Latencies: LatencyStats{
+					P50: 0.8,
+					P99: 2.4,
+				},
+				Telemetry: ResourceTelemetry{
+					CPUPercent: 55.0,
+					MemoryMB:   15.0,
+				},
+				GCTelemetry: &gcparser.GCTelemetry{
+					Enabled: false,
+				},
+			},
+		},
+	}
+
+	if err := writeJSONReport(jsonPath, report); err != nil {
+		t.Fatalf("writeJSONReport failed: %v", err)
+	}
+
+	if err := writeMarkdownReport(mdPath, report); err != nil {
+		t.Fatalf("writeMarkdownReport failed: %v", err)
+	}
+
+	mdBytes, err := os.ReadFile(mdPath)
+	if err != nil {
+		t.Fatalf("failed reading markdown report: %v", err)
+	}
+	mdContent := string(mdBytes)
+
+	// Invariant checks on Section 4
+	if !strings.Contains(mdContent, "## 4. Go Runtime GC Differential Analysis (Toron vs Traefik vs Caddy)") {
+		t.Errorf("missing Section 4 Go Runtime GC Differential Analysis header in markdown")
+	}
+	if !strings.Contains(mdContent, "Toron (v1.0.0)") {
+		t.Errorf("missing Toron row in markdown GC analysis")
+	}
+	// Check Section 1 Comparative Table columns
+	if !strings.Contains(mdContent, "GC Cycles") || !strings.Contains(mdContent, "P99 GC Pause") {
+		t.Errorf("missing GC columns in Section 1 comparative table")
 	}
 }

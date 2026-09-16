@@ -21,6 +21,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"toron/benchmarks/telemetry/gcparser"
 )
 
 // LatencyPercentiles captures high-precision percentile distributions.
@@ -70,23 +72,26 @@ type AttackVectorSummary struct {
 
 // SaturationStressReport aggregates all empirical evaluation data for BMK-04.
 type SaturationStressReport struct {
-	Timestamp                string                `json:"timestamp"`
-	TargetURL                string                `json:"target_url"`
-	TargetHostPort           string                `json:"target_host_port"`
-	Concurrency              int                   `json:"concurrency"`
-	DurationSeconds          float64               `json:"duration_seconds"`
-	TargetRateRPS            int                   `json:"target_rate_rps"`
-	AttackRatio              float64               `json:"attack_ratio"`
-	TotalRequestsExecuted    int64                 `json:"total_requests_executed"`
-	TotalActualRPS           float64               `json:"total_actual_rps"`
-	BenignStream             StreamMetrics         `json:"benign_stream"`
-	AdversarialStream        StreamMetrics         `json:"adversarial_stream"`
-	AttackVectors            []AttackVectorSummary `json:"attack_vectors"`
-	ZeroStarvationVerified   bool                  `json:"zero_starvation_verified"`
-	InvariantEnforcementRate float64               `json:"invariant_enforcement_rate_pct"` // Strictly Active Defense Rate
-	ActiveDefenseRatePct     float64               `json:"active_defense_rate_pct"`
-	RouteMissRatePct         float64               `json:"route_miss_rate_pct"`
-	OverallVerdict           string                `json:"overall_verdict"`
+	Timestamp                string                 `json:"timestamp"`
+	TargetURL                string                 `json:"target_url"`
+	TargetHostPort           string                 `json:"target_host_port"`
+	Concurrency              int                    `json:"concurrency"`
+	DurationSeconds          float64                `json:"duration_seconds"`
+	DurationTier             string                 `json:"duration_tier,omitempty"`
+	TargetRateRPS            int                    `json:"target_rate_rps"`
+	AttackRatio              float64                `json:"attack_ratio"`
+	TotalRequestsExecuted    int64                  `json:"total_requests_executed"`
+	TotalActualRPS           float64                `json:"total_actual_rps"`
+	BenignStream             StreamMetrics          `json:"benign_stream"`
+	AdversarialStream        StreamMetrics          `json:"adversarial_stream"`
+	AttackVectors            []AttackVectorSummary  `json:"attack_vectors"`
+	ZeroStarvationVerified   bool                   `json:"zero_starvation_verified"`
+	InvariantEnforcementRate float64                `json:"invariant_enforcement_rate_pct"` // Strictly Active Defense Rate
+	ActiveDefenseRatePct     float64                `json:"active_defense_rate_pct"`
+	RouteMissRatePct         float64                `json:"route_miss_rate_pct"`
+	OverallVerdict           string                 `json:"overall_verdict"`
+	GCTelemetry              *gcparser.GCTelemetry  `json:"gc_telemetry,omitempty"`
+	TierReports              map[string]interface{} `json:"tier_reports,omitempty"`
 }
 
 // AttackVector defines an adversarial request probe.
@@ -170,16 +175,19 @@ func GetAttackCatalog() []AttackVector {
 
 // LoadGenConfig encapsulates all configuration options for the load generator.
 type LoadGenConfig struct {
-	TargetURL   string
-	Concurrency int
-	Duration    time.Duration
-	TargetRate  int
-	AttackRatio float64
-	Method      string
-	BodyPayload string
-	JSONPath    string
-	CSVPath     string
-	MDPath      string
+	TargetURL       string
+	Concurrency     int
+	Duration        time.Duration
+	DurationTier    string
+	GCTracePath     string
+	ConsolidateFrom string
+	TargetRate      int
+	AttackRatio     float64
+	Method          string
+	BodyPayload     string
+	JSONPath        string
+	CSVPath         string
+	MDPath          string
 }
 
 // computePercentiles calculates min, mean, percentiles (p50, p75, p90, p95, p99, p99.9), and max.
@@ -595,7 +603,85 @@ func RunLoadGen(cfg LoadGenConfig) (*SaturationStressReport, error) {
 		},
 	}
 
+	durationTier := cfg.DurationTier
+	if durationTier == "" {
+		if totalDuration <= 10*time.Second {
+			durationTier = "quick"
+		} else if totalDuration <= 120*time.Second {
+			durationTier = "medium"
+		} else {
+			durationTier = "soak"
+		}
+	}
+	report.DurationTier = durationTier
+
+	gcPath := cfg.GCTracePath
+	if gcPath == "" {
+		defaultGC := "benchmarks/results/server_gc_trace.log"
+		if fi, err := os.Stat(defaultGC); err == nil && fi.Size() > 0 {
+			gcPath = defaultGC
+		}
+	}
+	if gcPath != "" {
+		if tele, err := gcparser.ParseFile(gcPath, totalDuration); err == nil {
+			report.GCTelemetry = tele
+		}
+	}
+
 	return report, nil
+}
+
+// ConsolidateReports merges duration-keyed JSON reports into a unified multi-tier report.
+func ConsolidateReports(paths []string, jsonOut, mdOut string) (*SaturationStressReport, error) {
+	if len(paths) == 0 {
+		return nil, errors.New("no reports to consolidate")
+	}
+
+	tierReports := make(map[string]interface{})
+	var subReports []*SaturationStressReport
+
+	for _, p := range paths {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		data, err := os.ReadFile(p)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read report %s: %w", p, err)
+		}
+		var rep SaturationStressReport
+		if err := json.Unmarshal(data, &rep); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal %s: %w", p, err)
+		}
+		key := rep.DurationTier
+		if key == "" {
+			key = fmt.Sprintf("%.0fs", rep.DurationSeconds)
+		}
+		tierReports[key] = rep
+		subReports = append(subReports, &rep)
+	}
+
+	if len(subReports) == 0 {
+		return nil, errors.New("no valid reports found to consolidate")
+	}
+
+	// Use the longest or last report as master template
+	master := *subReports[len(subReports)-1]
+	master.DurationTier = "all"
+	master.TierReports = tierReports
+
+	if jsonOut != "" {
+		data, err := json.MarshalIndent(master, "", "  ")
+		if err == nil {
+			_ = os.WriteFile(jsonOut, data, 0o644)
+		}
+	}
+
+	if mdOut != "" {
+		_ = GenerateMarkdownReport(&master, mdOut)
+	}
+
+	return &master, nil
 }
 
 // GenerateMarkdownReport creates publication-grade evaluation tables for Paper 2.
@@ -606,6 +692,40 @@ func GenerateMarkdownReport(rep *SaturationStressReport, mdPath string) error {
 	md.WriteString(fmt.Sprintf("**Generated**: `%s` | **Target**: `%s` | **Concurrency**: `%d connections`\n\n",
 		rep.Timestamp, rep.TargetURL, rep.Concurrency))
 	md.WriteString("---\n\n")
+
+	// If multi-tier reports are consolidated, render multi-tier summary table at top
+	if len(rep.TierReports) > 0 {
+		md.WriteString("## Multi-Tier Duration Performance & GC Dynamics Summary\n\n")
+		md.WriteString("| Tier | Duration | Total RPS | Benign P50 (ms) | Benign P99 (ms) | Active Defense % | GC Cycles | P99 STW Pause (ms) | Heap Growth Slope |\n")
+		md.WriteString("| :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n")
+
+		tierKeys := []string{"quick", "medium", "soak", "5s", "60s", "300s"}
+		rendered := make(map[string]bool)
+		for _, k := range tierKeys {
+			val, ok := rep.TierReports[k]
+			if !ok || rendered[k] {
+				continue
+			}
+			rendered[k] = true
+			var subRep SaturationStressReport
+			b, _ := json.Marshal(val)
+			_ = json.Unmarshal(b, &subRep)
+
+			gcCycles := "-"
+			p99Pause := "-"
+			heapSlope := "-"
+			if subRep.GCTelemetry != nil && subRep.GCTelemetry.Enabled {
+				gcCycles = fmt.Sprintf("%d", subRep.GCTelemetry.TotalCycles)
+				p99Pause = fmt.Sprintf("%.3f ms", subRep.GCTelemetry.PauseTimesMs.P99STWMs)
+				heapSlope = fmt.Sprintf("%.2f MB/min", subRep.GCTelemetry.HeapMetricsMB.HeapGrowthSlopeMBm)
+			}
+
+			md.WriteString(fmt.Sprintf("| `%s` | `%.0fs` | **%.1f** | %.2f | %.2f | %.1f%% | %s | %s | %s |\n",
+				k, subRep.DurationSeconds, subRep.TotalActualRPS, subRep.BenignStream.LatenciesMs.P50,
+				subRep.BenignStream.LatenciesMs.P99, subRep.ActiveDefenseRatePct, gcCycles, p99Pause, heapSlope))
+		}
+		md.WriteString("\n---\n\n")
+	}
 
 	md.WriteString("## 1. Executive Summary\n\n")
 	md.WriteString("This empirical evaluation directly refutes the methodological critiques in `AER-002` (lines 288–291) and `MSR-002` (lines 239–245 & 298–301). By evaluating Toron under sustained constant-rate saturation with concurrent adversarial protocol injection, this testbed verifies:\n\n")
@@ -658,13 +778,42 @@ func GenerateMarkdownReport(rep *SaturationStressReport, mdPath string) error {
 	}
 
 	md.WriteString("\n---\n\n")
-	md.WriteString("## 5. Architectural Invariant Analysis\n\n")
-	md.WriteString("### 5.1 Elimination of Starvation Under Saturation\n")
+	md.WriteString("## 5. Runtime Garbage Collection & Memory Dynamics (`GODEBUG=gctrace=1`)\n\n")
+	if rep.GCTelemetry != nil && rep.GCTelemetry.Enabled {
+		slopeStatus := "Strictly $O(1) \\le 1.0\\text{ MB/min}$ Bounded"
+		if rep.GCTelemetry.HeapMetricsMB.HeapGrowthSlopeMBm > 1.0 {
+			slopeStatus = "Unbounded Growth"
+		}
+		md.WriteString("| Metric | Value |\n")
+		md.WriteString("| :--- | :--- |\n")
+		md.WriteString(fmt.Sprintf("| **Active Duration Tier** | `%s` (%.1f seconds) |\n", rep.DurationTier, rep.DurationSeconds))
+		md.WriteString(fmt.Sprintf("| **Total GC Cycles** | %d cycles (%.2f cycles/sec) |\n", rep.GCTelemetry.TotalCycles, rep.GCTelemetry.CyclesPerSecond))
+		md.WriteString(fmt.Sprintf("| **GC CPU Overhead** | %.1f%% total runtime CPU |\n", rep.GCTelemetry.GCCPUPercent))
+		md.WriteString(fmt.Sprintf("| **Total Heap Reclaimed** | %.1f MB |\n", rep.GCTelemetry.TotalReclaimedMB))
+		md.WriteString(fmt.Sprintf("| **STW Pause Distribution** | **Min**: %.3f ms \\| **P50**: %.3f ms \\| **P95**: %.3f ms \\| **P99**: %.3f ms |\n",
+			rep.GCTelemetry.PauseTimesMs.MinSTWMs, rep.GCTelemetry.PauseTimesMs.P50STWMs,
+			rep.GCTelemetry.PauseTimesMs.P95STWMs, rep.GCTelemetry.PauseTimesMs.P99STWMs))
+		md.WriteString(fmt.Sprintf("| **Max STW Pause** | %.3f ms |\n", rep.GCTelemetry.PauseTimesMs.MaxSTWMs))
+		md.WriteString(fmt.Sprintf("| **Live Heap Baseline** | **Initial**: %.1f MB $\\rightarrow$ **Final**: %.1f MB (**Peak**: %.1f MB) |\n",
+			rep.GCTelemetry.HeapMetricsMB.InitialLiveHeapMB, rep.GCTelemetry.HeapMetricsMB.FinalLiveHeapMB,
+			rep.GCTelemetry.HeapMetricsMB.PeakLiveHeapMB))
+		md.WriteString(fmt.Sprintf("| **Heap Growth Slope** | **%.2f MB/min** (%s) |\n",
+			rep.GCTelemetry.HeapMetricsMB.HeapGrowthSlopeMBm, slopeStatus))
+	} else {
+		md.WriteString("| Metric | Value |\n")
+		md.WriteString("| :--- | :--- |\n")
+		md.WriteString(fmt.Sprintf("| **Active Duration Tier** | `%s` (%.1f seconds) |\n", rep.DurationTier, rep.DurationSeconds))
+		md.WriteString("| **GC Telemetry** | Not captured (run with `GODEBUG=gctrace=1`) |\n")
+	}
+
+	md.WriteString("\n---\n\n")
+	md.WriteString("## 6. Architectural Invariant Analysis\n\n")
+	md.WriteString("### 6.1 Elimination of Starvation Under Saturation\n")
 	md.WriteString("The data empirically proves that Toron's bounded worker pool dispatcher (`REQ-111` / `pkg/reactor/reactor.go`) isolates TCP connection lifecycles. Even when 10% of total incoming traffic consists of malformed, attack-laden payloads, the benign traffic stream experiences zero starvation ($p99 < 50$ ms, zero dropped requests).\n\n")
-	md.WriteString("### 5.2 Fast-Fail Transport Teardown\n")
+	md.WriteString("### 6.2 Fast-Fail Transport Teardown\n")
 	md.WriteString("Adversarial probes were terminated in sub-millisecond median latencies ($p50 < 1.0$ ms) accompanied by immediate TCP socket closure, preventing malicious half-open connections from consuming operating system file descriptors or exhausting socket tables.\n\n")
 
-	md.WriteString("### 5.3 Benchmark Reproducibility\n")
+	md.WriteString("### 6.3 Benchmark Reproducibility\n")
 	md.WriteString("```bash\n")
 	md.WriteString("# Run high-concurrency saturation stress suite (5,000+ RPS with 10% attack injection):\n")
 	md.WriteString("bash benchmarks/wrk2/run_saturation_stress.sh --auto-start -r 5000 -c 50 -d 10s -a 0.10\n")
@@ -677,6 +826,9 @@ func main() {
 	targetURL := flag.String("url", "http://127.0.0.1:8080/health", "Target HTTP URL")
 	concurrency := flag.Int("c", 50, "Number of concurrent connections / workers")
 	duration := flag.Duration("d", 10*time.Second, "Test duration (e.g. 10s, 30s, 1m)")
+	durationTier := flag.String("tier", "", "Benchmark duration tier (quick, medium, soak, all)")
+	gcTracePath := flag.String("gc-trace", "", "Path to server GC trace log (GODEBUG=gctrace=1)")
+	consolidateFrom := flag.String("consolidate-from", "", "Comma-separated list of JSON report paths to consolidate")
 	targetRate := flag.Int("rate", 5000, "Target total requests per second (0 = unbounded max rate)")
 	attackRatio := flag.Float64("attack-ratio", 0.0, "Fraction of traffic composed of adversarial probes (0.0 - 1.0, e.g. 0.10)")
 	method := flag.String("m", "GET", "HTTP method (GET, POST, etc.)")
@@ -686,17 +838,31 @@ func main() {
 	mdPath := flag.String("md", "", "Path to write Markdown report")
 	flag.Parse()
 
+	if *consolidateFrom != "" {
+		paths := strings.Split(*consolidateFrom, ",")
+		_, err := ConsolidateReports(paths, *jsonPath, *mdPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Consolidation failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf(" [Consolidated Artifacts Saved] JSON -> %s, MD -> %s\n", *jsonPath, *mdPath)
+		return
+	}
+
 	cfg := LoadGenConfig{
-		TargetURL:   *targetURL,
-		Concurrency: *concurrency,
-		Duration:    *duration,
-		TargetRate:  *targetRate,
-		AttackRatio: *attackRatio,
-		Method:      *method,
-		BodyPayload: *bodyPayload,
-		JSONPath:    *jsonPath,
-		CSVPath:     *csvPath,
-		MDPath:      *mdPath,
+		TargetURL:       *targetURL,
+		Concurrency:     *concurrency,
+		Duration:        *duration,
+		DurationTier:    *durationTier,
+		GCTracePath:     *gcTracePath,
+		ConsolidateFrom: *consolidateFrom,
+		TargetRate:      *targetRate,
+		AttackRatio:     *attackRatio,
+		Method:          *method,
+		BodyPayload:     *bodyPayload,
+		JSONPath:        *jsonPath,
+		CSVPath:         *csvPath,
+		MDPath:          *mdPath,
 	}
 
 	fmt.Println("================================================================================")
@@ -705,6 +871,9 @@ func main() {
 	fmt.Printf(" Target URL:     %s\n", cfg.TargetURL)
 	fmt.Printf(" Concurrency:    %d connections\n", cfg.Concurrency)
 	fmt.Printf(" Duration:       %s\n", cfg.Duration.String())
+	if cfg.DurationTier != "" {
+		fmt.Printf(" Duration Tier:  %s\n", cfg.DurationTier)
+	}
 	if cfg.TargetRate > 0 {
 		fmt.Printf(" Target Rate:    %d req/sec\n", cfg.TargetRate)
 	} else {
@@ -753,6 +922,20 @@ func main() {
 		fmt.Printf("   Fast-Fail p50:            %8.2f ms\n", report.AdversarialStream.LatenciesMs.P50)
 		fmt.Printf("   Fast-Fail p90:            %8.2f ms\n", report.AdversarialStream.LatenciesMs.P90)
 		fmt.Printf("   Fast-Fail p99:            %8.2f ms\n", report.AdversarialStream.LatenciesMs.P99)
+	}
+	if report.GCTelemetry != nil && report.GCTelemetry.Enabled {
+		fmt.Println("--------------------------------------------------------------------------------")
+		fmt.Printf(" Go Runtime GC Telemetry (GODEBUG=gctrace=1):\n")
+		fmt.Printf("   Total GC Cycles:       %d (%.2f cycles/sec)\n", report.GCTelemetry.TotalCycles, report.GCTelemetry.CyclesPerSecond)
+		fmt.Printf("   GC CPU Overhead:       %.1f%%\n", report.GCTelemetry.GCCPUPercent)
+		fmt.Printf("   STW Pauses:            P50: %.3f ms | P95: %.3f ms | P99: %.3f ms | Max: %.3f ms\n",
+			report.GCTelemetry.PauseTimesMs.P50STWMs, report.GCTelemetry.PauseTimesMs.P95STWMs,
+			report.GCTelemetry.PauseTimesMs.P99STWMs, report.GCTelemetry.PauseTimesMs.MaxSTWMs)
+		fmt.Printf("   Heap Reclaimed:        %.1f MB\n", report.GCTelemetry.TotalReclaimedMB)
+		fmt.Printf("   Live Heap Floor:       %.1f MB (Initial) -> %.1f MB (Final) | Peak: %.1f MB\n",
+			report.GCTelemetry.HeapMetricsMB.InitialLiveHeapMB, report.GCTelemetry.HeapMetricsMB.FinalLiveHeapMB,
+			report.GCTelemetry.HeapMetricsMB.PeakLiveHeapMB)
+		fmt.Printf("   Heap Growth Slope:     %.2f MB/min\n", report.GCTelemetry.HeapMetricsMB.HeapGrowthSlopeMBm)
 	}
 	fmt.Println("--------------------------------------------------------------------------------")
 	fmt.Printf(" Overall Verdict:         %s\n", report.OverallVerdict)

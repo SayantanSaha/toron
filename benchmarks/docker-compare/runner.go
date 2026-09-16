@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -18,6 +19,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"toron/benchmarks/telemetry/gcparser"
 )
 
 // ProxyDescriptor defines metadata and address for a reverse proxy target.
@@ -39,14 +42,14 @@ type BackendDescriptor struct {
 
 // PreflightResult records pre-flight connectivity check outcome.
 type PreflightResult struct {
-	ProxyID    string `json:"proxy_id"`
-	ProxyName  string `json:"proxy_name"`
-	BackendID  string `json:"backend_id"`
-	URL        string `json:"url"`
-	StatusCode int    `json:"status_code"`
-	Passed     bool   `json:"passed"`
+	ProxyID    string  `json:"proxy_id"`
+	ProxyName  string  `json:"proxy_name"`
+	BackendID  string  `json:"backend_id"`
+	URL        string  `json:"url"`
+	StatusCode int     `json:"status_code"`
+	Passed     bool    `json:"passed"`
 	LatencyMs  float64 `json:"latency_ms"`
-	Details    string `json:"details,omitempty"`
+	Details    string  `json:"details,omitempty"`
 }
 
 // LatencyStats contains calculated latency percentiles in milliseconds.
@@ -70,23 +73,43 @@ type ResourceTelemetry struct {
 	RawCPU     string  `json:"raw_cpu"`
 }
 
+// TimeSeriesSample records a periodic container stats sample.
+type TimeSeriesSample struct {
+	ElapsedSec float64 `json:"elapsed_sec"`
+	CPUPercent float64 `json:"cpu_percent"`
+	MemoryMB   float64 `json:"memory_mb"`
+}
+
+// ResourceTimeSeries records dynamic container resource utilization over time.
+type ResourceTimeSeries struct {
+	Samples      []TimeSeriesSample `json:"samples"`
+	PeakMemoryMB float64            `json:"peak_memory_mb"`
+	MeanMemoryMB float64            `json:"mean_memory_mb"`
+	PeakCPU      float64            `json:"peak_cpu"`
+	MeanCPU      float64            `json:"mean_cpu"`
+	GrowthSlope  float64            `json:"growth_slope_mb_per_min"`
+}
+
 // BenchmarkCellResult records results for one Proxy on one Backend origin.
 type BenchmarkCellResult struct {
-	ProxyID       string            `json:"proxy_id"`
-	ProxyName     string            `json:"proxy_name"`
-	BackendID     string            `json:"backend_id"`
-	BackendName   string            `json:"backend_name"`
-	TargetURL     string            `json:"target_url"`
-	Concurrency   int               `json:"concurrency"`
-	DurationSec   float64           `json:"duration_seconds"`
-	TotalRequests int64             `json:"total_requests"`
-	SuccessCount  int64             `json:"success_count"`
-	ErrorCount    int64             `json:"error_count"`
-	ActualRPS     float64           `json:"actual_rps"`
-	ThroughputMBs float64           `json:"throughput_mb_s"`
-	BytesRead     int64             `json:"bytes_read"`
-	Latencies     LatencyStats      `json:"latencies"`
-	Telemetry     ResourceTelemetry `json:"telemetry"`
+	ProxyID       string                `json:"proxy_id"`
+	ProxyName     string                `json:"proxy_name"`
+	BackendID     string                `json:"backend_id"`
+	BackendName   string                `json:"backend_name"`
+	TargetURL     string                `json:"target_url"`
+	Concurrency   int                   `json:"concurrency"`
+	DurationSec   float64               `json:"duration_seconds"`
+	DurationTier  string                `json:"duration_tier,omitempty"`
+	TotalRequests int64                 `json:"total_requests"`
+	SuccessCount  int64                 `json:"success_count"`
+	ErrorCount    int64                 `json:"error_count"`
+	ActualRPS     float64               `json:"actual_rps"`
+	ThroughputMBs float64               `json:"throughput_mb_s"`
+	BytesRead     int64                 `json:"bytes_read"`
+	Latencies     LatencyStats          `json:"latencies"`
+	Telemetry     ResourceTelemetry     `json:"telemetry"`
+	GCTelemetry   *gcparser.GCTelemetry `json:"gc_telemetry,omitempty"`
+	TimeSeries    *ResourceTimeSeries   `json:"time_series,omitempty"`
 }
 
 // DockerCompareReport aggregates all empirical benchmark results.
@@ -97,6 +120,7 @@ type DockerCompareReport struct {
 	NumCPU          int                   `json:"num_cpu"`
 	Concurrency     int                   `json:"concurrency"`
 	DurationSeconds float64               `json:"duration_seconds"`
+	DurationTier    string                `json:"duration_tier,omitempty"`
 	TargetRateRPS   int                   `json:"target_rate_rps"`
 	PreflightChecks []PreflightResult     `json:"preflight_checks"`
 	Results         []BenchmarkCellResult `json:"results"`
@@ -117,6 +141,51 @@ var defaultBackends = []BackendDescriptor{
 	{ID: "python", Name: "Python 3.11 uvicorn/h11", PathPrefix: "/python", ProbePath: "/python/health"},
 }
 
+func parseDurationTiers(durationStr, tierStr string) ([]time.Duration, []string, error) {
+	if tierStr != "" {
+		switch strings.ToLower(strings.TrimSpace(tierStr)) {
+		case "quick":
+			return []time.Duration{5 * time.Second}, []string{"quick"}, nil
+		case "medium", "steady":
+			return []time.Duration{60 * time.Second}, []string{"medium"}, nil
+		case "soak":
+			return []time.Duration{300 * time.Second}, []string{"soak"}, nil
+		case "all":
+			return []time.Duration{5 * time.Second, 60 * time.Second, 300 * time.Second}, []string{"quick", "medium", "soak"}, nil
+		default:
+			return nil, nil, fmt.Errorf("unknown tier '%s'. Valid: quick, medium, soak, all", tierStr)
+		}
+	}
+
+	parts := strings.Split(durationStr, ",")
+	durations := make([]time.Duration, 0, len(parts))
+	tiers := make([]string, 0, len(parts))
+
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		d, err := time.ParseDuration(p)
+		if err != nil {
+			return nil, nil, fmt.Errorf("invalid duration '%s': %w", p, err)
+		}
+		durations = append(durations, d)
+		tier := "quick"
+		if d >= 120*time.Second {
+			tier = "soak"
+		} else if d >= 30*time.Second {
+			tier = "medium"
+		}
+		tiers = append(tiers, tier)
+	}
+
+	if len(durations) == 0 {
+		return []time.Duration{5 * time.Second}, []string{"quick"}, nil
+	}
+	return durations, tiers, nil
+}
+
 func main() {
 	var (
 		preflightOnly bool
@@ -124,6 +193,7 @@ func main() {
 		backendFilter string
 		concurrency   int
 		durationStr   string
+		tierStr       string
 		targetRate    int
 		jsonPath      string
 		mdPath        string
@@ -133,15 +203,16 @@ func main() {
 	flag.StringVar(&proxyFilter, "proxies", "toron,nginx,traefik,caddy,haproxy", "Comma-separated list of proxy IDs to evaluate")
 	flag.StringVar(&backendFilter, "backends", "fast,go,node,python", "Comma-separated list of backend IDs to evaluate")
 	flag.IntVar(&concurrency, "c", 50, "Number of concurrent worker connections")
-	flag.StringVar(&durationStr, "d", "5s", "Test duration per target (e.g. 5s, 10s)")
+	flag.StringVar(&durationStr, "d", "5s", "Test duration per target (comma-separated, e.g. 5s,60s,300s)")
+	flag.StringVar(&tierStr, "tier", "", "Duration tier preset (quick, medium, soak, all)")
 	flag.IntVar(&targetRate, "r", 0, "Target rate in RPS per proxy (0 = maximum throughput saturation)")
 	flag.StringVar(&jsonPath, "json", "benchmarks/results/docker_compare_report.json", "Destination path for JSON report")
 	flag.StringVar(&mdPath, "md", "benchmarks/results/docker_compare_report.md", "Destination path for Markdown report")
 	flag.Parse()
 
-	duration, err := time.ParseDuration(durationStr)
+	durations, tiers, err := parseDurationTiers(durationStr, tierStr)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Invalid duration %q: %v\n", durationStr, err)
+		fmt.Fprintf(os.Stderr, "Invalid duration/tier configuration: %v\n", err)
 		os.Exit(1)
 	}
 
@@ -154,7 +225,7 @@ func main() {
 	fmt.Printf(" Active Proxies:  %s\n", strings.Join(getProxyNames(activeProxies), ", "))
 	fmt.Printf(" Active Backends: %s\n", strings.Join(getBackendNames(activeBackends), ", "))
 	fmt.Printf(" Concurrency:     %d workers\n", concurrency)
-	fmt.Printf(" Duration:        %s per target\n", duration)
+	fmt.Printf(" Durations:       %v (Tiers: %v)\n", durations, tiers)
 	if targetRate > 0 {
 		fmt.Printf(" Target Rate:     %d RPS (Rate-limited)\n", targetRate)
 	} else {
@@ -186,43 +257,103 @@ func main() {
 		HostArch:        runtime.GOARCH,
 		NumCPU:          runtime.NumCPU(),
 		Concurrency:     concurrency,
-		DurationSeconds: duration.Seconds(),
+		DurationSeconds: durations[0].Seconds(),
+		DurationTier:    tiers[0],
 		TargetRateRPS:   targetRate,
 		PreflightChecks: preflightResults,
-		Results:         make([]BenchmarkCellResult, 0, len(activeProxies)*len(activeBackends)),
+		Results:         make([]BenchmarkCellResult, 0, len(durations)*len(activeProxies)*len(activeBackends)),
+	}
+	if len(durations) > 1 {
+		report.DurationTier = "all"
 	}
 
 	fmt.Println("\n[*] Executing Benchmark Matrix across Proxies and Heterogeneous Upstreams...")
 
-	for _, proxy := range activeProxies {
-		fmt.Printf("\n>>> Benchmarking Proxy: %s (Port %d, Container %s) <<<\n", proxy.Name, proxy.Port, proxy.ContainerName)
+	for dIdx, duration := range durations {
+		tier := tiers[dIdx]
+		fmt.Printf("\n================================================================================")
+		fmt.Printf("\n>>> EXECUTION TIER: %s (Duration: %s) <<<\n", strings.ToUpper(tier), duration)
+		fmt.Printf("================================================================================\n")
 
-		for _, backend := range activeBackends {
-			targetURL := fmt.Sprintf("http://127.0.0.1:%d%s/health", proxy.Port, backend.PathPrefix)
-			fmt.Printf("  -> Target: %s [%s] @ %s ... ", proxy.Name, backend.Name, targetURL)
+		for _, proxy := range activeProxies {
+			fmt.Printf("\n>>> Benchmarking Proxy: %s (Port %d, Container %s) [%s] <<<\n",
+				proxy.Name, proxy.Port, proxy.ContainerName, tier)
 
-			// Pre-warm proxy and upstream connection pool
-			prewarmTarget(targetURL, 100)
+			for _, backend := range activeBackends {
+				targetURL := fmt.Sprintf("http://127.0.0.1:%d%s/health", proxy.Port, backend.PathPrefix)
+				fmt.Printf("  -> Target: %s [%s] @ %s ... ", proxy.Name, backend.Name, targetURL)
 
-			// Execute load test
-			cellResult := runBenchmarkCell(proxy, backend, targetURL, concurrency, duration, targetRate)
+				// Mandatory 5s warm-up phase for runs >= 30s
+				if duration >= 30*time.Second {
+					fmt.Print("[Warm-up 5s] ")
+					prewarmTargetDuration(targetURL, 5*time.Second, concurrency)
+				} else {
+					prewarmTarget(targetURL, 100)
+				}
 
-			// Sample Docker container stats
-			telemetry := sampleContainerTelemetry(proxy.ContainerName)
-			cellResult.Telemetry = telemetry
+				cellStartTime := time.Now()
 
-			report.Results = append(report.Results, cellResult)
+				// Background continuous Docker stats polling for duration >= 30s
+				var stopPoller func() *ResourceTimeSeries
+				if duration >= 30*time.Second {
+					pollInterval := 10 * time.Second
+					if duration < 120*time.Second {
+						pollInterval = 5 * time.Second
+					}
+					cellCtx, cellCancel := context.WithTimeout(context.Background(), duration+2*time.Second)
+					defer cellCancel()
+					stopPoller = startContainerStatsPoller(cellCtx, proxy.ContainerName, pollInterval)
+				}
 
-			fmt.Printf("Done: %.1f RPS | P50: %.2fms | P99: %.2fms | Errors: %d | Mem: %.1f MB | CPU: %.1f%%\n",
-				cellResult.ActualRPS,
-				cellResult.Latencies.P50,
-				cellResult.Latencies.P99,
-				cellResult.ErrorCount,
-				cellResult.Telemetry.MemoryMB,
-				cellResult.Telemetry.CPUPercent,
-			)
+				// Execute benchmark load cell
+				cellResult := runBenchmarkCell(proxy, backend, targetURL, concurrency, duration, targetRate)
+				cellResult.DurationTier = tier
 
-			time.Sleep(500 * time.Millisecond) // Inter-test cooldown
+				if stopPoller != nil {
+					ts := stopPoller()
+					cellResult.TimeSeries = ts
+					cellResult.Telemetry = ResourceTelemetry{
+						CPUPercent: ts.MeanCPU,
+						MemoryMB:   ts.PeakMemoryMB,
+						RawCPU:     fmt.Sprintf("%.1f%%", ts.MeanCPU),
+						RawMem:     fmt.Sprintf("%.1fMiB", ts.PeakMemoryMB),
+					}
+				} else {
+					telemetry := sampleContainerTelemetry(proxy.ContainerName)
+					cellResult.Telemetry = telemetry
+				}
+
+				// Extract container GC trace for Go-based proxies
+				gcTele, err := extractContainerGCTrace(proxy.ID, proxy.ContainerName, cellStartTime, cellResult.DurationSec)
+				if err == nil && gcTele != nil {
+					cellResult.GCTelemetry = gcTele
+				}
+
+				report.Results = append(report.Results, cellResult)
+
+				gcInfo := "GC: N/A"
+				if cellResult.GCTelemetry != nil && cellResult.GCTelemetry.Enabled {
+					gcInfo = fmt.Sprintf("GC: %d cycles, P99: %.2fms", cellResult.GCTelemetry.TotalCycles, cellResult.GCTelemetry.PauseTimesMs.P99STWMs)
+				}
+
+				fmt.Printf("Done: %.1f RPS | P50: %.2fms | P99: %.2fms | Errors: %d | Mem: %.1f MB | CPU: %.1f%% | %s\n",
+					cellResult.ActualRPS,
+					cellResult.Latencies.P50,
+					cellResult.Latencies.P99,
+					cellResult.ErrorCount,
+					cellResult.Telemetry.MemoryMB,
+					cellResult.Telemetry.CPUPercent,
+					gcInfo,
+				)
+
+				time.Sleep(500 * time.Millisecond) // Inter-test cooldown
+			}
+
+			// Inter-proxy cooldown to prevent thermal throttling on long soak runs
+			if duration >= 30*time.Second {
+				fmt.Println("  [*] Cooldown 10s between proxy targets...")
+				time.Sleep(10 * time.Second)
+			}
 		}
 	}
 
@@ -387,6 +518,168 @@ func prewarmTarget(url string, count int) {
 			_ = resp.Body.Close()
 		}
 	}
+}
+
+func prewarmTargetDuration(targetURL string, duration time.Duration, concurrency int) {
+	if concurrency <= 0 {
+		concurrency = 10
+	}
+	transport := &http.Transport{
+		MaxIdleConns:        concurrency * 2,
+		MaxIdleConnsPerHost: concurrency * 2,
+		IdleConnTimeout:     30 * time.Second,
+	}
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   2 * time.Second,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				default:
+					req, err := http.NewRequestWithContext(ctx, "GET", targetURL, nil)
+					if err == nil {
+						resp, err := client.Do(req)
+						if err == nil {
+							_, _ = io.Copy(io.Discard, resp.Body)
+							_ = resp.Body.Close()
+						}
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func startContainerStatsPoller(ctx context.Context, containerName string, interval time.Duration) func() *ResourceTimeSeries {
+	var (
+		mu      sync.Mutex
+		samples []TimeSeriesSample
+		start   = time.Now()
+	)
+
+	stopCh := make(chan struct{})
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		// Initial sample
+		s0 := sampleContainerTelemetry(containerName)
+		mu.Lock()
+		samples = append(samples, TimeSeriesSample{
+			ElapsedSec: 0.0,
+			CPUPercent: s0.CPUPercent,
+			MemoryMB:   s0.MemoryMB,
+		})
+		mu.Unlock()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stopCh:
+				return
+			case <-ticker.C:
+				elapsed := time.Since(start).Seconds()
+				tel := sampleContainerTelemetry(containerName)
+				mu.Lock()
+				samples = append(samples, TimeSeriesSample{
+					ElapsedSec: elapsed,
+					CPUPercent: tel.CPUPercent,
+					MemoryMB:   tel.MemoryMB,
+				})
+				mu.Unlock()
+			}
+		}
+	}()
+
+	return func() *ResourceTimeSeries {
+		close(stopCh)
+		mu.Lock()
+		defer mu.Unlock()
+		return computeTimeSeriesStats(samples)
+	}
+}
+
+func computeTimeSeriesStats(samples []TimeSeriesSample) *ResourceTimeSeries {
+	if len(samples) == 0 {
+		return &ResourceTimeSeries{}
+	}
+
+	var peakMem, sumMem, peakCPU, sumCPU float64
+	var sumT, sumY, sumTY, sumT2 float64
+	n := float64(len(samples))
+
+	for _, s := range samples {
+		if s.MemoryMB > peakMem {
+			peakMem = s.MemoryMB
+		}
+		sumMem += s.MemoryMB
+
+		if s.CPUPercent > peakCPU {
+			peakCPU = s.CPUPercent
+		}
+		sumCPU += s.CPUPercent
+
+		t := s.ElapsedSec
+		y := s.MemoryMB
+		sumT += t
+		sumY += y
+		sumTY += t * y
+		sumT2 += t * t
+	}
+
+	var slope float64
+	denom := n*sumT2 - sumT*sumT
+	if len(samples) > 1 && math.Abs(denom) > 1e-9 {
+		slope = ((n*sumTY - sumT*sumY) / denom) * 60.0
+	}
+
+	return &ResourceTimeSeries{
+		Samples:      samples,
+		PeakMemoryMB: peakMem,
+		MeanMemoryMB: sumMem / n,
+		PeakCPU:      peakCPU,
+		MeanCPU:      sumCPU / n,
+		GrowthSlope:  slope,
+	}
+}
+
+func extractContainerGCTrace(proxyID, containerName string, startTime time.Time, durationSec float64) (*gcparser.GCTelemetry, error) {
+	if proxyID != "toron" && proxyID != "traefik" && proxyID != "caddy" {
+		return &gcparser.GCTelemetry{Enabled: false}, nil
+	}
+
+	sinceStr := startTime.UTC().Format(time.RFC3339Nano)
+	cmd := exec.Command("docker", "logs", "--since", sinceStr, containerName)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to read docker logs: %w", err)
+	}
+
+	var gcLines strings.Builder
+	for _, line := range strings.Split(string(out), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "gc ") {
+			gcLines.WriteString(trimmed)
+			gcLines.WriteByte('\n')
+		}
+	}
+
+	return gcparser.ParseReader(strings.NewReader(gcLines.String()), time.Duration(durationSec*float64(time.Second)))
 }
 
 func runBenchmarkCell(
@@ -565,7 +858,6 @@ func sampleContainerTelemetry(containerName string) ResourceTelemetry {
 		cpuPct = val
 	}
 
-	// MemUsage is typically "14.5MiB / 7.669GiB"
 	var memMB float64
 	memParts := strings.Split(rawMem, "/")
 	if len(memParts) > 0 {
@@ -610,17 +902,34 @@ func writeMarkdownReport(destPath string, report DockerCompareReport) error {
 	sb.WriteString("# 📊 Multi-Proxy Differential Docker Benchmark Report\n\n")
 	sb.WriteString(fmt.Sprintf("**Date**: `%s` | **OS**: `%s/%s` | **Host CPUs**: `%d`\n\n",
 		report.Timestamp, report.HostOS, report.HostArch, report.NumCPU))
-	sb.WriteString(fmt.Sprintf("**Workload Profile**: Concurrency: `%d` | Duration per Target: `%.1fs` | Target Rate: `%d RPS`\n\n",
-		report.Concurrency, report.DurationSeconds, report.TargetRateRPS))
+	sb.WriteString(fmt.Sprintf("**Workload Profile**: Concurrency: `%d` | Duration per Target: `%.1fs` | Tier: `%s` | Target Rate: `%d RPS`\n\n",
+		report.Concurrency, report.DurationSeconds, report.DurationTier, report.TargetRateRPS))
 
 	sb.WriteString("## 1. Comparative Performance Matrix (Head-to-Head)\n\n")
-	sb.WriteString("| Proxy Engine | Upstream Backend | Throughput (RPS) | P50 (ms) | P90 (ms) | P99 (ms) | P99.9 (ms) | Max (ms) | Memory RSS | CPU % | Errors |\n")
-	sb.WriteString("|:---|:---|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
+	sb.WriteString("| Proxy Engine | Upstream Backend | Tier | Duration | Throughput (RPS) | P50 (ms) | P90 (ms) | P99 (ms) | P99.9 (ms) | Max (ms) | Memory RSS | GC Cycles | P99 GC Pause | CPU % | Errors |\n")
+	sb.WriteString("|:---|:---|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|\n")
 
 	for _, r := range report.Results {
-		sb.WriteString(fmt.Sprintf("| **%s** | `%s` | **%.1f** | %.2f | %.2f | %.2f | %.2f | %.2f | %.1f MB | %.1f%% | %d |\n",
+		gcCyclesStr := "-"
+		gcP99Str := "-"
+		if r.GCTelemetry != nil && r.GCTelemetry.Enabled {
+			gcCyclesStr = fmt.Sprintf("%d", r.GCTelemetry.TotalCycles)
+			gcP99Str = fmt.Sprintf("%.3f ms", r.GCTelemetry.PauseTimesMs.P99STWMs)
+		} else if r.ProxyID == "nginx" || r.ProxyID == "haproxy" {
+			gcCyclesStr = "N/A (C)"
+			gcP99Str = "N/A (C)"
+		}
+
+		tierStr := r.DurationTier
+		if tierStr == "" {
+			tierStr = "-"
+		}
+
+		sb.WriteString(fmt.Sprintf("| **%s** | `%s` | `%s` | `%.1fs` | **%.1f** | %.2f | %.2f | %.2f | %.2f | %.2f | %.1f MB | %s | %s | %.1f%% | %d |\n",
 			r.ProxyName,
 			r.BackendID,
+			tierStr,
+			r.DurationSec,
 			r.ActualRPS,
 			r.Latencies.P50,
 			r.Latencies.P90,
@@ -628,13 +937,14 @@ func writeMarkdownReport(destPath string, report DockerCompareReport) error {
 			r.Latencies.P999,
 			r.Latencies.Max,
 			r.Telemetry.MemoryMB,
+			gcCyclesStr,
+			gcP99Str,
 			r.Telemetry.CPUPercent,
 			r.ErrorCount,
 		))
 	}
 
 	sb.WriteString("\n## 2. Upstream Backend Runtime Breakdown\n\n")
-	// Group by backend
 	backends := make(map[string][]BenchmarkCellResult)
 	for _, r := range report.Results {
 		backends[r.BackendID] = append(backends[r.BackendID], r)
@@ -647,10 +957,9 @@ func writeMarkdownReport(destPath string, report DockerCompareReport) error {
 			continue
 		}
 		sb.WriteString(fmt.Sprintf("### Backend: `%s` (%s)\n\n", bID, items[0].BackendName))
-		sb.WriteString("| Rank | Proxy | RPS | P50 (ms) | P99 (ms) | Mem RSS | CPU % |\n")
-		sb.WriteString("|:---|:---|---:|---:|---:|---:|---:|\n")
+		sb.WriteString("| Rank | Proxy | Tier | RPS | P50 (ms) | P99 (ms) | Mem RSS | CPU % |\n")
+		sb.WriteString("|:---|:---|:---:|---:|---:|---:|---:|---:|\n")
 
-		// Sort by RPS descending
 		sortedItems := make([]BenchmarkCellResult, len(items))
 		copy(sortedItems, items)
 		sort.Slice(sortedItems, func(i, j int) bool {
@@ -666,8 +975,12 @@ func writeMarkdownReport(destPath string, report DockerCompareReport) error {
 			} else if rank == 2 {
 				badge = "🥉 #3"
 			}
-			sb.WriteString(fmt.Sprintf("| %s | **%s** | **%.1f** | %.2f | %.2f | %.1f MB | %.1f%% |\n",
-				badge, item.ProxyName, item.ActualRPS, item.Latencies.P50, item.Latencies.P99, item.Telemetry.MemoryMB, item.Telemetry.CPUPercent))
+			tierStr := item.DurationTier
+			if tierStr == "" {
+				tierStr = "-"
+			}
+			sb.WriteString(fmt.Sprintf("| %s | **%s** | `%s` | **%.1f** | %.2f | %.2f | %.1f MB | %.1f%% |\n",
+				badge, item.ProxyName, tierStr, item.ActualRPS, item.Latencies.P50, item.Latencies.P99, item.Telemetry.MemoryMB, item.Telemetry.CPUPercent))
 		}
 		sb.WriteString("\n")
 	}
@@ -684,21 +997,55 @@ func writeMarkdownReport(destPath string, report DockerCompareReport) error {
 			pf.ProxyName, pf.BackendID, pf.URL, pf.StatusCode, pf.LatencyMs, passIcon))
 	}
 
+	// Section 4: Go Runtime GC Differential Analysis
+	hasGoGC := false
+	for _, r := range report.Results {
+		if r.GCTelemetry != nil && r.GCTelemetry.Enabled {
+			hasGoGC = true
+			break
+		}
+	}
+	if hasGoGC {
+		sb.WriteString("\n## 4. Go Runtime GC Differential Analysis (Toron vs Traefik vs Caddy)\n\n")
+		sb.WriteString("| Proxy Engine | Backend | Tier | Total Cycles | Cycles/sec | GC CPU % | Reclaimed | P50 STW | P99 STW | Max STW | Live Heap Floor | Heap Slope |\n")
+		sb.WriteString("|:---|:---|:---:|---:|---:|---:|---:|---:|---:|---:|:---:|---:|\n")
+		for _, r := range report.Results {
+			if r.GCTelemetry != nil && r.GCTelemetry.Enabled {
+				g := r.GCTelemetry
+				heapFloor := fmt.Sprintf("%.1f -> %.1f MB", g.HeapMetricsMB.InitialLiveHeapMB, g.HeapMetricsMB.FinalLiveHeapMB)
+				sb.WriteString(fmt.Sprintf("| **%s** | `%s` | `%s` | %d | %.2f | %.1f%% | %.1f MB | %.3f ms | %.3f ms | %.3f ms | %s | %.2f MB/min |\n",
+					r.ProxyName, r.BackendID, r.DurationTier, g.TotalCycles, g.CyclesPerSecond, g.GCCPUPercent,
+					g.TotalReclaimedMB, g.PauseTimesMs.P50STWMs, g.PauseTimesMs.P99STWMs, g.PauseTimesMs.MaxSTWMs,
+					heapFloor, g.HeapMetricsMB.HeapGrowthSlopeMBm))
+			}
+		}
+	}
+
 	sb.WriteString("\n---\n*Report automatically generated by Toron Differential Docker Benchmark Suite*\n")
 
 	return os.WriteFile(destPath, []byte(sb.String()), 0o644)
 }
 
 func printConsoleTable(report DockerCompareReport) {
-	fmt.Println("\n================================================================================")
-	fmt.Println("                       FINAL COMPARATIVE BENCHMARK RESULTS                      ")
-	fmt.Println("================================================================================")
-	fmt.Printf("%-18s | %-8s | %-9s | %-8s | %-8s | %-10s | %s\n",
-		"Proxy", "Backend", "RPS", "P50(ms)", "P99(ms)", "Mem RSS", "Errors")
-	fmt.Println("--------------------------------------------------------------------------------")
+	fmt.Println("\n=========================================================================================================")
+	fmt.Println("                                FINAL COMPARATIVE BENCHMARK RESULTS                                      ")
+	fmt.Println("=========================================================================================================")
+	fmt.Printf("%-18s | %-8s | %-8s | %-9s | %-8s | %-8s | %-10s | %-10s | %s\n",
+		"Proxy", "Backend", "Tier", "RPS", "P50(ms)", "P99(ms)", "Mem RSS", "GC Cycles", "Errors")
+	fmt.Println("---------------------------------------------------------------------------------------------------------")
 	for _, r := range report.Results {
-		fmt.Printf("%-18s | %-8s | %9.1f | %8.2f | %8.2f | %8.1fMB | %d\n",
-			r.ProxyName, r.BackendID, r.ActualRPS, r.Latencies.P50, r.Latencies.P99, r.Telemetry.MemoryMB, r.ErrorCount)
+		gcStr := "-"
+		if r.GCTelemetry != nil && r.GCTelemetry.Enabled {
+			gcStr = fmt.Sprintf("%d", r.GCTelemetry.TotalCycles)
+		} else if r.ProxyID == "nginx" || r.ProxyID == "haproxy" {
+			gcStr = "N/A(C)"
+		}
+		tierStr := r.DurationTier
+		if tierStr == "" {
+			tierStr = "-"
+		}
+		fmt.Printf("%-18s | %-8s | %-8s | %9.1f | %8.2f | %8.2f | %8.1fMB | %10s | %d\n",
+			r.ProxyName, r.BackendID, tierStr, r.ActualRPS, r.Latencies.P50, r.Latencies.P99, r.Telemetry.MemoryMB, gcStr, r.ErrorCount)
 	}
-	fmt.Println("================================================================================")
+	fmt.Println("=========================================================================================================")
 }

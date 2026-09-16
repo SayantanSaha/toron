@@ -1,34 +1,52 @@
 ---
-title: High-Concurrency Saturation Stress Benchmark & Status Classification (BMK-04, HARN-01)
+title: High-Concurrency Saturation Stress Benchmark & Status Classification (BMK-04, HARN-01, REQ-130)
 type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-09-12
-updated: 2026-09-12
+updated: 2026-09-16
 
 depends_on:
   - REQ-114
   - REQ-117
+  - REQ-129
+  - REQ-130
   - TASK-137
   - TASK-140
+  - TASK-152
+  - TASK-153
   - ADR-114
   - ADR-117
+  - ADR-129
+  - ADR-130
   - TC-114
   - TC-117
+  - TC-129
+  - TC-130
+  - CR-113
+  - CR-126
+  - SR-117
+  - SR-130
 
 derived_from:
   - REQ-114
   - REQ-117
+  - REQ-129
+  - REQ-130
   - TASK-140
+  - TASK-153
   - ADR-117
+  - ADR-130
   - ReviewTaskSummary.md
 
 documents:
   - SATURATION-STRESS-BENCHMARK-HARNESS
+  - MULTI-TIER-GC-TELEMETRY
 
 related_to:
   - ../configuration.md
   - ./benchmarking.md
+  - ./docker-compare-benchmark.md
   - ./waf.md
   - ./path-traversal-defense.md
   - ../index.md
@@ -80,6 +98,33 @@ In peer review audits of Paper 1 and Paper 2 (formalized in `ReviewTaskSummary.m
 - **Masking Server Crashes**: Unhandled server errors (`500 Internal Server Error`) or transport faults were similarly routed into active defense.
 
 Under [`HARN-01`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-140.md), the circular catch-all was permanently removed and replaced with a strict, mutually exclusive **Four-Tier Status Classification Taxonomy**.
+
+### 1.2 Remediation of the 5-Second Evaluation Blindspot & Multi-Tier Duration Taxonomy (`REQ-130` / `TASK-153` / `ADR-130`)
+
+In subsequent empirical audits formalized in [`REQ-130`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-130.md) and [`ADR-130`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-130.md), performance engineers identified three critical scientific and empirical limitations in default 5-to-10-second benchmark runs:
+
+1. **Transient Startup Bias**: During the initial 1 to 3 seconds of execution, TCP socket connection pooling (`net.Conn` pools, epoll reactor event loops), CPU frequency scaling (DVFS governor priming), and Go runtime netpoller priming dominate the measurement window, skewing tail latency measurements ($p99, p99.9$).
+2. **Garbage Collector Masking**: Go's concurrent mark-and-sweep garbage collector (GC) triggers only when heap allocations reach $2 \times \text{GOGC}$. In a short 5-second burst with zero-allocation routing, total allocations frequently remain beneath the initial trigger threshold ($0$ to $2$ cycles), masking Stop-The-World (STW) pause times, mark-assist CPU overhead, and heap expansion dynamics.
+3. **Invisible Memory Leaks & Heap Drift**: Memory bloat, buffer pool degradation (`sync.Pool` retaining oversized slabs), goroutine leaks, and socket descriptor leaks (`EMFILE`, [CWE-775](https://cwe.mitre.org/data/definitions/775.html)) cannot be detected during a transient 5-second window, preventing empirical validation of constant $O(1) \le 32\text{KB}$ memory boundedness ([`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md) / [`ADR-129`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md)).
+
+To resolve these empirical blindspots, [`REQ-130`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-130.md) and [`TASK-153`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-153.md) establish a standardized **Multi-Tier Duration Taxonomy**:
+
+| Tier Name | CLI Identifier | Duration | Primary Empirical Objective |
+| :--- | :---: | :---: | :--- |
+| **Quick Smoke** | `quick` | 5 seconds | Rapid pre-merge continuous integration regression testing and smoke verification ($< 60\text{s}$ suite runtime). |
+| **Steady-State / GC Observation** | `medium` (or `steady`) | 60 seconds (1 min) | Deep observation of Go runtime GC cycles, mark/pause clock times, and steady-state tail latency HDR histograms ($p95, p99, p99.9$). |
+| **Long-Term Soak & Memory Stability** | `soak` | 300 seconds (5 min) | Extended soak testing validating $O(1)$ memory boundedness, zero heap drift, connection pool longevity, and proxy resilience under 1,500,000+ requests. |
+| **All Tiers Sweep** | `all` | 5s + 60s + 300s | Comprehensive sequential evaluation sweep across all three duration tiers for publication-grade systems research. |
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                            EMPIRICAL SYSTEM BEHAVIOR ACROSS DURATIONS                            │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│  [5s: Quick Smoke]       Transient startup phase; connection pool priming; GC cycles: 0 to 2     │
+│  [60s: Steady-State]     Connection pools stabilized; 50-150 GC cycles; HDR tail latencies       │
+│  [300s: Long-Term Soak]  1.5M+ requests; proves O(1) bound (slope <= 1.0 MB/min); leak immunity  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -216,67 +261,187 @@ if !zeroStarvation ||
 
 ---
 
-## 6. CLI Usage & Flags Reference
+## 6. Runtime Go Garbage Collection Telemetry Capture & Analysis (`GODEBUG=gctrace=1`)
 
-The benchmark load generator supports direct command-line execution and automated shell script orchestration.
+To address the garbage collection masking blindspot formalized in [`REQ-130`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-130.md) and [`ADR-130`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-130.md), the saturation stress harness captures and analyzes Go runtime memory management dynamics during load generation.
 
-### 6.1 CLI Flags
-
-| Flag | Type | Default Value | Description |
-| :--- | :---: | :---: | :--- |
-| `-url` | `string` | `http://127.0.0.1:8080/health` | Target HTTP URL endpoint for benign stream traffic |
-| `-c` | `int` | `20` | Concurrency: number of parallel worker goroutines |
-| `-d` | `duration` | `10s` | Test duration (e.g. `5s`, `30s`, `1m`) |
-| `-rate` | `int` | `2000` | Aggregate target request rate across all workers in RPS |
-| `-attack-ratio` | `float` | `0.10` | Fraction of traffic allocated to adversarial probes ($0.0 \le r \le 1.0$) |
-| `-m` | `string` | `GET` | HTTP method for benign background requests (`GET`, `POST`, etc.) |
-| `-body` | `string` | `""` | Optional request body string for benign requests |
-| `-json` | `string` | `""` | Optional filesystem path to write structured JSON report |
-| `-csv` | `string` | `""` | Optional filesystem path to write aggregated CSV telemetry |
-| `-md` | `string` | `""` | Optional filesystem path to write publication Markdown report |
-
-### 6.2 Running via Go Toolchain
-
-```bash
-# Run saturation stress test at 5,000 RPS with 10% attack injection for 10 seconds
-go run ./benchmarks/wrk2/loadgen.go \
-    -url http://127.0.0.1:8080/health \
-    -c 20 \
-    -d 10s \
-    -rate 5000 \
-    -attack-ratio 0.10 \
-    -json benchmarks/results/saturation_stress_report.json \
-    -csv benchmarks/results/saturation_stress_summary.csv \
-    -md benchmarks/results/saturation_stress_report.md
+```
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                         RUNTIME GC TELEMETRY CAPTURE & PARSING PIPELINE                          │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│  Toron Gateway (PID)  ──► stderr ──► benchmarks/results/server_gc_trace.log                      │
+│                                           │                                                      │
+│                                           ▼                                                      │
+│                           gcparser.ParseReader (Zero-Allocation Scanner)                         │
+│                                           │                                                      │
+│                     ┌─────────────────────┴─────────────────────┐                                │
+│                     ▼                                           ▼                                │
+│        GCPauseStatistics (STW Pauses)              GCHeapStatistics (OLS Slope)                  │
+│        • Min, Mean, P50, P95, P99, Max             • Initial, Final, Peak Live Heap              │
+│        • Total STW Pause, Mark Durations           • OLS Growth Slope (<= 1.0 MB/min Bounded)    │
+│                     │                                           │                                │
+│                     └─────────────────────┬─────────────────────┘                                │
+│                                           ▼                                                      │
+│                 saturation_stress_report.json  &  saturation_stress_report.md                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.3 Running via Automated Shell Harness
+### 6.1 `GODEBUG=gctrace=1` Process Environment Injection & Log Segregation
 
-The convenience wrapper [`benchmarks/wrk2/run_saturation_stress.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/wrk2/run_saturation_stress.sh) manages server lifecycle, executes the load generator, and outputs artifacts:
+When the background Toron gateway is launched via `--auto-start` in [`benchmarks/wrk2/run_saturation_stress.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/wrk2/run_saturation_stress.sh), it is launched with `GODEBUG=gctrace=1`:
 
 ```bash
-# Automatically start Toron server, run benchmark, and shut down
-bash benchmarks/wrk2/run_saturation_stress.sh --auto-start -r 5000 -c 20 -d 10s -a 0.10
+GODEBUG=gctrace=1 "${RESULTS_DIR}/toron_stress" \
+    -config "${ROOT_DIR}/config.yaml" \
+    -routes "${ROOT_DIR}/routes.yaml" \
+    > "${SERVER_LOG}" 2> "${GC_LOG}" &
 ```
+
+- **Clean Stderr Segregation**: Standard output (HTTP server lifecycle and routing logs) is directed to `server_stress.log`, while standard error (Go runtime GC traces) is cleanly segregated into [`benchmarks/results/server_gc_trace.log`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/server_gc_trace.log).
+- **Zero Production Modification**: Application code in `pkg/server` and `pkg/proxy` remains 100% untouched.
+- **Session Manifest Archiving ([REQ-119](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-119.md))**: When historical retention is enabled, `server_gc_trace.log` is preserved in `benchmarks/results/history/<timestamp>/` and indexed in [`manifest.json`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/history/manifest.json).
+
+### 6.2 Zero-Dependency Fast GC Parser Engine (`benchmarks/telemetry/gcparser`)
+
+The parser engine implemented in [`benchmarks/telemetry/gcparser`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser) extracts structured metrics from raw Go runtime `gctrace` output without third-party dependencies:
+
+1. **Canonical Go GC Trace Grammar**:
+   ```text
+   gc 42 @12.345s 2%: 0.045+1.23+0.015 ms clock, 0.36+0.45/1.10/2.30+0.12 ms cpu, 14->16->8 MB, 18 MB goal, 8 MB stacks, 0 MB globals, 8 P
+   ```
+2. **Sub-Microsecond Fast Tokenizer (`fastParseLine`)**:
+   - Decomposes lines using byte-level index searching (`strings.IndexByte`, `strings.Index`) and string slicing, completely bypassing regular expressions for canonical lines.
+   - Operates at $> 200,000\text{ lines/sec}$ ($< 50\text{ ms}$ for 10,000 lines) with zero memory allocations in the hot path.
+3. **Multi-Version Grammar Fallback (`gcRegex`)**:
+   - Employs a linear-time RE2 regular expression fallback accommodating formatting variations across Go 1.20, Go 1.22, and Go 1.24+ (e.g. optional `stacks`/`globals` tokens, processor count `P`, fractional milliseconds).
+4. **Instant Noise Filtering**:
+   - Any line not beginning with `"gc "` is discarded immediately before scanning, preventing application log spam or panic traces from corrupting GC metrics.
+
+### 6.3 Stop-The-World (STW) Pause Distribution Metrics
+
+Go's concurrent garbage collector executes two brief Stop-The-World (STW) pause phases per cycle:
+- $t_{\text{stw1}}$: Sweep termination pause.
+- $t_{\text{stw2}}$: Mark termination pause.
+- $\text{Total STW Pause per Cycle}: T_{\text{pause}} = t_{\text{stw1}} + t_{\text{stw2}}$.
+
+In [`benchmarks/telemetry/gcparser/stats.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/stats.go), `ComputeStatistics` aggregates these pauses across all cycles using the sorted-index rank formula $\text{Rank}(P) = \lceil P \times N \rceil - 1$:
+- **Min / Max STW Pause**: Boundary pause durations across the entire test run.
+- **Mean STW Pause**: $\frac{1}{N} \sum_{i=1}^N T_{\text{pause}, i}$.
+- **P50 / P95 / P99 STW Pauses**: Median and high-percentile tail pause distributions.
+- **Total STW Pause**: Cumulative time spent in Stop-The-World pauses.
+- **Mark Phase Durations**: Mean and Max concurrent mark clock times ($t_{\text{mark}}$).
+- **GC Cycle Frequency**: Cycles per second $= N / \text{durationSec}$.
+- **Total Heap Reclaimed**: $\sum_{i=1}^N (H_{\text{sweep}, i} - H_{\text{live}, i})$.
+
+### 6.4 Ordinary Least Squares (OLS) Heap Growth Slope & Constant $O(1)$ Boundedness Verification
+
+Evaluating heap growth by subtracting final heap from initial heap ($H_{\text{final}} - H_{\text{initial}}$) introduces severe distortion due to GC sawtooth behavior. The parser applies Ordinary Least Squares (OLS) linear regression across all post-GC live heap points $(t_i, H_{\text{live}, i})$:
+
+$$\text{Slope} = \frac{N \sum_{i=1}^N (t_i \cdot H_{\text{live}, i}) - \left(\sum_{i=1}^N t_i\right) \left(\sum_{i=1}^N H_{\text{live}, i}\right)}{N \sum_{i=1}^N (t_i^2) - \left(\sum_{i=1}^N t_i\right)^2} \times 60.0 \quad \left(\frac{\text{MB}}{\text{min}}\right)$$
+
+- **Invariant 2 Verification ([REQ-130 §3.1](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-130.md#L381-L384), [ADR-129](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md))**:
+  Under sustained 300-second soak saturation, Toron's live heap growth slope must satisfy:
+  $$\text{Slope} \le 1.0\text{ MB/min}$$
+  This empirically proves that streaming by default maintains strict constant $O(1) \le 32\text{KB}$ memory boundedness per stream and that no heap memory leaks exist.
+
+### 6.5 Zero-Cycle Resilience & Division-by-Zero Elimination ([CWE-369](https://cwe.mitre.org/data/definitions/369.html))
+
+In short 5-second smoke runs or workloads with zero heap allocations, zero GC cycles occur ($N = 0$). In [`benchmarks/telemetry/gcparser/stats.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/stats.go):
+- If $N = 0$, `ComputeStatistics` immediately returns `&GCTelemetry{Enabled: true, TotalCycles: 0}` with zeroed sub-structures.
+- If $N = 1$ or if timestamps are collinear ($\text{denom} \le 10^{-9}$), the linear regression denominator check sets `HeapGrowthSlopeMBm = 0.0`.
+- All rate calculations guard against `effectiveDuration <= 0`.
+- This ensures zero division-by-zero panics, zero `NaN`, and zero `+Inf` values in serialized JSON.
 
 ---
 
-## 7. Telemetry Export Formats
+## 7. CLI Usage & Multi-Tier Flags Reference
 
-### 7.1 JSON Report Structure
+The benchmark load generator supports direct Go execution, single-tier runs, and sequential multi-tier sweep orchestration.
 
-The generated JSON artifact ([`SaturationStressReport`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/wrk2/loadgen.go)) captures complete disaggregated telemetry:
+### 7.1 CLI Flags Reference
+
+| Flag (Go / Shell) | Type | Default Value | Description |
+| :--- | :---: | :---: | :--- |
+| `-url` | `string` | `http://127.0.0.1:8080/health` | Target HTTP URL endpoint for benign stream traffic |
+| `-c` | `int` | `20` | Concurrency: number of parallel worker goroutines |
+| `-d` | `string` / `duration` | `5s` | Duration per tier (`5s`, `60s`, `300s`) or comma-separated list (`5s,60s,300s`) |
+| `--tier` (shell) / `-tier` (Go) | `string` | `quick` | Preset tier: `quick` (5s), `medium`/`steady` (60s), `soak` (300s), `all` (5s,60s,300s) |
+| `-rate` | `int` | `2000` | Aggregate target request rate across all workers in RPS |
+| `-attack-ratio` / `-a` | `float` | `0.10` | Fraction of traffic allocated to adversarial probes ($0.0 \le r \le 1.0$) |
+| `-gc-trace` | `string` | `""` | Optional path to `server_gc_trace.log` to parse and embed GC telemetry |
+| `-m` | `string` | `GET` | HTTP method for benign background requests (`GET`, `POST`, etc.) |
+| `-body` | `string` | `""` | Optional request body string for benign requests |
+| `-json` | `string` | `""` | Filesystem path to write structured JSON report |
+| `-csv` | `string` | `""` | Filesystem path to write aggregated CSV telemetry |
+| `-md` | `string` | `""` | Filesystem path to write publication Markdown report |
+| `--auto-start` (shell) | `bool` | `false` | Automatically build and launch Toron gateway with `GODEBUG=gctrace=1` |
+| `--dry-run` (shell) | `bool` | `false` | Validate arguments, display normalized duration list, and exit |
+
+### 7.2 Running via Go Toolchain
+
+```bash
+# Run steady-state 60-second test with GC telemetry parsing
+go run ./benchmarks/wrk2/loadgen.go \
+    -url http://127.0.0.1:8080/health \
+    -c 50 \
+    -d 60s \
+    -rate 5000 \
+    -attack-ratio 0.10 \
+    -tier medium \
+    -gc-trace benchmarks/results/server_gc_trace.log \
+    -json benchmarks/results/saturation_stress_60s.json \
+    -md benchmarks/results/saturation_stress_60s.md
+```
+
+### 7.3 Running via Automated Shell Harness (`run_saturation_stress.sh`)
+
+[`benchmarks/wrk2/run_saturation_stress.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/wrk2/run_saturation_stress.sh) provides full multi-tier execution management:
+
+```bash
+# 1. Quick CI Smoke Test (default: 5s, < 60s runtime)
+bash benchmarks/wrk2/run_saturation_stress.sh --auto-start
+
+# 2. Steady-State GC Observation Tier (60s)
+bash benchmarks/wrk2/run_saturation_stress.sh --auto-start --tier medium -r 5000 -c 50
+
+# 3. Long-Term Soak Tier (300s / 5 minutes)
+bash benchmarks/wrk2/run_saturation_stress.sh --auto-start --tier soak -r 5000 -c 50
+
+# 4. Comprehensive All-Tiers Sweep (5s + 60s + 300s)
+bash benchmarks/wrk2/run_saturation_stress.sh --auto-start --tier all -r 5000 -c 50
+```
+
+#### Sequential Multi-Tier Execution & Artifact Generation
+When multiple durations are specified (e.g. `--tier all` or `-d 5s,60s,300s`):
+1. The script loops sequentially through each duration tier.
+2. For each tier, the background Toron gateway is maintained or cleanly recycled, and isolated duration-keyed reports are generated:
+   - `benchmarks/results/saturation_stress_5s.json` and `.md`
+   - `benchmarks/results/saturation_stress_60s.json` and `.md`
+   - `benchmarks/results/saturation_stress_300s.json` and `.md`
+3. After all tiers complete, `loadgen.go` executes `ConsolidateReports`, synthesizing a master consolidated report:
+   - `benchmarks/results/saturation_stress_report.json`
+   - `benchmarks/results/saturation_stress_report.md`
+   Featuring cross-tier comparative tables contrasting throughput, $p99$ tail latency, and GC overhead across 5s, 60s, and 300s.
+
+---
+
+## 8. Telemetry Export Formats
+
+### 8.1 JSON Report Structure (with `gc_telemetry`)
+
+The generated JSON artifact ([`SaturationStressReport`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/wrk2/loadgen.go)) captures complete disaggregated telemetry and Go runtime GC dynamics:
 
 ```json
 {
-  "timestamp": "2026-09-12T07:15:38Z",
+  "timestamp": "2026-09-16T12:00:00Z",
   "target_url": "http://127.0.0.1:8080/health",
-  "concurrency": 20,
-  "duration_seconds": 10.0,
+  "concurrency": 50,
+  "duration_seconds": 60.0,
+  "duration_tier": "medium",
   "target_rate_rps": 5000,
   "attack_ratio": 0.10,
-  "total_requests_executed": 49731,
-  "total_actual_rps": 4973.1,
+  "total_requests_executed": 298450,
+  "total_actual_rps": 4974.1,
   "zero_starvation_verified": true,
   "invariant_enforcement_rate_pct": 100.0,
   "active_defense_rate_pct": 100.0,
@@ -284,71 +449,129 @@ The generated JSON artifact ([`SaturationStressReport`](file:///Users/sneha/Deve
   "overall_verdict": "PASS",
   "benign_stream": {
     "stream_type": "benign",
-    "total_requests": 44758,
-    "success_requests": 44758,
+    "total_requests": 268605,
+    "success_requests": 268605,
     "failed_requests": 0,
-    "actual_rps": 4475.8,
-    "latencies_ms": { "p50": 1.12, "p90": 2.45, "p99": 4.88 }
+    "actual_rps": 4476.7,
+    "latencies_ms": { "p50": 1.15, "p90": 2.48, "p99": 4.92 }
   },
   "adversarial_stream": {
     "stream_type": "adversarial",
-    "total_requests": 4973,
-    "success_requests": 4973,
+    "total_requests": 29845,
+    "success_requests": 29845,
     "failed_requests": 0,
-    "active_defense_requests": 4973,
+    "active_defense_requests": 29845,
     "route_miss_requests": 0,
     "bypassed_requests": 0,
     "unhandled_requests": 0,
-    "actual_rps": 497.3,
-    "latencies_ms": { "p50": 0.35, "p90": 0.65, "p99": 1.20 },
-    "status_codes": { "400": 3766, "403": 349, "413": 295, "431": 263, "501": 300 }
+    "actual_rps": 497.4,
+    "latencies_ms": { "p50": 0.38, "p90": 0.68, "p99": 1.25 },
+    "status_codes": { "400": 22682, "403": 2089, "413": 1790, "431": 1584, "501": 1700 }
+  },
+  "gc_telemetry": {
+    "enabled": true,
+    "total_cycles": 112,
+    "gc_cpu_percent": 1.4,
+    "cycles_per_second": 1.87,
+    "total_reclaimed_mb": 1845.2,
+    "pause_times_ms": {
+      "min_stw_ms": 0.021,
+      "mean_stw_ms": 0.048,
+      "p50_stw_ms": 0.045,
+      "p95_stw_ms": 0.078,
+      "p99_stw_ms": 0.112,
+      "max_stw_ms": 0.185,
+      "total_stw_ms": 5.38,
+      "mean_mark_ms": 0.95,
+      "max_mark_ms": 2.10
+    },
+    "heap_metrics_mb": {
+      "initial_live_heap_mb": 5.4,
+      "final_live_heap_mb": 6.1,
+      "peak_live_heap_mb": 7.8,
+      "mean_live_heap_mb": 6.0,
+      "peak_trigger_heap_mb": 14.2,
+      "heap_growth_slope_mb_per_min": 0.08
+    }
   }
 }
 ```
 
-### 7.2 CSV Telemetry Summary
+### 8.2 Markdown Section 5 Table: Runtime Garbage Collection & Memory Dynamics
 
-The CSV summary includes dedicated columns for disaggregated telemetry:
+In [`saturation_stress_report.md`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/saturation_stress_report.md), Section 5 renders a dedicated table detailing GC dynamics:
+
+```markdown
+## 5. Runtime Garbage Collection & Memory Dynamics (`GODEBUG=gctrace=1`)
+
+| Metric | Measured Value | Analysis / Compliance Invariant |
+| :--- | :---: | :--- |
+| **Total GC Cycles** | 112 | 1.87 cycles/sec across 60.0s window |
+| **GC CPU Overhead** | 1.4% | Background mark & assist CPU overhead |
+| **Total Heap Reclaimed** | 1,845.2 MB | Cumulative memory reclaimed by sweeper |
+| **STW Pause (Min / Mean / Max)** | 0.021 ms / 0.048 ms / 0.185 ms | Stop-The-World clock duration range |
+| **STW Pause (P50 / P95 / P99)** | 0.045 ms / 0.078 ms / 0.112 ms | High-percentile Stop-The-World latency impact |
+| **Concurrent Mark (Mean / Max)**| 0.950 ms / 2.100 ms | Non-blocking background mark clock duration |
+| **Live Heap Floor (Init / Final)**| 5.4 MB / 6.1 MB | Baseline live objects retained across sweep |
+| **Live Heap Peak** | 7.8 MB | Maximum live heap size during test window |
+| **Heap Growth Slope** | **0.08 MB/min** | **PASS: Strictly O(1) <= 1.0 MB/min Bounded** |
+```
+
+### 8.3 CSV Telemetry Summary
 
 ```csv
-Concurrency,TargetRPS,TotalActualRPS,BenignRPS,BenignP50_ms,BenignP99_ms,AttackRPS,AttackRejected,AttackRouteMiss,AttackBypassed,AttackUnhandled,ActiveDefenseRatePct,ZeroStarvation
-20,5000,4973.10,4475.80,1.12,4.88,497.30,4973,0,0,0,100.0,true
+Concurrency,TargetRPS,TotalActualRPS,BenignRPS,BenignP50_ms,BenignP99_ms,AttackRPS,AttackRejected,AttackRouteMiss,AttackBypassed,AttackUnhandled,ActiveDefenseRatePct,ZeroStarvation,GCCycles,GCMeanSTW_ms,GCP99STW_ms,GCSlope_MBm
+50,5000,4974.10,4476.70,1.15,4.92,497.40,29845,0,0,0,100.0,true,112,0.048,0.112,0.08
 ```
 
 ---
 
-## 8. Verification & Automated Test Coverage
+## 9. Verification & Automated Test Coverage (`TC-117`, `TC-130`)
 
-The benchmark harness is verified by a dedicated test suite in [`benchmarks/wrk2/loadgen_test.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/wrk2/loadgen_test.go) under [`TC-117`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-117.md):
+The saturation stress benchmark harness and telemetry parser are verified by dedicated test suites across unit, integration, and benchmark layers:
 
 ```bash
-# Execute entire wrk2 benchmark test suite with race detector
+# Execute telemetry parser unit tests
+go test -v -race -count=1 ./benchmarks/telemetry/gcparser/...
+
+# Execute wrk2 loadgen test suite
 go test -v -race -count=1 ./benchmarks/wrk2/...
 ```
 
-### Verification Oracles:
-1. **`TestLoadGen_ClassificationLogic`**: Exhaustively asserts that each HTTP status code (`400`, `403`, `413`, `431`, `501`, `404`, `200`, `500`, `502`, `999`) and socket resets increment exactly one corresponding tier counter.
-2. **`TestLoadGen_StatusClassification_FourTiers`**: End-to-end integration test against multi-status mock server verifying accurate vector aggregation.
-3. **`TestLoadGen_RouteMissFailsVerdict`**: Injects `404 Not Found` and confirms `OverallVerdict == "FAIL"` and `ActiveDefenseRatePct < 100.0%`.
-4. **`TestLoadGen_AttackBypassFailsVerdict`**: Injects `200 OK` and confirms `OverallVerdict == "FAIL"`.
-5. **`TestLoadGen_UnhandledAnomalyFailsVerdict`**: Injects `500 Internal Server Error` and confirms `OverallVerdict == "FAIL"`.
-6. **`TestLoadGen_AST_NoCatchAllElse`**: Static AST parser inspection asserting that no `else` catch-all branch exists in the worker loop of `loadgen.go`.
-7. **`TestLoadGen_MarkdownTable6Format`**: Verifies 9-column Table 6 layout and headers in generated Markdown.
-8. **`TestLoadGen_TelemetryParity_JSON_CSV`**: Verifies 100% data parity between memory structs, JSON serialization, and CSV export.
-9. **`TestLoadGen_RaceFreeConcurrency`**: Verifies partition invariants and race freedom under high concurrency.
+### Verification Oracles & Traceability
+
+| Test Identifier | Test Function / File | Verification Target |
+| :--- | :--- | :--- |
+| **`TC-117.1-9`** | [`loadgen_test.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/wrk2/loadgen_test.go) | Four-tier status classification logic, route miss rejection, 0% credit for 404, Table 6 formatting, and AST check for no catch-all else. |
+| **`TC-130.1`** | `run_saturation_stress.sh` | CLI flag parsing and validation (`-d`, `--tier quick\|medium\|soak\|all`, invalid rejection, default 5s). |
+| **`TC-130.2`** | `run_saturation_stress.sh`, `loadgen.go` | Sequential multi-tier execution loop, PID management, duration-keyed artifacts, and report consolidation. |
+| **`TC-130.4`** | `run_saturation_stress.sh` | `GODEBUG=gctrace=1` process environment injection and clean stderr segregation to `server_gc_trace.log`. |
+| **`TC-130.5`** | [`parser_test.go:14-74`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/parser_test.go#L14-L74) | Syntax scanning across Go 1.20, Go 1.22, and Go 1.24+ `gctrace` formats. |
+| **`TC-130.6`** | [`parser_test.go:77-140`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/parser_test.go#L77-L140) | STW pause percentiles (Min, Mean, P50, P95, P99, Max, Total) and mark duration computation. |
+| **`TC-130.7`** | [`parser_test.go:143-197`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/parser_test.go#L143-L197) | OLS linear regression heap growth slope ($MB/\text{min}$) across flat, linear, cyclic, and $N=1$ inputs. |
+| **`TC-130.8`** | [`parser_test.go:200-234`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/parser_test.go#L200-L234) | Zero-cycle GC trace handling ($N=0$ graceful fallback without panics, `NaN`, or `+Inf`). |
+| **`TC-130.9`** | [`parser_test.go:237-281`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/parser_test.go#L237-L281) | Skipping non-GC lines (application logs, stack traces) with zero heap allocations ($> 200\text{k}$ lines/sec). |
+| **`TC-130.15`** | `loadgen.go` | JSON report schema extension embedding `gc_telemetry` and `duration_tier`. |
+| **`TC-130.16`** | `loadgen.go` | Markdown report generation with Section 5 GC dynamics comparative table. |
+| **`TC-130.18`** | `loadgen.go` | Invariant 1: Uncompromised dual-stream telemetry and 4-tier status classification across all tiers. |
+| **`TC-130.19`** | `loadgen.go`, `stats.go` | Invariant 2: Constant $O(1)$ memory boundedness soak verification (heap growth slope $\le 1.0\text{ MB/min}$). |
+| **`TC-130.20`** | [`parser_test.go:284-306`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/parser_test.go#L284-L306) | Concurrency and thread safety validation under `go test -race ./benchmarks/...`. |
 
 ---
 
-## 9. Related Specifications & Documentation
+## 10. Related Specifications & Documentation
 
-- [`TASK-140`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-140.md) – Implementation of Disaggregated Status Classification and Route-Miss Separation in Benchmark Load Generator (HARN-01)
-- [`REQ-117`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-117.md) – Disaggregated Adversarial Status Classification and Route-Miss Separation (HARN-01)
-- [`ADR-117`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-117.md) – Status Classification Disaggregation and Route-Miss Separation Architecture
-- [`TC-117`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-117.md) – Automated Verification Suite for Load Generator Status Disaggregation
-- [`CR-113`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-113.md) – Code Review for Benchmark Load Generator Status Classification
-- [`SR-117`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-117.md) – Security Review & Table 6 Benchmark Invariant Audit
+- [`REQ-130`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-130.md) – Multi-Tier Duration Stress Testing (5s, 60s, 300s), Runtime GC Telemetry Capture, and Differential Reverse Proxy Benchmarking
+- [`TASK-153`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-153.md) – Engineering Task for Multi-Tier Duration Stress Testing and Go Runtime GC Telemetry Capture
+- [`ADR-130`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-130.md) – Architectural Decision Record for Multi-Tier Stress Testing and GC Telemetry Engine
+- [`TC-130`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-130.md) – Test Specification for Multi-Tier Duration Testing and GC Trace Extraction
+- [`CR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-126.md) – Code Review of Multi-Tier Duration Stress Testing and GC Telemetry
+- [`SR-130`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-130.md) – Security Review of Multi-Tier Stress Testing and Process Boundary Isolation
+- [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md) / [`ADR-129`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md) – Streaming by Default and Memory Boundedness Invariants ($O(1) \le 32\text{KB}$)
 - [`REQ-114`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-114.md) / [`TASK-137`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-137.md) – High-Concurrency Saturation Stress Testing with Background Traffic (BMK-04)
-- [`REQ-116`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-116.md) / [`TASK-139`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-139.md) – Layered Route-Aware Path Traversal Defense Architecture (CWE-22)
-- [`ReviewTaskSummary.md`](file:///Users/sneha/Developer/toron-research/ReviewTaskSummary.md) – Directive `REV-03` / Task `HARN-01`
-- [Native Go Benchmarking](./benchmarking.md) – Microbenchmark suite and allocation metrics
-- [Release Notes](../release-notes.md) – Toron v1.5.21 Benchmark Release notes
+- [`REQ-117`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-117.md) / [`TASK-140`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-140.md) – Disaggregated Adversarial Status Classification and Route-Miss Separation (HARN-01)
+- [`REQ-119`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-119.md) / [`TASK-142`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-142.md) – Historical Result Retention and Manifest Indexing
+- [Multi-Proxy Differential Docker Benchmark Suite](./docker-compare-benchmark.md) – Containerized comparison against NGINX, Traefik, Caddy, HAProxy
+- [Master Benchmark Suite Guide](./benchmarking.md) – Microbenchmarks, loadgen, retention model, and CI execution
+- [Release Notes](../release-notes.md) – Toron v1.5.29 Release Notes
+

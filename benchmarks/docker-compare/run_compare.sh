@@ -18,6 +18,7 @@ source "${ROOT_DIR}/benchmarks/archive_run.sh"
 
 CONCURRENCY=50
 DURATION="5s"
+TIER=""
 RATE=0
 PROXIES="toron,nginx,traefik,caddy,haproxy"
 BACKENDS="fast,go,node,python"
@@ -34,7 +35,8 @@ print_usage() {
     echo ""
     echo "Options:"
     echo "  -c <conns>            Worker concurrency (default: 50)"
-    echo "  -d <duration>         Test duration per target (default: 5s, e.g. 10s)"
+    echo "  -d <duration>         Test duration per target (default: 5s, e.g. 5s,60s,300s)"
+    echo "  --tier <tier>         Duration tier preset (quick=5s, medium/steady=60s, soak=300s, all=5s,60s,300s)"
     echo "  -r <rate>             Rate limit RPS (default: 0 = unthrottled saturation)"
     echo "  --proxies <list>      Comma-separated proxies: toron,nginx,traefik,caddy,haproxy"
     echo "  --backends <list>     Comma-separated origins: fast,go,node,python"
@@ -52,6 +54,17 @@ while [[ $# -gt 0 ]]; do
     case "$1" in
         -c) CONCURRENCY="$2"; shift 2 ;;
         -d) DURATION="$2"; shift 2 ;;
+        --tier)
+            TIER="$2"
+            case "$TIER" in
+                quick) DURATION="5s" ;;
+                medium|steady) DURATION="60s" ;;
+                soak) DURATION="300s" ;;
+                all) DURATION="5s,60s,300s" ;;
+                *) echo "[-] Error: Unknown tier '$TIER'. Valid tiers: quick, medium, soak, all"; exit 1 ;;
+            esac
+            shift 2
+            ;;
         -r) RATE="$2"; shift 2 ;;
         --proxies) PROXIES="$2"; shift 2 ;;
         --backends) BACKENDS="$2"; shift 2 ;;
@@ -142,6 +155,10 @@ RUNNER_ARGS=(
     "-md" "${MD_OUT}"
 )
 
+if [ -n "${TIER}" ]; then
+    RUNNER_ARGS+=("-tier" "${TIER}")
+fi
+
 if [ "${PREFLIGHT_ONLY}" = "true" ]; then
     RUNNER_ARGS+=("-preflight-only")
 fi
@@ -155,8 +172,8 @@ ELAPSED=$((END_TIME - START_TIME))
 
 # Archive artifacts to historical retention manifest if retention is enabled
 if [ "${PREFLIGHT_ONLY}" = "false" ] && [ -f "${JSON_OUT}" ] && [ -f "${MD_OUT}" ]; then
-    PARAMS_JSON=$(printf '{"concurrency": %d, "duration": "%s", "rate": %d, "proxies": "%s", "backends": "%s"}' \
-        "${CONCURRENCY}" "${DURATION}" "${RATE}" "${PROXIES}" "${BACKENDS}")
+    PARAMS_JSON=$(printf '{"concurrency": %d, "duration": "%s", "tier": "%s", "rate": %d, "proxies": "%s", "backends": "%s"}' \
+        "${CONCURRENCY}" "${DURATION}" "${TIER:-custom}" "${RATE}" "${PROXIES}" "${BACKENDS}")
 
     archive_benchmark_artifacts "docker-compare" "success" "${ELAPSED}" "${JSON_OUT},${MD_OUT}" "${PARAMS_JSON}" "$0 $*"
     echo ""

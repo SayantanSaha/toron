@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-14T11:05:41+05:30",
-  "total_runs": 10,
+  "updated_at": "2026-09-16T22:32:18+05:30",
+  "total_runs": 11,
   "runs": [
     {
       "run_id": "run_2026-09-12_12-41-19",
@@ -242,6 +242,112 @@
       "artifacts": [
         "docker_compare_report.json",
         "docker_compare_report.md"
+      ]
+    },
+    {
+      "run_id": "run_2026-09-16_22-07-04",
+      "timestamp": "2026-09-16T22:32:18+05:30",
+      "directory": "benchmarks/results/history/2026-09-16_22-07-04",
+      "suite": "all",
+      "command": "./benchmarks/run_all.sh ",
+      "git_commit": "86018d295a9c73bef39cb0d843fb4421b05c4f78",
+      "git_branch": "master",
+      "go_version": "go1.27.1",
+      "status": "success",
+      "duration_seconds": 1513,
+      "artifacts": [
+        "microbenchmarks.raw.txt",
+        "benchmark_c100_r5000.json",
+        "benchmark_c100_r5000.csv",
+        "benchmark_c100_r5000.raw.txt",
+        "saturation_stress_report.json",
+        "saturation_stress_report.md",
+        "server_gc_trace.log",
+        "differential_fuzz_report.json",
+        "differential_fuzz_report.md",
+        "multihop_report.json",
+        "multihop_report.md",
+        "ablation_study_report.json",
+        "ablation_study_report.md",
+        "saturation_stress_5s.json",
+        "saturation_stress_5s.md",
+        "saturation_stress_60s.json",
+        "saturation_stress_60s.md",
+        "saturation_stress_300s.json",
+        "saturation_stress_300s.md"
+      ],
+      "stages": [
+        {
+          "name": "microbenchmarks",
+          "status": "success",
+          "artifacts": [
+            "microbenchmarks.raw.txt"
+          ]
+        },
+        {
+          "name": "wrk2",
+          "status": "success",
+          "parameters": {
+            "concurrency": 100,
+            "duration": "5s",
+            "rate": 5000
+          },
+          "artifacts": [
+            "benchmark_c100_r5000.json",
+            "benchmark_c100_r5000.csv",
+            "benchmark_c100_r5000.raw.txt"
+          ]
+        },
+        {
+          "name": "saturation_stress",
+          "status": "success",
+          "parameters": {
+            "attack_ratio": 0.1,
+            "concurrency": 50,
+            "duration": "5s,60s,300s",
+            "duration_tier": "all",
+            "rate": 5000
+          },
+          "artifacts": [
+            "saturation_stress_report.json",
+            "saturation_stress_report.md",
+            "server_gc_trace.log"
+          ]
+        },
+        {
+          "name": "differential_fuzzer",
+          "status": "success",
+          "parameters": {
+            "trials": 1000,
+            "warmup": 50
+          },
+          "artifacts": [
+            "differential_fuzz_report.json",
+            "differential_fuzz_report.md"
+          ]
+        },
+        {
+          "name": "multihop",
+          "status": "success",
+          "parameters": {
+            "mode": "standalone"
+          },
+          "artifacts": [
+            "multihop_report.json",
+            "multihop_report.md"
+          ]
+        },
+        {
+          "name": "ablation",
+          "status": "success",
+          "parameters": {
+            "tasks": 10
+          },
+          "artifacts": [
+            "ablation_study_report.json",
+            "ablation_study_report.md"
+          ]
+        }
       ]
     }
   ]

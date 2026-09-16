@@ -4,16 +4,6 @@
 
 ---
 
-## Multi-Tier Duration Performance & GC Dynamics Summary
-
-| Tier | Duration | Total RPS | Benign P50 (ms) | Benign P99 (ms) | Active Defense % | GC Cycles | P99 STW Pause (ms) | Heap Growth Slope |
-| :--- | :---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `quick` | `5s` | **4950.9** | 0.10 | 0.37 | 100.0% | 143 | 0.175 ms | 0.25 MB/min |
-| `medium` | `60s` | **4951.4** | 0.10 | 0.38 | 100.0% | 962 | 0.223 ms | 0.69 MB/min |
-| `soak` | `300s` | **4949.2** | 0.10 | 0.33 | 100.0% | 4985 | 0.219 ms | -0.04 MB/min |
-
----
-
 ## 1. Executive Summary
 
 This empirical evaluation directly refutes the methodological critiques in `AER-002` (lines 288–291) and `MSR-002` (lines 239–245 & 298–301). By evaluating Toron under sustained constant-rate saturation with concurrent adversarial protocol injection, this testbed verifies:
@@ -71,7 +61,7 @@ This empirical evaluation directly refutes the methodological critiques in `AER-
 
 | Metric | Value |
 | :--- | :--- |
-| **Active Duration Tier** | `all` (300.0 seconds) |
+| **Active Duration Tier** | `soak` (300.0 seconds) |
 | **Total GC Cycles** | 4985 cycles (16.62 cycles/sec) |
 | **GC CPU Overhead** | 0.0% total runtime CPU |
 | **Total Heap Reclaimed** | 12143.0 MB |

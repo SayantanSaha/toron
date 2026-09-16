@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-16T22:32:18+05:30",
-  "total_runs": 11,
+  "updated_at": "2026-09-17T00:57:09+05:30",
+  "total_runs": 12,
   "runs": [
     {
       "run_id": "run_2026-09-12_12-41-19",
@@ -348,6 +348,22 @@
             "ablation_study_report.md"
           ]
         }
+      ]
+    },
+    {
+      "run_id": "run_2026-09-16_22-49-02",
+      "timestamp": "2026-09-17T00:57:09+05:30",
+      "directory": "benchmarks/results/history/2026-09-16_22-49-02",
+      "suite": "docker-compare",
+      "command": "./benchmarks/docker-compare/run_compare.sh ",
+      "git_commit": "f24b3b25205553401892ad9a2bb4cff7ae8e1efa",
+      "git_branch": "master",
+      "go_version": "go1.27.1",
+      "status": "success",
+      "duration_seconds": 7687,
+      "artifacts": [
+        "docker_compare_report.json",
+        "docker_compare_report.md"
       ]
     }
   ]

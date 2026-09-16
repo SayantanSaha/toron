@@ -32,6 +32,8 @@ const http2ClientPreface = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
 // ErrServerClosed is returned when operations are performed on a closed server.
 var ErrServerClosed = reactor.ErrServerClosed
 
+var crlfBytes = []byte("\r\n")
+
 type prefixConn struct {
 	net.Conn
 	prefix []byte
@@ -279,6 +281,9 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 		firstRequest = false
 
+		reqCtx, reqCancel := context.WithCancel(ctx)
+		req.SetContext(reqCtx)
+
 		// Process request through router
 		res := httpparser.NewResponse()
 
@@ -319,6 +324,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 				if res.UpgradedConn != nil {
 					_ = res.UpgradedConn.Close()
 				}
+				reqCancel()
 				return fmt.Errorf("server: failed to write upgrade response: %w", err)
 			}
 
@@ -337,42 +343,22 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 					streamConn = &prefixConn{Conn: conn, prefix: unconsumed}
 				}
 				s.relayUpgradedStreams(streamConn, res.UpgradedConn, idleTimeout)
+				reqCancel()
 				return nil
 			}
 		}
 
 		if res.StreamBody != nil {
-			defer res.StreamBody.Close()
-
-			if s.config.WriteTimeout > 0 {
-				_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
+			keepAlive, err := s.relayStreamBody(conn, req, res, tracker, connHeader)
+			_ = req.CloseBody()
+			reqCancel()
+			if err != nil {
+				return err
 			}
-
-			if err := res.Serialize(conn); err != nil {
-				_ = req.CloseBody()
-				return fmt.Errorf("server: failed to write stream headers: %w", err)
+			if keepAlive {
+				continue
 			}
-
-			bufPtr := httpparser.GetCopyBuffer()
-			defer httpparser.PutCopyBuffer(bufPtr)
-			buf := *bufPtr
-
-			for {
-				n, readErr := res.StreamBody.Read(buf)
-				if n > 0 {
-					if s.config.WriteTimeout > 0 {
-						_ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
-					}
-					if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
-						_ = req.CloseBody()
-						return nil
-					}
-				}
-				if readErr != nil {
-					_ = req.CloseBody()
-					return nil
-				}
-			}
+			return nil
 		}
 
 		if s.config.WriteTimeout > 0 {
@@ -381,16 +367,106 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 
 		if err := res.Serialize(conn); err != nil {
 			_ = req.CloseBody()
+			reqCancel()
 			return fmt.Errorf("server: failed to write response: %w", err)
 		}
 
 		_ = req.CloseBody()
+		reqCancel()
 
 		outConnHeader := strings.ToLower(res.Header.Get("Connection"))
 		if connHeader == "close" || outConnHeader == "close" {
 			return nil
 		}
 	}
+}
+
+// relayStreamBody streams an HTTP/1.x response body from res.StreamBody to conn using chunked
+// transfer encoding (HTTP/1.1) or raw streaming (HTTP/1.0, SSE).
+//
+// Invariant (Fail-Closed): On read error or abort mid-stream (other than clean io.EOF), the
+// connection is immediately severed without emitting a terminating chunk (0\r\n\r\n).
+func (s *Server) relayStreamBody(conn net.Conn, req *httpparser.Request, res *httpparser.Response, tracker *connDeadlineTracker, connHeader string) (keepAlive bool, err error) {
+	defer res.StreamBody.Close()
+
+	isHTTP10 := strings.EqualFold(req.Proto, "HTTP/1.0")
+	isEventStream := strings.HasPrefix(strings.ToLower(res.Header.Get("Content-Type")), "text/event-stream")
+	isRawStream := isHTTP10 || isEventStream
+
+	if isRawStream {
+		res.Header.Del("Transfer-Encoding")
+		if isHTTP10 {
+			res.Header.Set("Connection", "close")
+		}
+	} else {
+		res.Header.Set("Transfer-Encoding", "chunked")
+		res.Header.Del("Content-Length")
+	}
+
+	if s.config.WriteTimeout > 0 && tracker != nil {
+		_ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+	}
+
+	if err := res.Serialize(conn); err != nil {
+		return false, fmt.Errorf("server: failed to write stream headers: %w", err)
+	}
+
+	bufPtr := httpparser.GetCopyBuffer()
+	defer httpparser.PutCopyBuffer(bufPtr)
+	buf := *bufPtr
+
+	var hexBuf [32]byte
+	cleanEOF := false
+	for {
+		n, readErr := res.StreamBody.Read(buf)
+		if n > 0 {
+			if s.config.WriteTimeout > 0 && tracker != nil {
+				_ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+			}
+			if isRawStream {
+				if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+					_ = conn.Close()
+					return false, nil
+				}
+			} else {
+				// RFC 7230 chunk framing: <hex-len>\r\n<data>\r\n using net.Buffers
+				h := strconv.AppendInt(hexBuf[:0], int64(n), 16)
+				h = append(h, '\r', '\n')
+				buffers := net.Buffers{h, buf[:n], crlfBytes}
+				if _, writeErr := buffers.WriteTo(conn); writeErr != nil {
+					_ = conn.Close()
+					return false, nil
+				}
+			}
+		}
+		if readErr != nil {
+			if readErr == io.EOF {
+				cleanEOF = true
+			}
+			break
+		}
+	}
+
+	if cleanEOF && !isRawStream {
+		if s.config.WriteTimeout > 0 && tracker != nil {
+			_ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+		}
+		if _, writeErr := conn.Write([]byte("0\r\n\r\n")); writeErr != nil {
+			_ = conn.Close()
+			return false, nil
+		}
+		outConnHeader := strings.ToLower(res.Header.Get("Connection"))
+		if connHeader == "close" || outConnHeader == "close" {
+			return false, nil
+		}
+		return true, nil
+	}
+
+	if !cleanEOF {
+		// Fail-Closed Invariant: on error/abort, NEVER emit 0\r\n\r\n; immediately sever connection
+		_ = conn.Close()
+	}
+	return false, nil
 }
 
 func (s *Server) http2AdapterHandler() http.Handler {

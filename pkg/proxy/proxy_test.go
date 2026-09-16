@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -59,8 +60,14 @@ func TestReverseProxy_ForwardRequest(t *testing.T) {
 		t.Errorf("expected application/json Content-Type, got %q", res.Header.Get("Content-Type"))
 	}
 	expectedBody := `{"echo":"hello upstream"}`
-	if res.Body.String() != expectedBody {
-		t.Errorf("expected body %q, got %q", expectedBody, res.Body.String())
+	bodyStr := res.Body.String()
+	if res.StreamBody != nil {
+		defer res.StreamBody.Close()
+		b, _ := io.ReadAll(res.StreamBody)
+		bodyStr = string(b)
+	}
+	if bodyStr != expectedBody {
+		t.Errorf("expected body %q, got %q", expectedBody, bodyStr)
 	}
 }
 
@@ -118,8 +125,14 @@ func TestReverseProxy_RoundRobinLoadBalancing(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Errorf("request %d: expected 200 OK, got %d", i, res.StatusCode)
 		}
-		if res.Body.String() != expected {
-			t.Errorf("request %d: expected body %q, got %q", i, expected, res.Body.String())
+		bodyStr := res.Body.String()
+		if res.StreamBody != nil {
+			b, _ := io.ReadAll(res.StreamBody)
+			_ = res.StreamBody.Close()
+			bodyStr = string(b)
+		}
+		if bodyStr != expected {
+			t.Errorf("request %d: expected body %q, got %q", i, expected, bodyStr)
 		}
 	}
 
@@ -179,8 +192,14 @@ func TestCircuitBreaker_StateTransitions(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Errorf("request %d: expected 200 OK from healthy node, got %d", i, res.StatusCode)
 		}
-		if res.Body.String() != "healthy" {
-			t.Errorf("request %d: expected body 'healthy', got %q", i, res.Body.String())
+		bodyStr := res.Body.String()
+		if res.StreamBody != nil {
+			b, _ := io.ReadAll(res.StreamBody)
+			_ = res.StreamBody.Close()
+			bodyStr = string(b)
+		}
+		if bodyStr != "healthy" {
+			t.Errorf("request %d: expected body 'healthy', got %q", i, bodyStr)
 		}
 	}
 }
@@ -325,6 +344,11 @@ func TestLoadBalancer_IPHash(t *testing.T) {
 	px.ServeHTTP(req1, res1)
 
 	initialBody := res1.Body.String()
+	if res1.StreamBody != nil {
+		b, _ := io.ReadAll(res1.StreamBody)
+		_ = res1.StreamBody.Close()
+		initialBody = string(b)
+	}
 
 	// Repeated requests from same IP should route to same target
 	for i := 0; i < 3; i++ {
@@ -333,8 +357,15 @@ func TestLoadBalancer_IPHash(t *testing.T) {
 		res := httpparser.NewResponse()
 		px.ServeHTTP(req, res)
 
-		if res.Body.String() != initialBody {
-			t.Errorf("expected ip_hash to pin to %q, got %q", initialBody, res.Body.String())
+		bodyStr := res.Body.String()
+		if res.StreamBody != nil {
+			b, _ := io.ReadAll(res.StreamBody)
+			_ = res.StreamBody.Close()
+			bodyStr = string(b)
+		}
+
+		if bodyStr != initialBody {
+			t.Errorf("expected ip_hash to pin to %q, got %q", initialBody, bodyStr)
 		}
 	}
 }
@@ -1480,9 +1511,14 @@ func TestProxy_TransportConfig_DisableCompressionToggle(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
 		}
-		bodyBytes := res.Body.Bytes()
-		if string(bodyBytes) != testPayload {
-			t.Errorf("expected decompressed body %q, got %q", testPayload, string(bodyBytes))
+		bodyStr := res.Body.String()
+		if res.StreamBody != nil {
+			b, _ := io.ReadAll(res.StreamBody)
+			_ = res.StreamBody.Close()
+			bodyStr = string(b)
+		}
+		if bodyStr != testPayload {
+			t.Errorf("expected decompressed body %q, got %q", testPayload, bodyStr)
 		}
 	})
 }
@@ -2307,3 +2343,375 @@ func TestProxy_Concurrency_RaceSafety(t *testing.T) {
 func TestProxy_Router_StreamingConcurrencyRaceSafety(t *testing.T) {
 	TestProxy_Concurrency_RaceSafety(t)
 }
+
+// TC-129.1: Default Configuration Verification (proxy package)
+func TestProxy_StreamResponse_DefaultTrue(t *testing.T) {
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{Targets: []string{"http://127.0.0.1:9999"}})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	if !px.IsStreamResponseEnabled() {
+		t.Fatalf("expected px.IsStreamResponseEnabled() == true by default")
+	}
+
+	f := false
+	pxOverride, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets: []string{"http://127.0.0.1:9999"},
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse: &f,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy with override: %v", err)
+	}
+	defer pxOverride.Close()
+
+	if pxOverride.IsStreamResponseEnabled() {
+		t.Fatalf("expected pxOverride.IsStreamResponseEnabled() == false with explicit override")
+	}
+
+	pxFallback, err := proxy.NewReverseProxy("http://127.0.0.1:9999", time.Second)
+	if err != nil {
+		t.Fatalf("failed to create fallback proxy: %v", err)
+	}
+	defer pxFallback.Close()
+
+	if !pxFallback.IsStreamResponseEnabled() {
+		t.Fatalf("expected pxFallback.IsStreamResponseEnabled() == true")
+	}
+}
+
+// TC-129.2: Pure Proxy Route Streaming Fast-Path
+func TestProxy_PureProxyRoute_StreamingFastPath(t *testing.T) {
+	expectedPayload := `{"items":[1,2,3]}`
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(expectedPayload))
+	}))
+	defer upstream.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:              []string{upstream.URL},
+		RouteHasCompression: false,
+		RouteHasCache:       false,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, err := httpparser.NewRequest("GET", "/pure-proxy", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create req: %v", err)
+	}
+	res := httpparser.NewResponse()
+
+	start := time.Now()
+	px.ServeHTTPWithPrefix(req, res, "/pure-proxy")
+	elapsed := time.Since(start)
+
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("expected fast-path handoff < 100ms, took %v", elapsed)
+	}
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.StreamBody == nil {
+		t.Fatalf("expected non-nil res.StreamBody for pure proxy fast-path")
+	}
+	if res.Body.Len() != 0 {
+		t.Fatalf("expected zero bytes buffered in res.Body, got %d", res.Body.Len())
+	}
+
+	bodyBytes, err := io.ReadAll(res.StreamBody)
+	if err != nil {
+		t.Fatalf("failed to read from StreamBody: %v", err)
+	}
+	_ = res.StreamBody.Close()
+
+	if string(bodyBytes) != expectedPayload {
+		t.Fatalf("expected payload %q, got %q", expectedPayload, string(bodyBytes))
+	}
+}
+
+// TC-129.3: Middleware Route Bounded Ingestion
+func TestProxy_DynamicClamp_BoundedPayload_BuffersForMiddleware(t *testing.T) {
+	payload50KB := bytes.Repeat([]byte("A"), 51200)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", "51200")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write(payload50KB)
+	}))
+	defer upstream.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:              []string{upstream.URL},
+		RouteHasCompression: true,
+		RouteHasCache:       true,
+		MaxPayloadSize:      1048576, // 1 MB
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, err := httpparser.NewRequest("GET", "/api/bounded", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create req: %v", err)
+	}
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/api/bounded")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.StreamBody != nil {
+		t.Fatalf("expected res.StreamBody == nil for bounded payload on middleware route")
+	}
+	if res.Body.Len() != 51200 {
+		t.Fatalf("expected 51200 bytes buffered in res.Body, got %d", res.Body.Len())
+	}
+	if !bytes.Equal(res.Body.Bytes(), payload50KB) {
+		t.Fatalf("buffered body does not match expected payload")
+	}
+}
+
+// TC-129.4: Middleware Route Oversized Dynamic Bypass
+func TestProxy_DynamicClamp_OversizedPayload_StreamsDirectly(t *testing.T) {
+	payloadSize := 5 * 1024 * 1024 // 5 MB
+	chunk := bytes.Repeat([]byte("X"), 32768)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", payloadSize))
+		w.WriteHeader(http.StatusOK)
+		written := 0
+		for written < payloadSize {
+			toWrite := len(chunk)
+			if payloadSize-written < toWrite {
+				toWrite = payloadSize - written
+			}
+			n, _ := w.Write(chunk[:toWrite])
+			written += n
+		}
+	}))
+	defer upstream.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:              []string{upstream.URL},
+		RouteHasCompression: true,
+		RouteHasCache:       true,
+		MaxPayloadSize:      1048576, // 1 MB
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, err := httpparser.NewRequest("GET", "/large-file", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create req: %v", err)
+	}
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/large-file")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.StreamBody == nil {
+		t.Fatalf("expected dynamic bypass activated: res.StreamBody != nil")
+	}
+	if res.Body.Len() != 0 {
+		t.Fatalf("expected zero bytes buffered in res.Body, got %d", res.Body.Len())
+	}
+
+	copied, err := io.Copy(io.Discard, res.StreamBody)
+	if err != nil {
+		t.Fatalf("failed to read from StreamBody: %v", err)
+	}
+	_ = res.StreamBody.Close()
+
+	if copied != int64(payloadSize) {
+		t.Fatalf("expected %d bytes copied, got %d", payloadSize, copied)
+	}
+}
+
+// TC-129.5: Middleware Route Chunked/Unknown Dynamic Bypass
+func TestProxy_DynamicClamp_ChunkedUnknownLength_StreamsDirectly(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Transfer-Encoding", "chunked")
+		w.Header().Set("Content-Type", "application/json")
+		flusher, ok := w.(http.Flusher)
+		w.WriteHeader(http.StatusOK)
+		for i := 1; i <= 3; i++ {
+			_, _ = fmt.Fprintf(w, `{"chunk":%d}`, i)
+			if ok {
+				flusher.Flush()
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:              []string{upstream.URL},
+		RouteHasCompression: true,
+		RouteHasCache:       true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, err := httpparser.NewRequest("GET", "/dynamic-feed", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create req: %v", err)
+	}
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/dynamic-feed")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.StreamBody == nil {
+		t.Fatalf("expected chunked response to stream directly: res.StreamBody != nil")
+	}
+	if res.Body.Len() != 0 {
+		t.Fatalf("expected zero bytes buffered in res.Body, got %d", res.Body.Len())
+	}
+
+	bodyBytes, err := io.ReadAll(res.StreamBody)
+	if err != nil {
+		t.Fatalf("failed to read from StreamBody: %v", err)
+	}
+	_ = res.StreamBody.Close()
+
+	expectedContent := `{"chunk":1}{"chunk":2}{"chunk":3}`
+	if string(bodyBytes) != expectedContent {
+		t.Fatalf("expected %q, got %q", expectedContent, string(bodyBytes))
+	}
+}
+
+// TC-129.6: Memory Boundedness & Infinite Stream OOM Bomb Immunity
+func TestProxy_DynamicClamp_InfiniteStream_OOMImmunity(t *testing.T) {
+	streamBytesTotal := 50 * 1024 * 1024 // 50 MB
+	slab := bytes.Repeat([]byte("U"), 32768)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		flusher, ok := w.(http.Flusher)
+		w.WriteHeader(http.StatusOK)
+		written := 0
+		for written < streamBytesTotal {
+			n, err := w.Write(slab)
+			if err != nil {
+				return
+			}
+			written += n
+			if ok {
+				flusher.Flush()
+			}
+		}
+	}))
+	defer upstream.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:              []string{upstream.URL},
+		RouteHasCompression: true,
+		RouteHasCache:       true,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, err := httpparser.NewRequest("GET", "/stream/infinite", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create req: %v", err)
+	}
+	res := httpparser.NewResponse()
+
+	runtime.GC()
+	var m1, m2 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+
+	px.ServeHTTPWithPrefix(req, res, "/stream/infinite")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if res.StreamBody == nil {
+		t.Fatalf("expected res.StreamBody != nil")
+	}
+
+	copied, err := io.Copy(io.Discard, res.StreamBody)
+	if err != nil {
+		t.Fatalf("failed to copy from StreamBody: %v", err)
+	}
+	_ = res.StreamBody.Close()
+
+	if copied != int64(streamBytesTotal) {
+		t.Fatalf("expected %d bytes copied, got %d", streamBytesTotal, copied)
+	}
+
+	runtime.GC()
+	runtime.ReadMemStats(&m2)
+	if res.Body.Len() > 0 {
+		t.Fatalf("expected res.Body to remain empty, got %d bytes", res.Body.Len())
+	}
+	heapGrowth := int64(m2.HeapAlloc) - int64(m1.HeapAlloc)
+	if heapGrowth > 5*1024*1024 {
+		t.Fatalf("heap growth unexpectedly high: %d bytes", heapGrowth)
+	}
+}
+
+// TC-129.7: LimitReader Safety Clamp on Deceptive Upstreams
+func TestProxy_DynamicClamp_LimitReaderSafetyClamp_DeceptiveUpstream(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/octet-stream")
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		bigData := bytes.Repeat([]byte("D"), 2*1024*1024)
+		_, _ = w.Write(bigData)
+	}))
+	defer upstream.Close()
+
+	f := false
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:              []string{upstream.URL},
+		RouteHasCompression: true,
+		MaxPayloadSize:      1048576, // 1 MB
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse: &f,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, err := httpparser.NewRequest("GET", "/deceptive-endpoint", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create req: %v", err)
+	}
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "/deceptive-endpoint")
+
+	if res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 502 Bad Gateway, got %d", res.StatusCode)
+	}
+	bodyStr := res.Body.String()
+	if !strings.Contains(bodyStr, "Upstream payload exceeded maximum allowed buffer limit") {
+		t.Fatalf("expected 502 message to indicate buffer limit exceeded, got: %s", bodyStr)
+	}
+}
+

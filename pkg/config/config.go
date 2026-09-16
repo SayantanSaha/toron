@@ -289,7 +289,7 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 			PropagateUpstreamClose: &t,
 			ForceAttemptHTTP2:      &t,
 			Tracing:                &t,
-			StreamResponse:         &f,
+			StreamResponse:         &t,
 			ResponseHeaderTimeout:  10 * time.Second,
 		}
 	}

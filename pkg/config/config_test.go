@@ -997,8 +997,8 @@ func TestConfig_ProxyTransportConfig_StreamResponseAndTimeout(t *testing.T) {
 		}
 
 		balanced := config.DefaultProxyTransportConfig("balanced")
-		if balanced.StreamResponse == nil || *balanced.StreamResponse {
-			t.Fatalf("expected balanced StreamResponse == false, got %v", balanced.StreamResponse)
+		if balanced.StreamResponse == nil || !*balanced.StreamResponse {
+			t.Fatalf("expected balanced StreamResponse == true, got %v", balanced.StreamResponse)
 		}
 		if balanced.ResponseHeaderTimeout != 10*time.Second {
 			t.Fatalf("expected balanced ResponseHeaderTimeout == 10s, got %v", balanced.ResponseHeaderTimeout)
@@ -1172,5 +1172,19 @@ server:
 			t.Errorf("expected UpgradeIdleTimeout 0, got %v", cfg.Server.UpgradeIdleTimeout)
 		}
 	})
+}
+
+// TC-129.1: Default Configuration Verification (config package)
+func TestConfig_ProxyTransport_StreamResponseDefault(t *testing.T) {
+	profiles := []string{"balanced", "raw_speed", "", "default", "standard"}
+	for _, prof := range profiles {
+		cfg := config.DefaultProxyTransportConfig(prof)
+		if cfg.StreamResponse == nil {
+			t.Fatalf("profile %q: expected non-nil StreamResponse", prof)
+		}
+		if !*cfg.StreamResponse {
+			t.Fatalf("profile %q: expected StreamResponse == true, got false", prof)
+		}
+	}
 }
 

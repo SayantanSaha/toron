@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-09-14T06:07:38Z",
-  "target_edge": "127.0.0.1:56381",
+  "timestamp": "2026-09-16T10:41:16Z",
+  "target_edge": "127.0.0.1:60718",
   "execution_mode": "Standalone In-Process (Pure Go)",
   "total_scenarios": 30,
   "passed_scenarios": 30,
@@ -57,7 +57,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 2471
+      "execution_time_us": 1446
     },
     {
       "vector_id": "VECTOR-02",
@@ -78,7 +78,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 429
+      "execution_time_us": 239
     },
     {
       "vector_id": "VECTOR-03",
@@ -99,7 +99,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 400
+      "execution_time_us": 280
     },
     {
       "vector_id": "VECTOR-04",
@@ -121,7 +121,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 858
+      "execution_time_us": 583
     },
     {
       "vector_id": "VECTOR-05",
@@ -143,7 +143,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 749
+      "execution_time_us": 563
     },
     {
       "vector_id": "VECTOR-06",
@@ -165,7 +165,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 755
+      "execution_time_us": 598
     },
     {
       "vector_id": "VECTOR-07",
@@ -186,7 +186,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 371
+      "execution_time_us": 283
     },
     {
       "vector_id": "VECTOR-08",
@@ -207,7 +207,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 622
+      "execution_time_us": 568
     },
     {
       "vector_id": "VECTOR-09",
@@ -228,7 +228,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 679
+      "execution_time_us": 614
     },
     {
       "vector_id": "VECTOR-10",
@@ -249,7 +249,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 578
+      "execution_time_us": 604
     },
     {
       "vector_id": "VECTOR-01",
@@ -270,7 +270,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 585
+      "execution_time_us": 716
     },
     {
       "vector_id": "VECTOR-02",
@@ -291,7 +291,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 293
+      "execution_time_us": 299
     },
     {
       "vector_id": "VECTOR-03",
@@ -312,7 +312,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 284
+      "execution_time_us": 277
     },
     {
       "vector_id": "VECTOR-04",
@@ -334,7 +334,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 580
+      "execution_time_us": 560
     },
     {
       "vector_id": "VECTOR-05",
@@ -356,7 +356,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 559
+      "execution_time_us": 626
     },
     {
       "vector_id": "VECTOR-06",
@@ -378,7 +378,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 573
+      "execution_time_us": 624
     },
     {
       "vector_id": "VECTOR-07",
@@ -399,7 +399,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 266
+      "execution_time_us": 256
     },
     {
       "vector_id": "VECTOR-08",
@@ -420,7 +420,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 468
+      "execution_time_us": 457
     },
     {
       "vector_id": "VECTOR-09",
@@ -441,7 +441,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 525
+      "execution_time_us": 528
     },
     {
       "vector_id": "VECTOR-10",
@@ -462,7 +462,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 609
+      "execution_time_us": 554
     },
     {
       "vector_id": "VECTOR-01",
@@ -483,7 +483,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 489
+      "execution_time_us": 515
     },
     {
       "vector_id": "VECTOR-02",
@@ -504,99 +504,12 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 260
+      "execution_time_us": 307
     },
     {
       "vector_id": "VECTOR-03",
       "vector_name": "H2.CL-Mismatch Payload Discrepancy",
       "category": "HTTP/2 Payload Framing Invariant",
-      "backend_runtime": "Go 1.24",
-      "backend_parser": "net/http",
-      "backend_prefix": "go",
-      "protocol": "HTTP/2",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400
-      ],
-      "stage1_socket_closed": false,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 261
-    },
-    {
-      "vector_id": "VECTOR-04",
-      "vector_name": "H1-CL.TE Dual Framing Smuggle",
-      "category": "HTTP/1.1 Request Smuggling (CWE-444)",
-      "backend_runtime": "Go 1.24",
-      "backend_parser": "net/http",
-      "backend_prefix": "go",
-      "protocol": "HTTP/1.1",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400,
-        501
-      ],
-      "stage1_socket_closed": true,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 586
-    },
-    {
-      "vector_id": "VECTOR-05",
-      "vector_name": "H1-TE.CL-Obfuscated Whitespace",
-      "category": "HTTP/1.1 Header Syntax (RFC 7230 §3.2.4)",
-      "backend_runtime": "Go 1.24",
-      "backend_parser": "net/http",
-      "backend_prefix": "go",
-      "protocol": "HTTP/1.1",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400,
-        501
-      ],
-      "stage1_socket_closed": true,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 523
-    },
-    {
-      "vector_id": "VECTOR-06",
-      "vector_name": "H1-Pipelined-Smuggle Buffer Eviction",
-      "category": "HTTP/1.1 Pipelined Buffer Boundary",
-      "backend_runtime": "Go 1.24",
-      "backend_parser": "net/http",
-      "backend_prefix": "go",
-      "protocol": "HTTP/1.1",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400,
-        501
-      ],
-      "stage1_socket_closed": true,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 526
-    },
-    {
-      "vector_id": "VECTOR-07",
-      "vector_name": "CRLF-Header-Injection Wire Splitting",
-      "category": "Header Injection Defense (CWE-117)",
       "backend_runtime": "Go 1.24",
       "backend_parser": "net/http",
       "backend_prefix": "go",
@@ -615,6 +528,93 @@
       "execution_time_us": 243
     },
     {
+      "vector_id": "VECTOR-04",
+      "vector_name": "H1-CL.TE Dual Framing Smuggle",
+      "category": "HTTP/1.1 Request Smuggling (CWE-444)",
+      "backend_runtime": "Go 1.24",
+      "backend_parser": "net/http",
+      "backend_prefix": "go",
+      "protocol": "HTTP/1.1",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400,
+        501
+      ],
+      "stage1_socket_closed": true,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 565
+    },
+    {
+      "vector_id": "VECTOR-05",
+      "vector_name": "H1-TE.CL-Obfuscated Whitespace",
+      "category": "HTTP/1.1 Header Syntax (RFC 7230 §3.2.4)",
+      "backend_runtime": "Go 1.24",
+      "backend_parser": "net/http",
+      "backend_prefix": "go",
+      "protocol": "HTTP/1.1",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400,
+        501
+      ],
+      "stage1_socket_closed": true,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 447
+    },
+    {
+      "vector_id": "VECTOR-06",
+      "vector_name": "H1-Pipelined-Smuggle Buffer Eviction",
+      "category": "HTTP/1.1 Pipelined Buffer Boundary",
+      "backend_runtime": "Go 1.24",
+      "backend_parser": "net/http",
+      "backend_prefix": "go",
+      "protocol": "HTTP/1.1",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400,
+        501
+      ],
+      "stage1_socket_closed": true,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 496
+    },
+    {
+      "vector_id": "VECTOR-07",
+      "vector_name": "CRLF-Header-Injection Wire Splitting",
+      "category": "Header Injection Defense (CWE-117)",
+      "backend_runtime": "Go 1.24",
+      "backend_parser": "net/http",
+      "backend_prefix": "go",
+      "protocol": "HTTP/2",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400
+      ],
+      "stage1_socket_closed": false,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 238
+    },
+    {
       "vector_id": "VECTOR-08",
       "vector_name": "Pseudo-Header Upstream Isolation",
       "category": "HTTP/2 to HTTP/1.1 Isolation",
@@ -633,7 +633,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 417
+      "execution_time_us": 432
     },
     {
       "vector_id": "VECTOR-09",
@@ -654,7 +654,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 460
+      "execution_time_us": 420
     },
     {
       "vector_id": "VECTOR-10",
@@ -675,7 +675,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 465
+      "execution_time_us": 543
     }
   ]
 }

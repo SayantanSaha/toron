@@ -2,6 +2,7 @@ package httpparser
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"net"
 	"net/http"
@@ -118,6 +119,7 @@ type Request struct {
 	ContentLength int64
 	RawConn       net.Conn
 	RemoteAddr    string // Physical client network address ("IP:port") assigned at transport ingress
+	ctx           context.Context
 }
 
 // IsWebSocketUpgrade returns true if the request contains WebSocket upgrade headers (HTTP/1.1) or RFC 8441 Extended CONNECT pseudo-headers (HTTP/2).
@@ -135,6 +137,31 @@ func (r *Request) IsWebSocketUpgrade() bool {
 		return true
 	}
 	return false
+}
+
+// Context returns the request's context. If nil or unset, context.Background() is returned.
+func (r *Request) Context() context.Context {
+	if r != nil && r.ctx != nil {
+		return r.ctx
+	}
+	return context.Background()
+}
+
+// WithContext returns a shallow copy of r with its context set to ctx.
+func (r *Request) WithContext(ctx context.Context) *Request {
+	if r == nil {
+		return nil
+	}
+	r2 := *r
+	r2.ctx = ctx
+	return &r2
+}
+
+// SetContext sets the request's context in place.
+func (r *Request) SetContext(ctx context.Context) {
+	if r != nil {
+		r.ctx = ctx
+	}
 }
 
 // CloseBody closes the request body if it implements io.Closer.
@@ -164,6 +191,7 @@ func NewRequest(method, reqURI, proto string) (*Request, error) {
 		Header:      make(Header),
 		QueryParams: parsedURL.Query(),
 		Body:        bytes.NewReader(nil),
+		ctx:         context.Background(),
 	}, nil
 }
 
@@ -251,6 +279,7 @@ func NewRequestFromStd(r *http.Request) *Request {
 		QueryParams: queryParams,
 		Body:        bytes.NewReader(nil),
 		RemoteAddr:  r.RemoteAddr,
+		ctx:         r.Context(),
 	}
 	for k, vv := range r.Header {
 		for _, v := range vv {

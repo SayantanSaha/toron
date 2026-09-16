@@ -210,16 +210,16 @@ func TestRouter_ProxyBalancer(t *testing.T) {
 	req1, _ := httpparser.NewRequest("GET", "/api/users", "HTTP/1.1")
 	res1 := httpparser.NewResponse()
 	r.ServeHTTP(req1, res1)
-	if res1.Body.String() != "backend-1" {
-		t.Errorf("request 1: expected backend-1, got %q", res1.Body.String())
+	if body1 := res1.BodyString(); body1 != "backend-1" {
+		t.Errorf("request 1: expected backend-1, got %q", body1)
 	}
 
 	// Request 2 -> server2
 	req2, _ := httpparser.NewRequest("GET", "/api/users", "HTTP/1.1")
 	res2 := httpparser.NewResponse()
 	r.ServeHTTP(req2, res2)
-	if res2.Body.String() != "backend-2" {
-		t.Errorf("expected backend-2 response, got %q", res2.Body.String())
+	if body2 := res2.BodyString(); body2 != "backend-2" {
+		t.Errorf("expected backend-2 response, got %q", body2)
 	}
 }
 
@@ -904,8 +904,9 @@ func TestRouter_ReplacePrefixRoutesBySource(t *testing.T) {
 	reqV2, _ := httpparser.NewRequest("GET", "/v2/test", "HTTP/1.1")
 	resV2 := httpparser.NewResponse()
 	r.ServeHTTP(reqV2, resV2)
-	if resV2.StatusCode != http.StatusOK || !strings.Contains(resV2.Body.String(), "backend-2 payload") {
-		t.Errorf("new /v2 route: want 200 backend-2 payload, got %d %q", resV2.StatusCode, resV2.Body.String())
+	bodyV2 := resV2.BodyString()
+	if resV2.StatusCode != http.StatusOK || !strings.Contains(bodyV2, "backend-2 payload") {
+		t.Errorf("new /v2 route: want 200 backend-2 payload, got %d %q", resV2.StatusCode, bodyV2)
 	}
 
 	// Scenario 1.2: Empty Pruning
@@ -1072,8 +1073,9 @@ func TestRouter_RoutePrefixWithSource_BackwardCompatibility(t *testing.T) {
 	req.Header.Set("Host", "api.example.com")
 	res := httpparser.NewResponse()
 	r.ServeHTTP(req, res)
-	if res.StatusCode != http.StatusOK || !strings.Contains(res.Body.String(), "legacy backend payload") {
-		t.Errorf("legacy route response mismatch: %d %q", res.StatusCode, res.Body.String())
+	body := res.BodyString()
+	if res.StatusCode != http.StatusOK || !strings.Contains(body, "legacy backend payload") {
+		t.Errorf("legacy route response mismatch: %d %q", res.StatusCode, body)
 	}
 }
 
@@ -1239,16 +1241,18 @@ func TestRouter_SpecificityOrdering_NoCanaryShadowing(t *testing.T) {
 	reqCanary.Header.Set("X-Version", "canary")
 	resCanary := httpparser.NewResponse()
 	r.ServeHTTP(reqCanary, resCanary)
-	if resCanary.StatusCode != http.StatusOK || resCanary.Body.String() != "canary" {
-		t.Errorf("canary request failed: status %d, body %q", resCanary.StatusCode, resCanary.Body.String())
+	canaryBody := resCanary.BodyString()
+	if resCanary.StatusCode != http.StatusOK || canaryBody != "canary" {
+		t.Errorf("canary request failed: status %d, body %q", resCanary.StatusCode, canaryBody)
 	}
 
 	// Request without header -> falls through to generic
 	reqGeneric, _ := httpparser.NewRequest("GET", "/api/users", "HTTP/1.1")
 	resGeneric := httpparser.NewResponse()
 	r.ServeHTTP(reqGeneric, resGeneric)
-	if resGeneric.StatusCode != http.StatusOK || resGeneric.Body.String() != "generic" {
-		t.Errorf("generic request failed: status %d, body %q", resGeneric.StatusCode, resGeneric.Body.String())
+	genericBody := resGeneric.BodyString()
+	if resGeneric.StatusCode != http.StatusOK || genericBody != "generic" {
+		t.Errorf("generic request failed: status %d, body %q", resGeneric.StatusCode, genericBody)
 	}
 
 	// Multi-Tier Specificity Hierarchy Verification (TC-095-06)
@@ -1329,8 +1333,8 @@ func TestRouter_PrefixRouteSpec_MethodMatching(t *testing.T) {
 	reqPost, _ := httpparser.NewRequest("POST", "/submit", "HTTP/1.1")
 	resPost := httpparser.NewResponse()
 	r.ServeHTTP(reqPost, resPost)
-	if resPost.StatusCode != http.StatusOK || resPost.Body.String() != "post-handler" {
-		t.Errorf("POST /submit failed: status %d, body %q", resPost.StatusCode, resPost.Body.String())
+	if bodyPost := resPost.BodyString(); resPost.StatusCode != http.StatusOK || bodyPost != "post-handler" {
+		t.Errorf("POST /submit failed: status %d, body %q", resPost.StatusCode, bodyPost)
 	}
 
 	// GET /submit -> 405 Method Not Allowed
@@ -1372,24 +1376,24 @@ func TestRouter_PrefixRouteSpec_MethodMatching(t *testing.T) {
 	reqItemsPost, _ := httpparser.NewRequest("POST", "/items", "HTTP/1.1")
 	resItemsPost := httpparser.NewResponse()
 	rFallback.ServeHTTP(reqItemsPost, resItemsPost)
-	if resItemsPost.StatusCode != http.StatusOK || resItemsPost.Body.String() != "post-handler" {
-		t.Errorf("POST /items: want 200 post-handler, got %d %q", resItemsPost.StatusCode, resItemsPost.Body.String())
+	if bodyItemsPost := resItemsPost.BodyString(); resItemsPost.StatusCode != http.StatusOK || bodyItemsPost != "post-handler" {
+		t.Errorf("POST /items: want 200 post-handler, got %d %q", resItemsPost.StatusCode, bodyItemsPost)
 	}
 
 	// GET /items -> fallback-handler
 	reqItemsGet, _ := httpparser.NewRequest("GET", "/items", "HTTP/1.1")
 	resItemsGet := httpparser.NewResponse()
 	rFallback.ServeHTTP(reqItemsGet, resItemsGet)
-	if resItemsGet.StatusCode != http.StatusOK || resItemsGet.Body.String() != "fallback-handler" {
-		t.Errorf("GET /items: want 200 fallback-handler, got %d %q", resItemsGet.StatusCode, resItemsGet.Body.String())
+	if bodyItemsGet := resItemsGet.BodyString(); resItemsGet.StatusCode != http.StatusOK || bodyItemsGet != "fallback-handler" {
+		t.Errorf("GET /items: want 200 fallback-handler, got %d %q", resItemsGet.StatusCode, bodyItemsGet)
 	}
 
 	// DELETE /items -> fallback-handler
 	reqItemsDel, _ := httpparser.NewRequest("DELETE", "/items", "HTTP/1.1")
 	resItemsDel := httpparser.NewResponse()
 	rFallback.ServeHTTP(reqItemsDel, resItemsDel)
-	if resItemsDel.StatusCode != http.StatusOK || resItemsDel.Body.String() != "fallback-handler" {
-		t.Errorf("DELETE /items: want 200 fallback-handler, got %d %q", resItemsDel.StatusCode, resItemsDel.Body.String())
+	if bodyItemsDel := resItemsDel.BodyString(); resItemsDel.StatusCode != http.StatusOK || bodyItemsDel != "fallback-handler" {
+		t.Errorf("DELETE /items: want 200 fallback-handler, got %d %q", resItemsDel.StatusCode, bodyItemsDel)
 	}
 }
 

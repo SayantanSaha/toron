@@ -750,7 +750,7 @@ func TestDiscoveryManager_CompositeRouteKeyAggregation(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("request %d failed with status %d", i, res.StatusCode)
 		}
-		counts[res.Body.String()]++
+		counts[res.BodyString()]++
 	}
 
 	if counts["server-1"] != 10 || counts["server-2"] != 10 || counts["server-3"] != 10 {
@@ -821,7 +821,7 @@ func TestDiscoveryManager_NonDestructivePartialScaleDown(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("post-scale-down request %d failed: %d", i, res.StatusCode)
 		}
-		counts[res.Body.String()]++
+		counts[res.BodyString()]++
 	}
 
 	if counts["s1"] != 0 {
@@ -911,8 +911,9 @@ func TestDiscoveryManager_DistinctVariantCanarySeparation(t *testing.T) {
 		req.Header.Set("X-Version", "canary")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
-		if res.StatusCode != http.StatusOK || res.Body.String() != "canary-response" {
-			t.Fatalf("canary request %d failed: %d %q", i, res.StatusCode, res.Body.String())
+		canaryBody := res.BodyString()
+		if res.StatusCode != http.StatusOK || canaryBody != "canary-response" {
+			t.Fatalf("canary request %d failed: %d %q", i, res.StatusCode, canaryBody)
 		}
 	}
 
@@ -922,8 +923,9 @@ func TestDiscoveryManager_DistinctVariantCanarySeparation(t *testing.T) {
 		req.Header.Set("Host", "shop.example.com")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
-		if res.StatusCode != http.StatusOK || res.Body.String() != "baseline-response" {
-			t.Fatalf("baseline request %d failed: %d %q", i, res.StatusCode, res.Body.String())
+		baselineBody := res.BodyString()
+		if res.StatusCode != http.StatusOK || baselineBody != "baseline-response" {
+			t.Fatalf("baseline request %d failed: %d %q", i, res.StatusCode, baselineBody)
 		}
 	}
 
@@ -933,8 +935,9 @@ func TestDiscoveryManager_DistinctVariantCanarySeparation(t *testing.T) {
 		req.Header.Set("Host", "shop.example.com")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
-		if res.StatusCode != http.StatusOK || res.Body.String() != "baseline-response" {
-			t.Fatalf("mismatched canary request %d failed: %d %q", i, res.StatusCode, res.Body.String())
+		mismatchedBody := res.BodyString()
+		if res.StatusCode != http.StatusOK || mismatchedBody != "baseline-response" {
+			t.Fatalf("mismatched canary request %d failed: %d %q", i, res.StatusCode, mismatchedBody)
 		}
 	}
 }

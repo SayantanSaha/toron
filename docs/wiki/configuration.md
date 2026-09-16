@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-10
+updated: 2026-09-16
 
 depends_on:
   - REQ-007
@@ -17,6 +17,13 @@ depends_on:
   - REQ-086
   - REQ-087
   - REQ-092
+  - REQ-123
+  - REQ-124
+  - REQ-125
+  - REQ-126
+  - REQ-127
+  - REQ-128
+  - REQ-129
   - TASK-007
   - TASK-019
   - TASK-027
@@ -29,19 +36,37 @@ depends_on:
   - TASK-111
   - TASK-112
   - TASK-113
+  - TASK-145
+  - TASK-146
+  - TASK-148
+  - TASK-149
+  - TASK-150
+  - TASK-151
+  - TASK-152
+  - ADR-123
+  - ADR-125
+  - ADR-126
+  - ADR-127
+  - ADR-128
+  - ADR-129
 
 derived_from:
   - REQ-007
   - REQ-027
   - REQ-056
   - REQ-092
+  - REQ-123
+  - REQ-129
   - ADR-002
   - ADR-022
   - ADR-051
   - ADR-082
   - ADR-087
+  - ADR-123
+  - ADR-129
   - SEC-26
   - SEC-31
+  - SEC-36
 
 documents:
   - CONFIGURATION-GUIDE
@@ -245,6 +270,25 @@ transcoder:
       upstream_url: "http://localhost:9005"
       field_mappings:
         id: "userId"
+
+# Upstream Reverse Proxy Transport Engine Defaults (REQ-123, REQ-129)
+proxy:
+  enabled: true
+  transport:
+    profile: "raw_speed"            # Presets: "raw_speed" (default) or "balanced"
+    max_idle_conns: 10000           # Global max idle connections across all origins
+    max_idle_conns_per_host: 1000   # Max idle keepalive connections per host
+    max_conns_per_host: 0           # Concurrency limit (0 = unconstrained; >0 throttles & queues)
+    idle_conn_timeout: 90s          # Keepalive socket retention
+    disable_compression: true       # true = raw byte pass-through; false = auto-decompress gzip
+    use_env_proxy: false            # true = honors HTTP_PROXY/NO_PROXY; false = direct socket dial
+    proxy_url: ""                   # Explicit forward proxy URL (e.g. http://squid.corp:3128)
+    propagate_upstream_close: false # false = isolates client keepalives; true = clean client teardown
+    force_attempt_http2: false      # true = ALPN h2 stream multiplexing to TLS origins
+    tracing: false                  # false = suppresses CSPRNG trace ID generation; true = W3C traceparent
+    stream_response: true           # true = streaming by default across raw_speed and balanced (REQ-129)
+    max_payload_size: 1048576       # Buffer clamp limit in bytes (default: 1 MB / 1048576) (REQ-129)
+    response_header_timeout: 10s    # Bounded timeout for initial response headers
 
 logging:
   level: "info"
@@ -453,7 +497,83 @@ routes:
     target: "http://localhost:9003"
     trusted_proxies:
       - "198.51.100.10/32"
+
+  # Tuned Upstream Route with Streaming by Default & Bounded Clamping (REQ-123, REQ-129)
+  - type: "upstream"
+    prefix: "/services/streaming-api"
+    target: "http://localhost:9004"
+    transport:
+      profile: "raw_speed"
+      stream_response: true       # Streaming by default across all profiles (REQ-129)
+      max_payload_size: 1048576   # Dynamic bounded clamp threshold in bytes (default: 1 MB) (REQ-129)
+      max_conns_per_host: 100
+      disable_compression: true
 ```
+
+### Upstream Reverse Proxy & Transport Configuration (`ProxyTransportConfig`)
+
+Toron's reverse proxy engine (`pkg/proxy`) features granular Layer 7 upstream connection pooling, egress routing, and transport-level controls configured under `proxy.transport` globally in `config.yaml` or overridden per route under `routes[].transport` in `routes.yaml` ([`REQ-123`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-123.md), [`REQ-124`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-124.md), [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md)).
+
+#### Transport Configuration Reference
+
+| Parameter | Location | Type | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `profile` | `transport.profile` | `string` | `"raw_speed"` | Transport preset profile: `"raw_speed"` (default) or `"balanced"` / `"standard"`. |
+| `stream_response` | `transport.stream_response` | `boolean` | `true` | **Streaming by Default**: Streams responses directly to client socket across both `"raw_speed"` and `"balanced"` profiles (REQ-129). When `false`, buffers response in memory. |
+| `max_payload_size` | `transport.max_payload_size` / route | `integer` | `1048576` (1 MB) | **Dynamic Clamping Buffer Limit**: Maximum response payload bytes buffered for compression/caching before dynamically activating direct socket streaming (REQ-129). |
+| `max_idle_conns` | `transport.max_idle_conns` | `integer` | `10000` | Global maximum idle keep-alive connections across all upstream target hosts. |
+| `max_idle_conns_per_host` | `transport.max_idle_conns_per_host` | `integer` | `1000` | Maximum idle persistent connections retained per upstream origin host. |
+| `max_conns_per_host` | `transport.max_conns_per_host` | `integer` | `0` | Concurrency limit per host (`0` = unconstrained; `>0` throttles and queues requests). |
+| `idle_conn_timeout` | `transport.idle_conn_timeout` | `duration` | `"90s"` | Inactivity duration before closing idle persistent keep-alive sockets. |
+| `disable_compression` | `transport.disable_compression` | `boolean` | `true` (`raw_speed`) / `false` (`balanced`) | `true` = zero-copy raw byte pass-through; `false` = transparent gzip decompression. |
+| `use_env_proxy` | `transport.use_env_proxy` | `boolean` | `false` (`raw_speed`) / `true` (`balanced`) | `false` = direct socket dialing; `true` = honors `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`. |
+| `proxy_url` | `transport.proxy_url` | `string` | `""` | Explicit forward proxy URL (e.g. `"http://squid.corp:3128"`). |
+| `propagate_upstream_close` | `transport.propagate_upstream_close` | `boolean` | `false` (`raw_speed`) / `true` (`balanced`) | `false` = isolates client keepalives; `true` = closes client connection when origin closes. |
+| `force_attempt_http2` | `transport.force_attempt_http2` | `boolean` | `false` (`raw_speed`) / `true` (`balanced`) | `false` = HTTP/1.1 wire transport; `true` = ALPN `h2` multiplexing to TLS origins. |
+| `tracing` | `transport.tracing` | `boolean` | `false` (`raw_speed`) / `true` (`balanced`) | `false` = raw performance; `true` = injects W3C `traceparent` headers with cryptographic random IDs (REQ-124). |
+| `response_header_timeout` | `transport.response_header_timeout` | `duration` | `"10s"` | Bounded timeout for upstream response header arrival (dial-to-first-byte), decoupling body streaming. |
+
+#### Streaming by Default & Dynamic Bounded Ingestion Clamping (REQ-129 / TASK-152)
+
+Modern API gateways frequently manage routes combining standard REST microservices with real-time streaming (Server-Sent Events `text/event-stream`, live telemetry, or file downloads). When routes configure transparent compression or response caching, Toron enforces **Dynamic Bounded Ingestion Clamping** to guarantee constant $O(1) \le 32\text{KB}$ memory boundedness per active stream and neutralize the Upstream Infinite Stream OOM Bomb ([`SEC-36`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L483-L491), CWE-400, CWE-770):
+
+1. **Streaming Decision Rule**:
+   - Direct socket streaming (`canStream = true`) activates if:
+     * Route has no caching or compression middleware (`stream_response: true`); OR
+     * Response is explicitly unbuffered (`Content-Type: text/event-stream` or `X-Accel-Buffering: no`); OR
+     * Upstream payload is chunked (`Transfer-Encoding: chunked`), unknown length (`Content-Length < 0`), or exceeds `max_payload_size` (default: 1 MB).
+   - In all these cases, `res.StreamBody = outResp.Body` is handed off directly with zero heap buffering.
+2. **Bounded Ingestion Fallback & Safety Clamp**:
+   - For bounded payloads ($0 \le \text{Content-Length} \le \text{max_payload_size}$), `canStream = false` permits buffering in `res.Body` for downstream compression and caching.
+   - Buffering is strictly guarded by `io.LimitReader(outResp.Body, int64(maxPayloadSize)+1)`. If a deceptive origin exceeds `max_payload_size`, Toron resets `res.Body`, records target failure, and returns `502 Bad Gateway` (`"Upstream payload exceeded maximum allowed buffer limit"`).
+3. **Outbound RFC 7230 Chunked Framing & Keep-Alive Reuse**:
+   - HTTP/1.1 streaming responses are framed `<hex-len>\r\n<data>\r\n` using atomic `net.Buffers` (`writev`).
+   - Clean stream termination emits `0\r\n\r\n` and preserves persistent TCP connections (`Connection: keep-alive`).
+   - On error or abort, Toron enforces a **fail-closed** invariant (never emitting `0\r\n\r\n` and immediately closing the client socket) to prevent downstream cache poisoning (CWE-444).
+
+#### Configuration Example
+
+```yaml
+routes:
+  # 1. Real-time streaming API with default streaming and 2 MB buffer threshold
+  - type: "upstream"
+    prefix: "/api/stream"
+    target: "http://upstream-service:8080"
+    transport:
+      profile: "raw_speed"
+      stream_response: true
+      max_payload_size: 2097152   # 2 MB buffer limit before dynamic streaming kicks in
+
+  # 2. Fully buffered API route requiring in-memory inspection for all payloads
+  - type: "upstream"
+    prefix: "/api/inspect"
+    target: "http://upstream-service:8080"
+    transport:
+      stream_response: false      # Forces buffering in res.Body (bounded by max_payload_size)
+      max_payload_size: 1048576   # 1 MB safety ceiling against rogue upstreams
+```
+
+---
 
 ### Static Routes & Single Page Application (SPA) Fallback
 

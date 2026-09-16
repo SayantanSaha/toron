@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -179,3 +180,142 @@ func TestServer_HTTP2Adapter_StreamingImmediateFlush(t *testing.T) {
 		}
 	}
 }
+
+type countingFlusherRecorder struct {
+	*httptest.ResponseRecorder
+	mu         sync.Mutex
+	writeCalls int
+	flushCalls int
+}
+
+func (c *countingFlusherRecorder) Write(b []byte) (int, error) {
+	c.mu.Lock()
+	c.writeCalls++
+	c.mu.Unlock()
+	return c.ResponseRecorder.Write(b)
+}
+
+func (c *countingFlusherRecorder) Flush() {
+	c.mu.Lock()
+	c.flushCalls++
+	c.mu.Unlock()
+}
+
+// TC-129.15: HTTP/2 http.Flusher Zero-Buffering Streaming Parity
+func TestServer_HTTP2_StreamBody_FlusherParity(t *testing.T) {
+	r := router.New()
+	r.GET("/h2-parity-stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = pr
+
+		go func() {
+			defer pw.Close()
+			for i := 1; i <= 3; i++ {
+				_, _ = fmt.Fprintf(pw, "chunk-%d\n", i)
+				time.Sleep(15 * time.Millisecond)
+			}
+		}()
+	})
+
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	rec := &countingFlusherRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+	}
+	req := httptest.NewRequest("GET", "/h2-parity-stream", nil)
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", rec.Code)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if rec.writeCalls < 3 {
+		t.Errorf("expected at least 3 distinct Write calls, got %d", rec.writeCalls)
+	}
+	if rec.flushCalls < 3 {
+		t.Errorf("expected at least 3 distinct Flush calls, got %d", rec.flushCalls)
+	}
+	expected := "chunk-1\nchunk-2\nchunk-3\n"
+	if rec.Body.String() != expected {
+		t.Errorf("expected body %q, got %q", expected, rec.Body.String())
+	}
+}
+
+// TC-129.16: HTTP/2 RST_STREAM Client Abort Handling
+func TestServer_HTTP2_ClientReset_AbortsStream(t *testing.T) {
+	r := router.New()
+	streamClosed := make(chan struct{})
+
+	r.GET("/h2-abort-stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		pr, pw := io.Pipe()
+		res.StreamBody = &watchCloseReader{
+			ReadCloser: pr,
+			onClose: func() {
+				close(streamClosed)
+			},
+		}
+
+		go func() {
+			defer pw.Close()
+			for i := 0; i < 100; i++ {
+				_, err := fmt.Fprintf(pw, "data chunk %d\n", i)
+				if err != nil {
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+		}()
+	})
+
+	srv := server.New(server.DefaultConfig(), r)
+	handler := srv.HTTP2AdapterHandler()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("GET", "/h2-abort-stream", nil).WithContext(ctx)
+	rec := &mockFlusherRecorder{ResponseRecorder: httptest.NewRecorder()}
+
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(rec, req)
+		close(done)
+	}()
+
+	// Wait briefly for first chunk
+	time.Sleep(30 * time.Millisecond)
+	// Client resets stream / cancels context
+	cancel()
+
+	select {
+	case <-done:
+		// Succeeded in terminating ServeHTTP
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("ServeHTTP did not terminate promptly upon context cancellation")
+	}
+
+	select {
+	case <-streamClosed:
+		// Verified upstream stream handle closed
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("upstream res.StreamBody was not closed upon stream reset")
+	}
+}
+
+type watchCloseReader struct {
+	io.ReadCloser
+	onClose func()
+}
+
+func (w *watchCloseReader) Close() error {
+	if w.onClose != nil {
+		w.onClose()
+	}
+	return w.ReadCloser.Close()
+}
+

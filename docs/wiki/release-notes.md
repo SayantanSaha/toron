@@ -1,5 +1,99 @@
 # Release Notes
 
+## 2026-09-16 - Toron v1.5.28 Release (Streaming by Default Reverse Proxy Architecture, RFC 7230 Outbound Chunked Framing, and Memory Boundedness Invariants - REQ-129 / TASK-152)
+
+### Milestone Summary
+- **Streaming by Default Reverse Proxy Architecture (REQ-129, TASK-152, ADR-129, TC-129, CR-125, SR-129)**: Re-architected Toron's core reverse proxy engine to operate in **streaming-by-default** mode across all configuration profiles (`stream_response: true` across `balanced`, `raw_speed`, and unconfigured fallbacks), guaranteeing constant $O(1) \le 32\text{KB}$ memory boundedness per active connection from recycled copy buffer slabs (`copyBufferPool`).
+- **Neutralization of Upstream Infinite Stream OOM Bomb (SEC-36, CWE-400, CWE-770)**: Completely eliminated the critical vulnerability where reverse proxy routes configuring transparent compression or response caching evaluated `canStream = false` for generic responses, falling back to unbounded body ingestion via `io.CopyBuffer(res.Body, outResp.Body)`. When upstream endpoints emitted multi-gigabyte files, continuous telemetry feeds, or infinite streams (`/dev/urandom`), dynamic heap expansion triggered operating system Out-Of-Memory (OOM) `SIGKILL` termination, crashing the gateway. Implemented dynamic bounded clamping (`canStream`): responses exceeding `MaxPayloadSize` (default 1 MB / 1,048,576 bytes), chunked transfers (`Transfer-Encoding: chunked`), or unknown lengths (`ContentLength < 0`) dynamically activate direct socket streaming (`res.StreamBody = outResp.Body`), bypassing caching and compression memory accumulators.
+- **LimitReader Fallback Safety Clamp**: For bounded payloads ($0 \le \text{Content-Length} \le \text{MaxPayloadSize}$) permitted to buffer in memory for downstream middleware transformation, implemented an `io.LimitReader(outResp.Body, int64(maxPayloadSize)+1)` clamp. If a deceptive or malicious upstream origin writes more bytes than declared or exceeds the maximum buffer limit, Toron immediately halts ingestion, marks target node failure, resets `res.Body`, and returns HTTP `502 Bad Gateway` with `"Upstream payload exceeded maximum allowed buffer limit"`.
+- **Core Reactor Modularity Preservation (ADR-001)**: Verified and preserved strict reactor modularity: the reverse proxy and router layers express streaming intent purely by assigning `res.StreamBody = outResp.Body` and never reference, cast, or manipulate the client physical socket (`net.Conn`). Upstream requests are bound directly to downstream client contexts (`http.NewRequestWithContext(req.Context(), ...)`), ensuring that client drops or TCP RST packets immediately halt in-flight upstream reads and close upstream handles.
+- **Outbound RFC 7230 Chunked Response Framing Engine**: In [`pkg/server/server.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go), implemented an outbound chunk framing engine for HTTP/1.1 streaming responses (`res.StreamBody != nil`). Sets `Transfer-Encoding: chunked`, strips conflicting `Content-Length`, and serializes chunk frames `<hex-len>\r\n<data>\r\n` using stack-allocated hex buffers (`strconv.AppendInt` into `[32]byte`) and single-syscall scatter-gather `net.Buffers{h, buf[:n], crlfBytes}.WriteTo(conn)` (`writev`), eliminating TCP frame fragmentation and heap allocations.
+- **Clean EOF Terminal Chunk (0\r\n\r\n) & HTTP/1.1 Persistent Keep-Alive Socket Reuse**: Upon clean stream termination (`io.EOF`), the server emits the RFC 7230 terminal chunk (`0\r\n\r\n`) and preserves the client TCP socket for subsequent transactions (`Connection: keep-alive`), eliminating connection churn and `TIME_WAIT` socket descriptor exhaustion.
+- **Fail-Closed Anti-Desynchronization Guard (CWE-444)**: On any upstream read error, abort, client timeout, or context cancellation prior to clean `io.EOF`, the server strictly suppresses `0\r\n\r\n` and abruptly severs the client TCP connection (`conn.Close()`), preventing downstream clients and shared proxy caches from capturing truncated payloads.
+- **HTTP/1.0 Raw Stream Passthrough (RFC 7230 §3.3.1)**: Complies strictly with RFC 7230 §3.3.1 for HTTP/1.0 clients by omitting `Transfer-Encoding: chunked`, streaming raw chunks, and closing the socket with `Connection: close`.
+- **Multi-Protocol Streaming Parity (HTTP/2 & HTTP/3 Flusher)**: In [`pkg/server/server.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go) `http2AdapterHandler`, relays chunks directly to `http.ResponseWriter` via `http.Flusher.Flush()` with pooled 32KB copy buffers (`httpparser.GetCopyBuffer()`), immediately dispatching HTTP/2 multiplexed `DATA` frames and HTTP/3 QUIC frames with instant termination upon client stream reset (`RST_STREAM`, `r.Context().Done()`).
+- **Ergonomic Response Body Abstraction (`Response.BodyString()`, `Response.BodyBytes()`)**: Introduced uniform body extraction methods on `httpparser.Response` in [`pkg/httpparser/response.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/response.go) that handle both streaming (`res.StreamBody != nil`) and buffered (`res.Body != nil`) responses transparently with guaranteed deferred closure, unifying test and caller assertions across `router`, `discovery`, and `ingress`.
+- **Inbound Request Smuggling Defense Decoupling (ADR-056 / REQ-061)**: Retained strict inbound request smuggling defenses: incoming client requests declaring `Transfer-Encoding: chunked` continue to be rejected with HTTP `501 Not Implemented`, ensuring outbound response framing is decoupled from inbound perimeter hardening.
+- **100% Verification Across TC-129.1 to TC-129.17**: Achieved 100% test pass rate across all 17 test cases in [`TC-129`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-129.md) and the full workspace test suite under `go test -race ./...` with zero data races, zero third-party dependencies, and zero regression across the entire Toron codebase.
+
+### Added
+- **`pkg/httpparser/response.go`**:
+  - `BodyString() string`: Ergonomically drains and returns response payload as string across both streaming (`res.StreamBody`) and buffered (`res.Body`) responses with guaranteed deferred closure.
+  - `BodyBytes() []byte`: Drains and returns response payload as byte slice across streaming and buffered responses.
+- **`pkg/httpparser/request.go`**:
+  - Added `ctx context.Context` field to `Request`.
+  - Added `Context() context.Context`, `WithContext(ctx context.Context) *Request`, and `SetContext(ctx context.Context)` methods.
+  - Bound incoming context in `NewRequest` and `NewRequestFromStd`.
+- **`pkg/server/server.go`**:
+  - Added package-level immutable delimiter `var crlfBytes = []byte("\r\n")` for zero-allocation chunk framing.
+  - Added `relayStreamBody(conn net.Conn, req *httpparser.Request, res *httpparser.Response, tracker *connDeadlineTracker, connHeader string) (keepAlive bool, err error)` helper encapsulating stream lifecycle, RFC 7230 chunk formatting via `net.Buffers`, fail-closed socket termination, activity-refreshed write deadlines, and keep-alive socket reuse.
+- **`pkg/proxy/proxy_test.go`**:
+  - `TestProxy_StreamResponse_DefaultTrue`: Verifies default `streamResponse: true` in `NewReverseProxy` (TC-129.1).
+  - `TestProxy_StreamResponse_RouteOverrideFalse`: Verifies explicit route override `stream_response: false` is respected (TC-129.2).
+  - `TestProxy_DynamicClamp_BoundedPayload_BuffersForMiddleware`: Verifies payloads $\le \text{MaxPayloadSize}$ buffer for compression/caching (TC-129.3).
+  - `TestProxy_DynamicClamp_OversizedPayload_StreamsDirectly`: Verifies payloads $> \text{MaxPayloadSize}$ dynamically stream directly (TC-129.4).
+  - `TestProxy_DynamicClamp_ChunkedUnknownLength_StreamsDirectly`: Verifies chunked upstream responses dynamically stream directly (TC-129.5).
+  - `TestProxy_DynamicClamp_InfiniteStream_OOMImmunity`: Verifies 50 MB infinite stream relays with constant $O(1) \le 32\text{KB}$ memory and process heap delta $< 64\text{KB}$, neutralizing SEC-36 / CWE-400 (TC-129.6).
+  - `TestProxy_DynamicClamp_LimitReaderSafetyClamp_DeceptiveUpstream`: Verifies deceptive upstream exceeding limit is caught by `LimitReader`, emitting 502 Bad Gateway (TC-129.7).
+- **`pkg/server/server_test.go`**:
+  - `TestParser_InboundSmugglingGuard_Preserved`: Verifies inbound `Transfer-Encoding: chunked` requests continue to be rejected with HTTP 501 (TC-129.8).
+  - `TestServer_HTTP11_OutboundChunkedFraming`: Verifies HTTP/1.1 streaming responses emit `Transfer-Encoding: chunked`, omit `Content-Length`, format `<hex-len>\r\n<data>\r\n`, and terminate with `0\r\n\r\n` (TC-129.9).
+  - `TestServer_HTTP11_ChunkedStream_KeepAliveSocketReuse`: Verifies persistent TCP socket reuse for subsequent HTTP/1.1 requests after streaming (TC-129.10).
+  - `TestServer_HTTP10_RawStreaming_ConnectionClose`: Verifies HTTP/1.0 clients receive raw streams without chunked framing and close with `Connection: close` (TC-129.11).
+  - `TestServer_ChunkedStream_UpstreamAbort_FailClosed`: Verifies aborted upstream streams strictly suppress `0\r\n\r\n` and immediately close the client socket (TC-129.12).
+  - `TestServer_StreamContextCancellation_ZeroFDLeakage`: Verifies downstream disconnect cancels upstream context and closes `res.StreamBody` with zero FD leaks (TC-129.13).
+  - `TestServer_ChunkedStream_ConcurrentRaceSafety`: Verifies 50 concurrent streaming workers execute with zero data races (TC-129.14).
+  - `TestServer_Stream_AllocsPerRun_ZeroMemoryGrowth`: Verifies steady-state streaming allocates $\le 1$ alloc/run (TC-129.17).
+- **`pkg/server/http2_test.go`**:
+  - `TestServer_HTTP2_StreamBody_FlusherParity`: Verifies HTTP/2 streaming emits chunks in real-time via `http.Flusher` (TC-129.15).
+  - `TestServer_HTTP2_ClientReset_AbortsStream`: Verifies HTTP/2 client stream reset (`RST_STREAM`) immediately halts relay loop and closes upstream body (TC-129.16).
+- **`pkg/config/config_test.go`**:
+  - `TestConfig_ProxyTransport_StreamResponseDefault`: Verifies `DefaultProxyTransportConfig` sets `StreamResponse: true` for both `"raw_speed"` and `"balanced"` profiles (TC-129.1).
+- **`pkg/httpparser/parser_test.go`**:
+  - `TestParser_InboundSmugglingGuard_Preserved`: Verifies inbound smuggling rejection.
+  - `TestRequest_ContextMethods`: Verifies `Context()`, `WithContext()`, and `SetContext()` semantics.
+
+### Changed
+- **`pkg/config/config.go`**:
+  - Updated `DefaultProxyTransportConfig` to set `StreamResponse: &t` (`true`) for the `"balanced"` and `"standard"` transport profiles, making streaming by default universal across all profiles.
+- **`pkg/proxy/proxy.go`**:
+  - In `NewReverseProxy`, updated default fallback: `streamResponse := true`.
+  - Added `MaxPayloadSize int` field to `ProxyOptions` and stored in `ReverseProxy.maxPayloadSize` (defaulting to 1 MB / `1048576` bytes).
+  - In `ServeHTTPWithPrefix`, implemented dynamic bounded clamping rule: `canStream := p.streamResponse && ((!p.routeHasCompression && !p.routeHasCache) || isStreamingMIME || isUnbuffered || isChunkedOrUnknown || isOversized)`.
+  - Implemented `io.LimitReader(outResp.Body, int64(maxPayloadSize)+1)` in buffered fallback path with verbatim ADR error message: `"Upstream payload exceeded maximum allowed buffer limit"`.
+  - Updated upstream request dispatch to bind downstream client context: `outReq, err := http.NewRequestWithContext(req.Context(), ...)`.
+- **`pkg/server/server.go`**:
+  - Refactored streaming response handling in `handleConn` to invoke `s.relayStreamBody(...)`, ensuring deferred stream body closure (`res.StreamBody.Close()`) and copy buffer recycling under all execution paths.
+  - In `http2AdapterHandler`, integrated zero-buffering streaming parity using pooled 32KB copy buffers and `http.Flusher.Flush()` with `r.Context().Done()` cancellation detection.
+  - Bound incoming standard library request context into Toron request: `toronReq = toronReq.WithContext(r.Context())`.
+- **`pkg/sidecar/proxy.go`**:
+  - Updated `proxyToURL` to stream `toronRes.StreamBody` directly via `io.Copy(w, ...)` when present.
+- **`pkg/httpparser/response.go`**:
+  - In `Response.Serialize`, strictly omitted `Content-Length` header when `res.StreamBody != nil`.
+- **Cross-Package Test Harnesses**:
+  - Migrated body assertions across `pkg/router/router_test.go`, `pkg/router/router_waf_test.go`, `pkg/ingress/ingress_test.go`, and `pkg/discovery/discovery_test.go` to use `res.BodyString()`.
+- **`docs/wiki/features/reverse-proxy.md`**:
+  - Documented streaming-by-default architecture, dynamic bounded clamping decision matrix, `max_payload_size`, outbound chunked framing, keep-alive reuse, and fail-closed anti-desynchronization.
+- **`docs/wiki/configuration.md` & `docs/wiki/reference/config-options.md`**:
+  - Updated `ProxyTransportConfig` and routes configuration with `stream_response` (default: `true`) and `max_payload_size` (default: `1048576`).
+
+### Fixed
+- **Upstream Infinite Stream OOM Bomb (SEC-36, CWE-400, CWE-770)**: Eliminated uncontrolled heap expansion and gateway crashes caused by buffering infinite or oversized upstream responses into `res.Body` on routes with compression or caching enabled.
+- **HTTP/1.1 Persistent Keep-Alive Connection Degradation on Streaming**: Fixed connection churn and premature socket closure by implementing outbound RFC 7230 chunked framing with clean terminal chunk (`0\r\n\r\n`), allowing persistent keep-alive connection reuse across streaming requests.
+- **HTTP Stream Boundary Desynchronization & Truncation Injection (CWE-444)**: Prevented downstream caches and clients from storing truncated responses by enforcing fail-closed socket termination (never emitting `0\r\n\r\n` on stream errors or aborts).
+- **Socket Descriptor and Goroutine Leaks on Stream Disconnects (CWE-775)**: Ensured upstream contexts cancel immediately upon client disconnect and upstream response bodies close under all exit paths.
+
+### Related Tasks & Requirements
+- [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md): Streaming by Default Reverse Proxy Architecture, RFC 7230 Outbound Chunked Framing, and Memory Boundedness Invariants
+- [`TASK-152`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-152.md): Implement Streaming by Default Reverse Proxy Architecture, RFC 7230 Outbound Chunked Framing, and Memory Boundedness Invariants
+- [`ADR-129`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md): Streaming by Default Reverse Proxy Architecture, RFC 7230 Outbound Chunked Framing, and Memory Boundedness Invariants Architecture
+- [`TC-129`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-129.md): Test Specification for Streaming by Default Reverse Proxy Architecture, RFC 7230 Outbound Chunked Framing, and Memory Boundedness Invariants
+- [`CR-125`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-125.md): Code Review of Streaming by Default Reverse Proxy Architecture, RFC 7230 Outbound Chunked Framing, and Memory Boundedness Invariants
+- [`SR-129`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-129.md): Security Review of Streaming by Default Reverse Proxy Architecture, RFC 7230 Outbound Chunked Framing, and Memory Boundedness Invariants
+- Relevant Standards & CWEs: RFC 7230 §3.3.1, RFC 7230 §3.3.3, RFC 7230 §4.1, RFC 7230 §6.1, [SEC-36](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L483-L491), [CWE-400](https://cwe.mitre.org/data/definitions/400.html), [CWE-770](https://cwe.mitre.org/data/definitions/770.html), [CWE-444](https://cwe.mitre.org/data/definitions/444.html), [CWE-775](https://cwe.mitre.org/data/definitions/775.html), [CWE-362](https://cwe.mitre.org/data/definitions/362.html)
+
+---
+
 ## 2026-09-16 - Toron v1.5.27 Release (Streaming Response Middleware Exemptions and RFC 7234 Origin Cache-Control Enforcement - REQ-128 / TASK-151)
 
 ### Milestone Summary

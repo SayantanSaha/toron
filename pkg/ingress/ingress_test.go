@@ -861,8 +861,9 @@ func TestIngressController_ZombieRoutePruning(t *testing.T) {
 	reqA.Header.Set("Host", "api.example.com")
 	resA := httpparser.NewResponse()
 	r.ServeHTTP(reqA, resA)
-	if resA.StatusCode != http.StatusOK || !strings.Contains(resA.Body.String(), "service-a payload") {
-		t.Fatalf("Phase 1: expected 200 service-a payload, got %d %q", resA.StatusCode, resA.Body.String())
+	bodyA := resA.BodyString()
+	if resA.StatusCode != http.StatusOK || !strings.Contains(bodyA, "service-a payload") {
+		t.Fatalf("Phase 1: expected 200 service-a payload, got %d %q", resA.StatusCode, bodyA)
 	}
 	if len(r.GetPrefixRoutes()) != 1 {
 		t.Fatalf("Phase 1: expected 1 route, got %d", len(r.GetPrefixRoutes()))
@@ -989,8 +990,9 @@ func TestIngressController_ZombieRoutePruning(t *testing.T) {
 	reqBeta.Header.Set("Host", "api.example.com")
 	resBeta := httpparser.NewResponse()
 	r.ServeHTTP(reqBeta, resBeta)
-	if resBeta.StatusCode != http.StatusOK || !strings.Contains(resBeta.Body.String(), "service-b payload") {
-		t.Fatalf("Phase 4: expected 200 for remaining /beta, got %d %q", resBeta.StatusCode, resBeta.Body.String())
+	bodyBeta := resBeta.BodyString()
+	if resBeta.StatusCode != http.StatusOK || !strings.Contains(bodyBeta, "service-b payload") {
+		t.Fatalf("Phase 4: expected 200 for remaining /beta, got %d %q", resBeta.StatusCode, bodyBeta)
 	}
 }
 
@@ -1123,7 +1125,7 @@ func TestIngressController_MultiPodLoadBalancing(t *testing.T) {
 		if res.StatusCode != http.StatusOK {
 			t.Fatalf("Request %d failed with status %d", i, res.StatusCode)
 		}
-		podCounts[res.Body.String()]++
+		podCounts[res.BodyString()]++
 	}
 
 	// Verify round-robin distribution: exactly 10 requests per pod
@@ -1247,8 +1249,9 @@ func TestIngressController_EndpointUpdateNoShadowing(t *testing.T) {
 		req.Header.Set("Host", "rollout.example.com")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
-		if res.StatusCode != http.StatusOK || !strings.Contains(res.Body.String(), "old-pod") {
-			t.Fatalf("Phase 1: request %d expected old-pod, got %d %q", i, res.StatusCode, res.Body.String())
+		bodyOld := res.BodyString()
+		if res.StatusCode != http.StatusOK || !strings.Contains(bodyOld, "old-pod") {
+			t.Fatalf("Phase 1: request %d expected old-pod, got %d %q", i, res.StatusCode, bodyOld)
 		}
 	}
 
@@ -1269,8 +1272,9 @@ func TestIngressController_EndpointUpdateNoShadowing(t *testing.T) {
 		req.Header.Set("Host", "rollout.example.com")
 		res := httpparser.NewResponse()
 		r.ServeHTTP(req, res)
-		if res.StatusCode != http.StatusOK || !strings.Contains(res.Body.String(), "new-pod") {
-			t.Fatalf("Phase 2: request %d expected new-pod, got %d %q", i, res.StatusCode, res.Body.String())
+		bodyNew := res.BodyString()
+		if res.StatusCode != http.StatusOK || !strings.Contains(bodyNew, "new-pod") {
+			t.Fatalf("Phase 2: request %d expected new-pod, got %d %q", i, res.StatusCode, bodyNew)
 		}
 	}
 

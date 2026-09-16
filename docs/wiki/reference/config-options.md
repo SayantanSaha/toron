@@ -16,6 +16,7 @@ depends_on:
   - REQ-087
   - REQ-092
   - REQ-126
+  - REQ-129
   - TASK-007
   - TASK-019
   - TASK-027
@@ -30,14 +31,20 @@ depends_on:
   - TASK-112
   - TASK-113
   - TASK-149
+  - TASK-152
   - ADR-126
+  - ADR-129
   - TC-126
+  - TC-129
 
 derived_from:
   - REQ-007
   - REQ-092
+  - REQ-129
+  - ADR-129
   - SEC-26
   - SEC-31
+  - SEC-36
 
 documents:
   - CONFIG-OPTIONS-REFERENCE
@@ -285,9 +292,10 @@ For performance engineers conducting raw benchmark evaluations or deploying in i
 | `waf` | `object` | Route-level WAF overrides (`enabled`, `mode`, `allowed_ips`, `denied_ips`, `disabled_rules`) |
 | `auth` | `object` | Route-level authentication overrides (`type`, `jwt`, `api_key`, `basic`) |
 | `trusted_proxies` | `list` | Route-level trusted proxy CIDR subnets gating forwarded headers for this route |
-| `transport` | `object` | Route-level upstream transport override (`max_conns_per_host`, `disable_compression`, etc.) |
+| `transport` | `object` | Route-level upstream transport override (`max_conns_per_host`, `disable_compression`, `stream_response`, `max_payload_size`, etc.) |
+| `max_payload_size` | `integer` | Route-level response payload buffer limit in bytes before dynamic direct streaming activates (default: `1048576` / 1 MB) (REQ-129) |
 
-## Section: `proxy.transport` / `routes[].transport` (REQ-123, REQ-124)
+## Section: `proxy.transport` / `routes[].transport` (REQ-123, REQ-124, REQ-129)
 
 | Parameter | Type | Default | Description |
 | --------- | ---- | ------- | ----------- |
@@ -302,7 +310,8 @@ For performance engineers conducting raw benchmark evaluations or deploying in i
 | `propagate_upstream_close` | `boolean` | `false` | `false` = isolate client keep-alives; `true` = clean client teardown on origin close |
 | `force_attempt_http2` | `boolean` | `false` | `false` = HTTP/1.1 wire transport; `true` = ALPN `h2` stream multiplexing to TLS origins |
 | `tracing` | `boolean` | `false` | `false` = suppress CSPRNG trace ID generation for raw speed (REQ-124); `true` = generate W3C `traceparent` |
-| `stream_response` | `boolean` | `true` (`raw_speed`) / `false` (`balanced`) | `true` = zero-copy socket streaming fast-path for unbuffered/SSE and pure routes; `false` = buffer in memory (REQ-125) |
+| `stream_response` | `boolean` | `true` | **Streaming by Default**: Direct socket streaming fast-path enabled by default across both `"raw_speed"` and `"balanced"` profiles (REQ-129). `false` = forces in-memory buffer fallback |
+| `max_payload_size` | `integer` | `1048576` (1 MB) | **Dynamic Bounded Clamping Threshold**: Maximum upstream response body bytes buffered for compression/caching before dynamically activating direct socket streaming (REQ-129) |
 | `response_header_timeout` | `duration` | `"10s"` | Bounded timeout for upstream response header arrival (dial-to-first-byte), decoupling body streaming (REQ-125) |
 
 ## Section: `logging`

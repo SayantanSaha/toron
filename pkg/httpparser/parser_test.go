@@ -3,6 +3,7 @@ package httpparser_test
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -728,4 +729,75 @@ func BenchmarkParseRequest_PooledBody(b *testing.B) {
 		}
 		_ = req.CloseBody()
 	}
+}
+
+// TC-129.8: Inbound ADR-056 Smuggling Guard Preservation (Parser level)
+func TestParser_InboundSmugglingGuard_Preserved(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+
+	t.Run("Standalone chunked transfer encoding rejected with 501", func(t *testing.T) {
+		rawReq := "POST /submit HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+		_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+		if err == nil {
+			t.Fatal("expected error for inbound chunked request")
+		}
+		if !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
+			t.Fatalf("expected ErrUnsupportedTransferEncoding, got %v", err)
+		}
+	})
+
+	t.Run("Conflicting Content-Length and Transfer-Encoding rejected with 400", func(t *testing.T) {
+		rawReq := "POST /smuggle HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+		_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+		if err == nil {
+			t.Fatal("expected error for conflicting headers")
+		}
+		if !errors.Is(err, httpparser.ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest, got %v", err)
+		}
+	})
+}
+
+func TestRequest_ContextMethods(t *testing.T) {
+	req, err := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// 1. Context() default
+	if req.Context() == nil {
+		t.Fatal("expected non-nil default Context()")
+	}
+
+	// 2. SetContext
+	type testKey struct{}
+	ctx := context.WithValue(context.Background(), testKey{}, "val123")
+	req.SetContext(ctx)
+	if val, ok := req.Context().Value(testKey{}).(string); !ok || val != "val123" {
+		t.Fatalf("expected val123, got %v", req.Context().Value(testKey{}))
+	}
+
+	// 3. WithContext
+	ctx2 := context.WithValue(context.Background(), testKey{}, "val456")
+	req2 := req.WithContext(ctx2)
+	if req2 == nil {
+		t.Fatal("expected non-nil req2")
+	}
+	if val, ok := req2.Context().Value(testKey{}).(string); !ok || val != "val456" {
+		t.Fatalf("expected val456, got %v", req2.Context().Value(testKey{}))
+	}
+	// Verify original req unchanged
+	if val, ok := req.Context().Value(testKey{}).(string); !ok || val != "val123" {
+		t.Fatalf("expected original req unchanged, got %v", req.Context().Value(testKey{}))
+	}
+
+	// 4. nil receiver safety
+	var nilReq *httpparser.Request
+	if nilReq.Context() != context.Background() {
+		t.Fatalf("expected context.Background() on nil request")
+	}
+	if nilReq.WithContext(ctx) != nil {
+		t.Fatalf("expected nil from nilReq.WithContext")
+	}
+	nilReq.SetContext(ctx) // Should not panic
 }

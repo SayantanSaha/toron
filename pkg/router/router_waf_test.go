@@ -148,7 +148,8 @@ func TestRouter_RouteLevelWAF_DetectionMode(t *testing.T) {
 	if res.Header.Get("X-Toron-WAF-Anomaly-Score") == "" {
 		t.Error("expected X-Toron-WAF-Anomaly-Score to be present in detection mode")
 	}
-	if !strings.Contains(res.Body.String(), "staging received") {
-		t.Errorf("expected upstream body, got %s", res.Body.String())
+	body := res.BodyString()
+	if !strings.Contains(body, "staging received") {
+		t.Errorf("expected upstream body, got %s", body)
 	}
 }

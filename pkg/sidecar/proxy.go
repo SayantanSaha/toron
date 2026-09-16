@@ -343,7 +343,12 @@ func (p *ProxyEngine) proxyToURL(w http.ResponseWriter, r *http.Request, targetU
 		}
 	}
 	w.WriteHeader(toronRes.StatusCode)
-	_, _ = w.Write(toronRes.Body.Bytes())
+	if toronRes.StreamBody != nil {
+		defer toronRes.StreamBody.Close()
+		_, _ = io.Copy(w, toronRes.StreamBody)
+	} else {
+		_, _ = w.Write(toronRes.Body.Bytes())
+	}
 }
 
 // Stop terminates active sidecar proxy servers and cleans up all cached reverse proxies.

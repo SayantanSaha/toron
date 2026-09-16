@@ -458,6 +458,15 @@ type ReverseProxy struct {
 	streamResponse         bool
 	routeHasCompression    bool
 	routeHasCache          bool
+	maxPayloadSize         int
+}
+
+// IsStreamResponseEnabled returns whether streaming response is enabled on this reverse proxy.
+func (p *ReverseProxy) IsStreamResponseEnabled() bool {
+	if p == nil {
+		return false
+	}
+	return p.streamResponse
 }
 
 // GetTransport returns the underlying *http.Transport for telemetry and testing verification.
@@ -511,7 +520,7 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 			PropagateUpstreamClose: &t,
 			ForceAttemptHTTP2:      &t,
 			Tracing:                &t,
-			StreamResponse:         &f,
+			StreamResponse:         &t,
 			ResponseHeaderTimeout:  10 * time.Second,
 		}
 	}
@@ -564,6 +573,7 @@ type ProxyOptions struct {
 	RouteHasCompression bool
 	RouteHasCache       bool
 	Transport           ProxyTransportConfig
+	MaxPayloadSize      int
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.
@@ -765,11 +775,16 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		tracing = *tc.Tracing
 	}
 
-	streamResponse := false
+	streamResponse := true
 	if opts.Transport.StreamResponse != nil {
 		streamResponse = *opts.Transport.StreamResponse
-	} else if tc.StreamResponse != nil && opts.Transport.Profile != "" {
+	} else if tc.StreamResponse != nil {
 		streamResponse = *tc.StreamResponse
+	}
+
+	maxPayloadSize := opts.MaxPayloadSize
+	if maxPayloadSize <= 0 {
+		maxPayloadSize = 1024 * 1024 // 1 MB default
 	}
 
 	return &ReverseProxy{
@@ -787,6 +802,7 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		streamResponse:         streamResponse,
 		routeHasCompression:    opts.RouteHasCompression,
 		routeHasCache:          opts.RouteHasCache,
+		maxPayloadSize:         maxPayloadSize,
 	}, nil
 }
 
@@ -987,7 +1003,7 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		}
 	}
 
-	outReq, err := http.NewRequest(req.Method, outURL.String(), bodyReader)
+	outReq, err := http.NewRequestWithContext(req.Context(), req.Method, outURL.String(), bodyReader)
 	if err != nil {
 		p.writeBadGateway(res, fmt.Sprintf("Failed to construct proxy request: %v", err))
 		return
@@ -1102,7 +1118,26 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	contentType := strings.ToLower(outResp.Header.Get("Content-Type"))
 	isStreamingMIME := strings.HasPrefix(contentType, "text/event-stream")
 	isUnbuffered := strings.EqualFold(strings.TrimSpace(outResp.Header.Get("X-Accel-Buffering")), "no")
-	canStream := p.streamResponse && ((!p.routeHasCompression && !p.routeHasCache) || isStreamingMIME || isUnbuffered)
+
+	maxPayloadSize := 1048576 // 1MB default
+	if p.maxPayloadSize > 0 {
+		maxPayloadSize = p.maxPayloadSize
+	}
+
+	canStream := false
+	if p.streamResponse {
+		if !p.routeHasCompression && !p.routeHasCache {
+			canStream = true
+		} else if isStreamingMIME || isUnbuffered {
+			canStream = true
+		} else if outResp.ContentLength > int64(maxPayloadSize) || outResp.ContentLength < 0 || strings.EqualFold(outResp.Header.Get("Transfer-Encoding"), "chunked") {
+			// Dynamic clamp: bypass compression/cache for oversized/chunked bodies
+			canStream = true
+		} else {
+			// 0 <= ContentLength <= maxPayloadSize: buffer for compression/cache
+			canStream = false
+		}
+	}
 
 	if outResp.StatusCode >= 500 {
 		targetNode.RecordFailure()
@@ -1165,11 +1200,18 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 
 	defer outResp.Body.Close()
 
-	// Copy upstream body using pooled copy buffer slab
+	// Copy upstream body using pooled copy buffer slab bounded by maxPayloadSize + 1
 	if outResp.Body != nil {
 		bufPtr := httpparser.GetCopyBuffer()
-		_, _ = io.CopyBuffer(res.Body, outResp.Body, *bufPtr)
+		limitReader := io.LimitReader(outResp.Body, int64(maxPayloadSize)+1)
+		n, _ := io.CopyBuffer(res.Body, limitReader, *bufPtr)
 		httpparser.PutCopyBuffer(bufPtr)
+		if n > int64(maxPayloadSize) {
+			targetNode.RecordFailure()
+			res.Body.Reset()
+			p.writeBadGateway(res, "Upstream payload exceeded maximum allowed buffer limit")
+			return
+		}
 	}
 
 	// Copy upstream trailers after reading body (e.g. grpc-status, grpc-message)

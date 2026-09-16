@@ -15,6 +15,8 @@ depends_on:
   - REQ-125
   - REQ-126
   - REQ-127
+  - REQ-128
+  - REQ-129
   - TASK-009
   - TASK-111
   - TASK-112
@@ -24,6 +26,8 @@ depends_on:
   - TASK-148
   - TASK-149
   - TASK-150
+  - TASK-151
+  - TASK-152
   - ADR-004
   - ADR-087
   - ADR-122
@@ -31,16 +35,21 @@ depends_on:
   - ADR-125
   - ADR-126
   - ADR-127
+  - ADR-128
+  - ADR-129
   - TC-123
   - TC-126
   - TC-127
   - TC-128
+  - TC-129
   - CR-119
   - CR-123
   - CR-124
+  - CR-125
   - SR-123
   - SR-127
   - SR-128
+  - SR-129
 
 derived_from:
   - REQ-009
@@ -50,6 +59,7 @@ derived_from:
   - REQ-126
   - REQ-127
   - REQ-128
+  - REQ-129
   - ADR-004
   - ADR-087
   - ADR-123
@@ -57,7 +67,9 @@ derived_from:
   - ADR-126
   - ADR-127
   - ADR-128
+  - ADR-129
   - SEC-31
+  - SEC-36
 
 documents:
   - REVERSE-PROXY-FEATURE
@@ -150,7 +162,7 @@ routes:
 
 ## Upstream Transport Configuration (`ProxyTransportConfig`)
 
-Beginning with [`REQ-123`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-123.md) and [`REQ-124`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-124.md), Toron allows granular configuration of reverse proxy transport settings.
+Beginning with [`REQ-123`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-123.md), [`REQ-124`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-124.md), and [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md), Toron allows granular configuration of reverse proxy transport settings.
 
 ### Global Defaults (`config.yaml`)
 
@@ -169,7 +181,8 @@ proxy:
     propagate_upstream_close: false # false = isolates client keepalives; true = clean client teardown
     force_attempt_http2: false      # true = ALPN h2 stream multiplexing to TLS origins
     tracing: false                  # false = suppresses crypto/rand trace ID generation (raw speed); true = generates W3C traceparent
-    stream_response: true           # true = zero-copy socket streaming fast-path (raw speed); false = buffers in memory (balanced)
+    stream_response: true           # true = streaming by default across both "raw_speed" and "balanced" profiles (REQ-129)
+    max_payload_size: 1048576       # Ingestion buffer clamp threshold in bytes (default: 1 MB / 1048576) (REQ-129)
     response_header_timeout: 10s    # Bounded timeout for initial response headers; body streaming is decoupled
 ```
 
@@ -181,80 +194,259 @@ Each route can override any transport knob under `transport`:
 - **Payload Inspection**: Set `disable_compression: false` to allow downstream middleware to inspect plaintext.
 - **Upstream Session Teardown**: Set `propagate_upstream_close: true` to let origin `Connection: close` tear down the client socket cleanly while still stripping hop-by-hop headers per RFC 7230.
 - **Distributed Tracing**: Set `tracing: true` on observability-critical routes to generate W3C `traceparent` headers with cryptographic random IDs, or leave `tracing: false` for raw performance.
-- **Long-Lived Live Streams (SSE)**: Toron handles Server-Sent Events (`text/event-stream`) and unbuffered feeds (`X-Accel-Buffering: no`) via a WebSocket-aligned direct socket relay with activity-refreshed write deadlines, automatically activating the socket streaming fast-path even on routes where caching and compression are globally enabled ([`REQ-125`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [`REQ-126`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md), [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md)).
-- **Buffered Fallback**: Set `stream_response: false` on routes where downstream inspection requires complete in-memory body capture.
+- **Streaming by Default**: `stream_response: true` is active by default across both `"raw_speed"` and `"balanced"` transport profiles. Large files, chunked streams, and real-time feeds stream with $O(1) \le 32\text{KB}$ memory boundedness.
+- **Custom Buffer Limit**: Configure `max_payload_size: 2097152` (2 MB) on routes where larger responses require compression or caching middleware transformation before dynamically switching to streaming.
+- **Buffered Fallback**: Set `stream_response: false` on specific routes where downstream inspection requires complete in-memory body capture regardless of payload size (still protected by `max_payload_size` safety clamping).
 
-## Persistent Streaming & Content-Aware Fast-Path ([REQ-125](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [REQ-126](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md), [REQ-128](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md))
+## Streaming-by-Default Reverse Proxy Architecture & Dynamic Bounded Clamping ([REQ-129](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md), [TASK-152](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-152.md))
 
-When proxying real-time upstream endpoints—such as Server-Sent Events (SSE `text/event-stream`), live telemetry feeds, or unbuffered data pipelines (`stream_response: true`)—Toron uses an active streaming response handle (`res.StreamBody`) paired with **Activity-Refreshed Write Deadlines** implemented by [`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23).
+Beginning with Toron v1.5.28 ([`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md), [`ADR-129`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md)), Toron operates as a **streaming-by-default reverse proxy**. Responses are streamed directly to the client socket by default across both `"raw_speed"` and `"balanced"` transport profiles (`stream_response: true`).
 
-### Content-Aware Streaming Fast-Path Activation (`canStream`)
+### The Upstream Infinite Stream OOM Bomb ([SEC-36](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L483-L491), CWE-400, CWE-770)
 
-A critical architectural challenge in modern API gateways is handling mixed-traffic routes. A single prefix like `/api/v1/*` often serves both standard REST endpoints (JSON, HTML, binary assets) and real-time streaming endpoints (SSE feeds, AI token streams, telemetry).
+Prior to REQ-129, when routes enabled response caching or transparent compression (the standard production configuration for edge API gateways), generic HTTP responses that did not declare `Content-Type: text/event-stream` or `X-Accel-Buffering: no` evaluated `canStream = false` in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go). Toron fell back to unbounded in-memory ingestion:
 
-When compression or caching are enabled on a route, standard responses must be buffered in memory (`canStream = false`) to allow downstream middleware to transform or store the body. However, evaluating streaming eligibility solely at the route level created a severe failure mode:
-1. **Prior Defect**: If a route had compression or caching active, `canStream` evaluated to `false` for **all** upstream responses on that route.
-2. **Buffer Trapping & Memory Exhaustion ([CWE-400](https://cwe.mitre.org/data/definitions/400.html))**: Live Server-Sent Events were forced into the buffered fallback path (`io.CopyBuffer(res.Body, outResp.Body)`). Because SSE streams are continuous and potentially infinite, `io.CopyBuffer` blocked indefinitely, accumulating events in memory until an Out-Of-Memory (OOM) panic killed the proxy process.
+```go
+bufPtr := httpparser.GetCopyBuffer()
+_, _ = io.CopyBuffer(res.Body, outResp.Body, *bufPtr)
+httpparser.PutCopyBuffer(bufPtr)
+```
 
-Under [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md) and [`ADR-128`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-128.md) ([`TASK-151`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-151.md)), Toron implements **Content-Aware Streaming Eligibility** in [`pkg/proxy/proxy.go:1102-1106`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L1102-L1106):
+`res.Body` (`*bytes.Buffer`) continuously accumulated payload bytes on the Go runtime heap. If an upstream origin emitted an oversized binary file, multi-gigabyte download, continuous telemetry feed, or endless data stream (`/dev/urandom`), heap memory expanded without bounds until the host OS Out-Of-Memory (OOM) killer forcibly terminated the Toron gateway, crashing all ingress traffic across the cluster ([`SEC-36`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L483-L491)).
+
+### Dynamic Bounded Ingestion Clamping (`canStream`)
+
+Under [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md) and [`ADR-129`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md), Toron resolves this vulnerability by introducing **Dynamic Bounded Ingestion Clamping** in [`pkg/proxy/proxy.go:1118-1140`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L1118-L1140):
 
 ```go
 contentType := strings.ToLower(outResp.Header.Get("Content-Type"))
 isStreamingMIME := strings.HasPrefix(contentType, "text/event-stream")
 isUnbuffered := strings.EqualFold(strings.TrimSpace(outResp.Header.Get("X-Accel-Buffering")), "no")
-canStream := p.streamResponse && ((!p.routeHasCompression && !p.routeHasCache) || isStreamingMIME || isUnbuffered)
+
+maxPayloadSize := 1048576 // 1MB default
+if p.maxPayloadSize > 0 {
+    maxPayloadSize = p.maxPayloadSize
+}
+
+canStream := false
+if p.streamResponse {
+    if !p.routeHasCompression && !p.routeHasCache {
+        canStream = true
+    } else if isStreamingMIME || isUnbuffered {
+        canStream = true
+    } else if outResp.ContentLength > int64(maxPayloadSize) || outResp.ContentLength < 0 || strings.EqualFold(outResp.Header.Get("Transfer-Encoding"), "chunked") {
+        // Dynamic clamp: bypass compression/cache for oversized/chunked bodies
+        canStream = true
+    } else {
+        // 0 <= ContentLength <= maxPayloadSize: buffer for compression/cache
+        canStream = false
+    }
+}
 ```
 
-#### Fast-Path Activation Matrix
+```mermaid
+flowchart TD
+    Start["Upstream Response Headers Received<br/>(outResp, err := p.Client.Do(outReq))"] --> CheckErr{"Upstream Error<br/>or Status >= 500?"}
+    CheckErr -- Yes --> HandleErr["Record Failure on Node<br/>Emit 502 Bad Gateway"]
+    CheckErr -- No --> CheckStreamEnabled{"stream_response<br/>enabled (default: true)?"}
 
-Because Toron's caching and compression middlewares unconditionally exempt `text/event-stream` and `X-Accel-Buffering: no` from processing ([`response-caching.md`](./response-caching.md), [`compression.md`](./compression.md)), the reverse proxy safely activates the direct socket streaming fast-path for streaming responses regardless of route middleware configuration:
+    CheckStreamEnabled -- No --> BufferedPath["Allow Bounded Buffer Fallback<br/>canStream = false"]
+    CheckStreamEnabled -- Yes --> CheckRouteMW{"Route has Compression<br/>or Cache Enabled?"}
 
-| Route Configuration | Upstream Response Type | `canStream` | Execution Path |
+    CheckRouteMW -- "No (Pure Route)" --> StreamFastPath["Direct Socket Streaming Fast-Path<br/>canStream = true"]
+    CheckRouteMW -- "Yes (Middleware Route)" --> CheckExempt{"MIME is text/event-stream<br/>OR X-Accel-Buffering: no?"}
+
+    CheckExempt -- Yes --> StreamFastPath
+    CheckExempt -- No --> CheckLen{"Content-Length Known<br/>and <= max_payload_size (1 MB)?"}
+
+    CheckLen -- "No (Chunked, Unknown, or > 1MB)" --> DynamicClamp["Dynamic Bounded Ingestion Clamp<br/>canStream = true<br/>(Guarantees O(1) Memory <= 32KB)"]
+    CheckLen -- "Yes (0 <= Content-Length <= 1MB)" --> BufferedPath
+
+    DynamicClamp --> HandOff["res.StreamBody = outResp.Body<br/>Strip Hop-by-Hop Headers<br/>Immediate Non-Blocking Return"]
+    StreamFastPath --> HandOff
+
+    BufferedPath --> LimitRead["Bounded Read via io.LimitReader(outResp.Body, Max+1)<br/>Buffer Body into res.Body<br/>Pass to Compression & Cache Middlewares"]
+    LimitRead --> OverflowCheck{"Bytes Copied > max_payload_size?"}
+    OverflowCheck -- Yes --> Fail502["Target Node Failure<br/>Reset res.Body<br/>Emit 502 Bad Gateway"]
+    OverflowCheck -- No --> MiddlewarePass["Execute Middleware Pipeline<br/>Transform / Cache Response"]
+```
+
+#### Dynamic Bounded Clamping Decision Matrix
+
+| Route Configuration | Upstream Response Profile | `canStream` | Execution Path & Memory Invariant |
 | :--- | :--- | :--- | :--- |
-| **Pure Proxy Route** (no cache/compression) | Any HTTP response | `true` | Direct socket streaming fast-path (`res.StreamBody = outResp.Body`) |
-| **Middleware-Enabled Route** (cache/compression on) | `Content-Type: text/event-stream` | **`true`** | **Direct socket streaming fast-path (`res.StreamBody = outResp.Body`)** |
-| **Middleware-Enabled Route** (cache/compression on) | `X-Accel-Buffering: no` | **`true`** | **Direct socket streaming fast-path (`res.StreamBody = outResp.Body`)** |
-| **Middleware-Enabled Route** (cache/compression on) | Standard asset (`application/json`, `text/html`) | `false` | Buffered in `res.Body` via copy buffer slab for middleware processing |
-| **Disabled Streaming** (`stream_response: false`) | Any HTTP response | `false` | Buffered in `res.Body` for downstream inspection |
+| **Pure Proxy Route** (no cache/compression) | Any HTTP response | **`true`** | **Direct Socket Streaming Fast-Path**: Zero heap buffering; $O(1) \le 32\text{KB}$ memory bound. |
+| **Middleware-Enabled Route** (cache/compression on) | `Content-Type: text/event-stream` | **`true`** | **Direct Socket Streaming Fast-Path**: Unbuffered SSE delivery bypassing cache and compression accumulators. |
+| **Middleware-Enabled Route** (cache/compression on) | `X-Accel-Buffering: no` | **`true`** | **Direct Socket Streaming Fast-Path**: Explicit upstream unbuffered hint honors real-time delivery. |
+| **Middleware-Enabled Route** (cache/compression on) | `Content-Length > max_payload_size` (e.g. 5 MB $> 1\text{MB}$) | **`true`** | **Dynamic Bounded Clamping Fast-Path**: Payloads exceeding buffer limit bypass cache/compression, streaming directly with $O(1)$ memory. |
+| **Middleware-Enabled Route** (cache/compression on) | Chunked (`Transfer-Encoding: chunked`) or unknown length (`Content-Length < 0`) | **`true`** | **Dynamic Bounded Clamping Fast-Path**: Indefinite or chunked streams bypass buffer accumulators, preventing OOM crashes. |
+| **Middleware-Enabled Route** (cache/compression on) | Bounded payload ($0 \le \text{Content-Length} \le \text{max_payload_size}$) | **`false`** | **Bounded Buffer Fallback**: Body buffers into `res.Body` for compression and cache storage, strictly bounded by `LimitReader`. |
+| **Route Override** (`stream_response: false`) | Any HTTP response | **`false`** | **Bounded Buffer Fallback**: Forces full in-memory body capture, protected against overflow by `LimitReader`. |
+
+### LimitReader Safety Clamp for Deceptive Upstreams
+
+In the buffered branch (`canStream == false`), Toron prevents rogue or misconfigured upstream backends from declaring a small `Content-Length` (e.g. 1 KB) but writing gigabytes into the proxy buffer. In [`pkg/proxy/proxy.go:1203-1215`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L1203-L1215):
+
+```go
+defer outResp.Body.Close()
+
+if outResp.Body != nil {
+    bufPtr := httpparser.GetCopyBuffer()
+    limitReader := io.LimitReader(outResp.Body, int64(maxPayloadSize)+1)
+    n, _ := io.CopyBuffer(res.Body, limitReader, *bufPtr)
+    httpparser.PutCopyBuffer(bufPtr)
+    if n > int64(maxPayloadSize) {
+        targetNode.RecordFailure()
+        res.Body.Reset()
+        p.writeBadGateway(res, "Upstream payload exceeded maximum allowed buffer limit")
+        return
+    }
+}
+```
+
+- **Early Overflow Detection**: `io.LimitReader` ingests at most `maxPayloadSize + 1` bytes. If `n > maxPayloadSize`, the upstream payload is flagged as an overflow.
+- **Immediate Memory Reclamation**: `res.Body.Reset()` discards all buffered bytes, preventing memory bloat.
+- **Fail-Secure 502**: Toron records target node failure and returns HTTP `502 Bad Gateway` with `"Upstream payload exceeded maximum allowed buffer limit"`.
+
+### Memory Boundedness Invariant ($O(1) \le 32\text{KB}$)
+
+By combining streaming by default, dynamic clamping, and `LimitReader` fallback bounds, Toron guarantees constant $O(1) \le 32\text{KB}$ memory allocation per active connection from recycled copy buffer slabs (`copyBufferPool`). Relaying a 50 MB continuous stream consumes $< 64\text{KB}$ of heap delta ([`TC-129.6`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-129.md#L368-L412)), completely neutralizing the Upstream Infinite Stream OOM Bomb ([`SEC-36`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L483-L491), CWE-400, CWE-770).
 
 ### Stream Ownership Transfer & Clean Teardown Protocol
 
 When `canStream == true`, Toron executes a clean ownership hand-off protocol:
-1. **Direct Socket Assignment**: `res.StreamBody = outResp.Body` transfers ownership of the live upstream body reader directly to the response handle.
-2. **Hop-by-Hop Cleanliness (RFC 7230 §6.1)**: Hop-by-hop headers (`Connection`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailers`, `Transfer-Encoding`, `Upgrade`) are stripped before hand-off.
-3. **Non-Blocking Proxy Return**: `ReverseProxy.ServeHTTPWithPrefix` returns immediately to the server reactor without blocking on payload transmission or closing `outResp.Body`.
-4. **Guaranteed Upstream Teardown**: In [`pkg/server/server.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go), `Server.handleConn` registers `defer res.StreamBody.Close()`. When the stream completes, encounters a network I/O error, or the downstream client disconnects, the upstream socket is guaranteed to close cleanly, releasing backend connections without resource leaks.
-5. **Gateway Routing Preservation**: 3xx redirect rewriting (`RewriteRedirectLocation`), cookie path rewriting (`RewriteCookiePath`), and sticky session cookies remain fully functional on streaming responses.
+1. **Core Reactor Modularity Preservation ([ADR-001](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-001.md))**: Reverse proxy and router layers express streaming intent purely via `res.StreamBody = outResp.Body` and never reference, cast, or manipulate the client physical socket (`net.Conn`).
+2. **Context Binding & Upstream Cancellation**: Downstream client request contexts are bound directly to upstream requests (`outReq, err := http.NewRequestWithContext(req.Context(), ...)`). When a client disconnects, sends TCP RST, or times out, `req.Context().Done()` fires immediately, halting in-flight upstream reads in Go's `http.Transport`.
+3. **Hop-by-Hop Cleanliness (RFC 7230 §6.1)**: Hop-by-hop headers (`Connection`, `Keep-Alive`, `Proxy-Authenticate`, `Proxy-Authorization`, `TE`, `Trailers`, `Transfer-Encoding`, `Upgrade`) are stripped before hand-off.
+4. **Non-Blocking Proxy Return**: `ReverseProxy.ServeHTTPWithPrefix` returns immediately to the server reactor without blocking on payload transmission or closing `outResp.Body`.
+5. **Guaranteed Upstream Teardown (CWE-775 Defense)**: In [`pkg/server/server.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go), `s.relayStreamBody` registers `defer res.StreamBody.Close()`. When the stream completes, encounters a network I/O error, or the downstream client disconnects, the upstream socket closes cleanly, preventing file descriptor leaks (`EMFILE`).
 
-### How It Works
+---
 
-1. **Header Phase**: Toron writes the HTTP status line and upstream response headers under an amortized `write_timeout` window.
-2. **Chunk Relay Loop**: In [`pkg/server/server.go:347-363`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L347-L363), Toron allocates a pooled 32 KB copy buffer and transfers chunks from `res.StreamBody` to the downstream client socket.
-3. **Per-Chunk Write Deadline Refresh**: Prior to transmitting each chunk (`n > 0`), Toron forces a write deadline update to `time.Now().Add(write_timeout)`:
+## Outbound RFC 7230 Chunked Response Framing & HTTP/1.1 Keep-Alive Reuse
+
+Prior to REQ-129, when `res.StreamBody != nil`, Toron wrote headers and flushed raw stream chunks to the client socket without chunked transfer coding framing. Because dynamic streams lack a fixed `Content-Length`, HTTP/1.1 clients could not identify stream termination without connection closure, breaking HTTP/1.1 persistent keep-alive socket reuse.
+
+Under [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md) and [`ADR-129`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md), Toron introduces an outbound RFC 7230 chunked framing engine in [`pkg/server/server.go:384-470`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L384-L470).
+
+### 1. HTTP/1.1 Chunk Wire Syntax & Zero-Allocation Serialization
+
+For HTTP/1.1 streaming responses (`res.StreamBody != nil`), Toron sets `Transfer-Encoding: chunked`, strictly deletes any conflicting `Content-Length` header (RFC 7230 §3.3.3), and formats chunks:
+
+$$\text{chunk} = \langle\text{hex-len}\rangle\backslash\text{r}\backslash\text{n}\langle\text{data}\rangle\backslash\text{r}\backslash\text{n}$$
+
+```go
+var hexBuf [32]byte
+cleanEOF := false
+for {
+    n, readErr := res.StreamBody.Read(buf)
+    if n > 0 {
+        if s.config.WriteTimeout > 0 && tracker != nil {
+            _ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+        }
+        if isRawStream {
+            if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
+                _ = conn.Close()
+                return false, nil
+            }
+        } else {
+            // RFC 7230 chunk framing: <hex-len>\r\n<data>\r\n using net.Buffers
+            h := strconv.AppendInt(hexBuf[:0], int64(n), 16)
+            h = append(h, '\r', '\n')
+            buffers := net.Buffers{h, buf[:n], crlfBytes}
+            if _, writeErr := buffers.WriteTo(conn); writeErr != nil {
+                _ = conn.Close()
+                return false, nil
+            }
+        }
+    }
+    if readErr != nil {
+        if readErr == io.EOF {
+            cleanEOF = true
+        }
+        break
+    }
+}
+```
+
+- **Atomic Scatter-Gather Emission (`net.Buffers`)**: By combining chunk length `h`, payload `buf[:n]`, and package-level immutable `crlfBytes` (`[]byte("\r\n")`) into `net.Buffers`, Toron writes all three segments to the OS kernel in a single `writev` system call, eliminating fragmented TCP packet emission.
+- **Zero Heap Allocations**: Hexadecimal chunk length formatting uses `strconv.AppendInt(hexBuf[:0], int64(n), 16)` backed by a stack-allocated byte array `[32]byte`.
+- **Per-Chunk Write Deadline Refresh**: Prior to emitting each chunk (`n > 0`), Toron refreshes the socket write deadline: `tracker.ForceSetWriteDeadline(time.Now().Add(writeTimeout))`. Healthy streams persist indefinitely while stalled clients are timed out within `write_timeout` (Slow-Read DoS defense, CWE-400).
+
+### 2. Clean EOF Terminal Chunk & HTTP/1.1 Persistent Socket Reuse
+
+When upstream stream reading reaches clean EOF (`readErr == io.EOF`):
+1. **Terminal Chunk**: Toron emits the RFC 7230 terminal chunk:
    ```go
-   if s.config.WriteTimeout > 0 {
-       _ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
-   }
-   if _, writeErr := conn.Write(buf[:n]); writeErr != nil {
-       _ = req.CloseBody()
-       return nil
+   if cleanEOF && !isRawStream {
+       if s.config.WriteTimeout > 0 && tracker != nil {
+           _ = tracker.ForceSetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+       }
+       if _, writeErr := conn.Write([]byte("0\r\n\r\n")); writeErr != nil {
+           _ = conn.Close()
+           return false, nil
+       }
+       outConnHeader := strings.ToLower(res.Header.Get("Connection"))
+       if connHeader == "close" || outConnHeader == "close" {
+           return false, nil
+       }
+       return true, nil
    }
    ```
-4. **Infinite Stream Longevity**: As long as the downstream client consumes chunks in a timely manner, each emitted chunk extends the socket deadline. Healthy SSE streams or live telemetry feeds can remain open indefinitely (hours, days, or weeks) without being killed by the static 5-second `write_timeout`.
+2. **Persistent Keep-Alive Reuse**: Unless client or origin signaled `Connection: close`, the server does **not** close the physical TCP connection. It resets deadlines to `idle_timeout` and loops back to parse the next incoming request on the same socket ([`TC-129.10`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-129.md#L552-L589)), completely eliminating connection churn and `TIME_WAIT` socket exhaustion.
 
-### Slow-Read Denial of Service ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)) Defense
+### 3. Fail-Closed Anti-Desynchronization Guard ([CWE-444](https://cwe.mitre.org/data/definitions/444.html))
 
-Without write deadlines, malicious or stalled clients could advertise a zero TCP receive window (`win 0`) or consume bytes at 1 byte/minute, hanging proxy worker goroutines and pinning origin handles indefinitely until thread pool exhaustion occurs.
+If an upstream connection crashes, times out, drops mid-stream, or encounters an I/O error before reaching clean `io.EOF`:
+- **Strict Invariant**: Toron **NEVER** emits `0\r\n\r\n`.
+- **Why?** Emitting `0\r\n\r\n` on an aborted stream falsely signals complete transmission, inducing downstream caching proxies and browsers to cache truncated data ([CWE-444](https://cwe.mitre.org/data/definitions/444.html)).
+- **Action**: Toron immediately terminates the client socket:
+  ```go
+  if !cleanEOF {
+      // Fail-Closed Invariant: on error/abort, NEVER emit 0\r\n\r\n; immediately sever connection
+      _ = conn.Close()
+  }
+  return false, nil
+  ```
+  Abrupt TCP connection termination forces downstream clients and caches to discard the partial stream and retry safely ([`TC-129.12`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-129.md#L628-L661)).
 
-Toron prevents this exploit:
-- If a client stops reading, the kernel socket send buffer saturates.
-- `conn.Write(buf[:n])` blocks waiting for window space.
-- After `write_timeout` (e.g. 5s) of write starvation, the operating system kernel times out the socket write.
-- `conn.Write` unblocks with `os.ErrDeadlineExceeded`.
-- Toron immediately exits the streaming loop, executes `defer res.StreamBody.Close()` to sever the upstream backend connection, and closes the client socket.
-- The worker goroutine terminates immediately and frees all resources ([`TC-126.5`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L295-L324)).
+### 4. HTTP/1.0 Raw Stream Passthrough (RFC 7230 §3.3.1)
 
-For detailed low-level deadline amortization algorithms and idle timeout mechanics, see [Event Reactor Core Architecture](./event-reactor.md).
+RFC 7230 §3.3.1 explicitly forbids sending chunked transfer coding to HTTP/1.0 clients. When `req.Proto` is `"HTTP/1.0"`:
+- Toron strips `Transfer-Encoding`.
+- Injects `Connection: close`.
+- Streams raw chunks directly to the wire.
+- Closes the connection immediately upon stream end without emitting `0\r\n\r\n` ([`TC-129.11`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-129.md#L591-L626)).
+
+### 5. Multi-Protocol Streaming Parity (HTTP/2 & HTTP/3 Flusher)
+
+In [`pkg/server/server.go:555-583`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L555-L583), Toron provides identical zero-buffering streaming parity across HTTP/2 multiplexed streams and HTTP/3 QUIC datagrams:
+- Chunks are read using recycled 32KB slabs from `httpparser.GetCopyBuffer()`.
+- Every chunk write immediately executes `http.Flusher.Flush()`, dispatching HTTP/2 binary `DATA` frames or HTTP/3 QUIC frames with $< 1\text{ms}$ wire latency ([`TC-129.15`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-129.md#L716-L748)).
+- **Client Stream Reset (`RST_STREAM`)**: Toron monitors `r.Context().Done()`. When a client resets the HTTP/2 stream or cancels the QUIC stream, the relay loop terminates instantly, executing `defer res.StreamBody.Close()` to release upstream backend handles without leaking goroutines ([`TC-129.16`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-129.md#L750-L777)).
+
+### 6. Ergonomic Response Body Abstraction (`BodyString()`, `BodyBytes()`)
+
+Because streaming by default routes response data through `res.StreamBody` rather than `res.Body`, Toron provides uniform payload extraction methods on `Response` in [`pkg/httpparser/response.go:207-241`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/response.go#L207-L241):
+
+```go
+func (r *Response) BodyString() string {
+    if r == nil {
+        return ""
+    }
+    if r.StreamBody != nil {
+        defer r.StreamBody.Close()
+        b, _ := io.ReadAll(r.StreamBody)
+        return string(b)
+    }
+    if r.Body != nil {
+        return r.Body.String()
+    }
+    return ""
+}
+```
+
+Callers and automated test suites transparently consume response bodies without manual type checks or stream draining logic.
 
 ---
 

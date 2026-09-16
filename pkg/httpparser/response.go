@@ -204,6 +204,42 @@ func (r *Response) WriteString(s string) (int, error) {
 	return r.Body.WriteString(s)
 }
 
+// BodyString returns the response body as a string. If StreamBody is non-nil,
+// it reads all bytes from StreamBody, closes it, and returns the resulting string.
+// Otherwise, it returns Body.String().
+func (r *Response) BodyString() string {
+	if r == nil {
+		return ""
+	}
+	if r.StreamBody != nil {
+		defer r.StreamBody.Close()
+		b, _ := io.ReadAll(r.StreamBody)
+		return string(b)
+	}
+	if r.Body != nil {
+		return r.Body.String()
+	}
+	return ""
+}
+
+// BodyBytes returns the response body as a byte slice. If StreamBody is non-nil,
+// it reads all bytes from StreamBody, closes it, and returns the resulting slice.
+// Otherwise, it returns Body.Bytes().
+func (r *Response) BodyBytes() []byte {
+	if r == nil {
+		return nil
+	}
+	if r.StreamBody != nil {
+		defer r.StreamBody.Close()
+		b, _ := io.ReadAll(r.StreamBody)
+		return b
+	}
+	if r.Body != nil {
+		return r.Body.Bytes()
+	}
+	return nil
+}
+
 // Serialize converts the Response object into valid HTTP/1.1 wire bytes and writes to w.
 func (r *Response) Serialize(w io.Writer) error {
 	bufPtr := getResponseBuf()

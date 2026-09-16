@@ -3077,3 +3077,678 @@ func TestServer_DeadlineAmortization_ConcurrencyRaceSafety(t *testing.T) {
 
 	wg.Wait()
 }
+
+// TC-129.8: Inbound ADR-056 Smuggling Guard Preservation (Server level)
+func TestServer_InboundChunkedRequest_Rejected501(t *testing.T) {
+	r := router.New()
+	r.POST("/submit", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("ok")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	addr := ln.Addr().String()
+
+	t.Run("Standalone Transfer-Encoding: chunked rejected with 501", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer conn.Close()
+
+		rawReq := "POST /submit HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+		if _, err := conn.Write([]byte(rawReq)); err != nil {
+			t.Fatalf("failed to write request: %v", err)
+		}
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && err != io.EOF {
+			t.Fatalf("failed to read response: %v", err)
+		}
+		respStr := string(resp)
+		if !strings.Contains(respStr, "501 Not Implemented") {
+			t.Fatalf("expected 501 Not Implemented, got:\n%s", respStr)
+		}
+	})
+
+	t.Run("Conflicting Content-Length and Transfer-Encoding rejected with 400 or 501", func(t *testing.T) {
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		defer conn.Close()
+
+		rawReq := "POST /submit HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n"
+		if _, err := conn.Write([]byte(rawReq)); err != nil {
+			t.Fatalf("failed to write request: %v", err)
+		}
+
+		resp, err := io.ReadAll(conn)
+		if err != nil && err != io.EOF {
+			t.Fatalf("failed to read response: %v", err)
+		}
+		respStr := string(resp)
+		if !strings.Contains(respStr, "400 Bad Request") && !strings.Contains(respStr, "501 Not Implemented") {
+			t.Fatalf("expected 400 or 501 rejection, got:\n%s", respStr)
+		}
+	})
+}
+
+// TC-129.9: Outbound HTTP/1.1 Chunked Framing & Terminal 0\r\n\r\n
+func TestServer_HTTP11_OutboundChunkedFraming(t *testing.T) {
+	r := router.New()
+	r.GET("/stream/chunked", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = pr
+
+		go func() {
+			defer pw.Close()
+			_, _ = pw.Write([]byte("hello"))
+			time.Sleep(10 * time.Millisecond)
+			_, _ = pw.Write([]byte(" world"))
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /stream/chunked HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	rawResp, err := io.ReadAll(conn)
+	if err != nil && err != io.EOF {
+		t.Fatalf("failed to read response: %v", err)
+	}
+
+	respStr := string(rawResp)
+	if !strings.Contains(strings.ToLower(respStr), "transfer-encoding: chunked") {
+		t.Fatalf("expected Transfer-Encoding: chunked in response, got:\n%s", respStr)
+	}
+	if strings.Contains(strings.ToLower(respStr), "content-length") {
+		t.Fatalf("expected Content-Length to be omitted for chunked response, got:\n%s", respStr)
+	}
+	if !strings.Contains(respStr, "5\r\nhello\r\n") {
+		t.Fatalf("expected chunk '5\\r\\nhello\\r\\n', got:\n%s", respStr)
+	}
+	if !strings.Contains(respStr, "6\r\n world\r\n") {
+		t.Fatalf("expected chunk '6\\r\\n world\\r\\n', got:\n%s", respStr)
+	}
+	if !strings.HasSuffix(respStr, "0\r\n\r\n") {
+		t.Fatalf("expected terminal chunk '0\\r\\n\\r\\n' at end, got:\n%s", respStr)
+	}
+}
+
+// TC-129.10: HTTP/1.1 Persistent Keep-Alive Socket Reuse
+func TestServer_HTTP11_ChunkedStream_KeepAliveSocketReuse(t *testing.T) {
+	r := router.New()
+	r.GET("/stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		pr, pw := io.Pipe()
+		res.StreamBody = pr
+		go func() {
+			defer pw.Close()
+			_, _ = pw.Write([]byte("streaming-data"))
+		}()
+	})
+	r.GET("/api/ping", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("pong")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.IdleTimeout = 2 * time.Second
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	br := bufio.NewReader(conn)
+
+	// 1. First Request: Streaming endpoint with keep-alive
+	req1 := "GET /stream HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"
+	if _, err := conn.Write([]byte(req1)); err != nil {
+		t.Fatalf("failed to write req1: %v", err)
+	}
+
+	resp1, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("failed to read resp1: %v", err)
+	}
+	body1, err := io.ReadAll(resp1.Body)
+	_ = resp1.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read body1: %v", err)
+	}
+	if string(body1) != "streaming-data" {
+		t.Fatalf("expected body1 'streaming-data', got %q", string(body1))
+	}
+
+	// 2. Second Request on the SAME connection
+	req2 := "GET /api/ping HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"
+	if _, err := conn.Write([]byte(req2)); err != nil {
+		t.Fatalf("failed to write req2 on persistent connection: %v", err)
+	}
+
+	resp2, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("failed to read resp2 on persistent connection: %v", err)
+	}
+	body2, err := io.ReadAll(resp2.Body)
+	_ = resp2.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read body2: %v", err)
+	}
+	if string(body2) != "pong" {
+		t.Fatalf("expected body2 'pong', got %q", string(body2))
+	}
+
+	// 3. Third Request with Connection: close
+	req3 := "GET /api/ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+	if _, err := conn.Write([]byte(req3)); err != nil {
+		t.Fatalf("failed to write req3: %v", err)
+	}
+
+	resp3, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("failed to read resp3: %v", err)
+	}
+	body3, err := io.ReadAll(resp3.Body)
+	_ = resp3.Body.Close()
+	if err != nil {
+		t.Fatalf("failed to read body3: %v", err)
+	}
+	if string(body3) != "pong" {
+		t.Fatalf("expected body3 'pong', got %q", string(body3))
+	}
+
+	// Connection should now be closed by server
+	oneByte := make([]byte, 1)
+	n, err := conn.Read(oneByte)
+	if n != 0 || (err != io.EOF && !errors.Is(err, net.ErrClosed)) {
+		t.Fatalf("expected connection to be closed with EOF, got n=%d err=%v", n, err)
+	}
+}
+
+// TC-129.11: HTTP/1.0 Raw Stream Passthrough
+func TestServer_HTTP10_RawStreaming_ConnectionClose(t *testing.T) {
+	r := router.New()
+	r.GET("/stream-http10", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = pr
+
+		go func() {
+			defer pw.Close()
+			_, _ = pw.Write([]byte("raw-stream-chunk-1"))
+			time.Sleep(10 * time.Millisecond)
+			_, _ = pw.Write([]byte("raw-stream-chunk-2"))
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /stream-http10 HTTP/1.0\r\nHost: localhost\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	rawResp, err := io.ReadAll(conn)
+	if err != nil && err != io.EOF {
+		t.Fatalf("failed to read response: %v", err)
+	}
+
+	respStr := string(rawResp)
+	if strings.Contains(strings.ToLower(respStr), "transfer-encoding") {
+		t.Fatalf("expected Transfer-Encoding to be omitted for HTTP/1.0, got:\n%s", respStr)
+	}
+	if strings.Contains(respStr, "\r\n12\r\n") || strings.Contains(respStr, "\r\n0\r\n\r\n") {
+		t.Fatalf("expected no chunk framing in HTTP/1.0 response, got:\n%s", respStr)
+	}
+	if !strings.Contains(respStr, "raw-stream-chunk-1raw-stream-chunk-2") {
+		t.Fatalf("expected payload to contain raw stream chunks, got:\n%s", respStr)
+	}
+}
+
+// TC-129.12: Upstream Abort Fail-Closed Invariant
+func TestServer_ChunkedStream_UpstreamAbort_FailClosed(t *testing.T) {
+	r := router.New()
+	r.GET("/abort-stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = pr
+
+		go func() {
+			_, _ = pw.Write([]byte("initial-chunk-data"))
+			time.Sleep(20 * time.Millisecond)
+			_ = pw.CloseWithError(errors.New("simulated backend crash mid-stream"))
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /abort-stream HTTP/1.1\r\nHost: localhost\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	rawResp, _ := io.ReadAll(conn)
+	respStr := string(rawResp)
+
+	headerEnd := strings.Index(respStr, "\r\n\r\n")
+	if headerEnd != -1 {
+		bodyStr := respStr[headerEnd+4:]
+		if strings.Contains(bodyStr, "0\r\n\r\n") {
+			t.Fatalf("FAIL-CLOSED VIOLATION: server emitted terminal chunk '0\\r\\n\\r\\n' on aborted stream:\n%s", respStr)
+		}
+	}
+	if !strings.Contains(respStr, "initial-chunk-data") {
+		t.Fatalf("expected initial chunk before abort, got:\n%s", respStr)
+	}
+}
+
+// TC-129.13: Client Disconnect Triggers Upstream Context Cancellation & Zero FD Leakage
+func TestServer_StreamContextCancellation_ZeroFDLeakage(t *testing.T) {
+	r := router.New()
+	upstreamCtxCancelled := make(chan struct{})
+	upstreamBodyClosed := make(chan struct{})
+
+	r.GET("/stream/infinite-test", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		pr, pw := io.Pipe()
+
+		res.StreamBody = &streamCloseTracker{
+			ReadCloser: pr,
+			onClose: func() {
+				select {
+				case <-upstreamBodyClosed:
+				default:
+					close(upstreamBodyClosed)
+				}
+			},
+		}
+
+		go func() {
+			select {
+			case <-req.Context().Done():
+				select {
+				case <-upstreamCtxCancelled:
+				default:
+					close(upstreamCtxCancelled)
+				}
+				_ = pw.CloseWithError(req.Context().Err())
+			}
+		}()
+
+		go func() {
+			defer pw.Close()
+			for {
+				_, err := pw.Write([]byte("infinite chunk payload\n"))
+				if err != nil {
+					return
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+
+	reqStr := "GET /stream/infinite-test HTTP/1.1\r\nHost: localhost\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	// Read first chunk from socket
+	buf := make([]byte, 128)
+	n, err := conn.Read(buf)
+	if err != nil || n == 0 {
+		t.Fatalf("failed to read initial bytes: %v", err)
+	}
+
+	// Client abruptly severs the TCP connection
+	_ = conn.Close()
+
+	// Wait for upstream context cancellation
+	select {
+	case <-upstreamCtxCancelled:
+		// Upstream context cancellation triggered!
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected upstream request context to be cancelled upon client disconnect within 500ms")
+	}
+
+	// Wait for upstream body closure
+	select {
+	case <-upstreamBodyClosed:
+		// res.StreamBody.Close() was executed!
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("expected res.StreamBody to be closed upon client disconnect")
+	}
+}
+
+type streamCloseTracker struct {
+	io.ReadCloser
+	onClose func()
+}
+
+func (s *streamCloseTracker) Close() error {
+	if s.onClose != nil {
+		s.onClose()
+	}
+	return s.ReadCloser.Close()
+}
+
+// TC-129.14: Slow-Client Write Timeout Disconnect
+func TestServer_ChunkedStream_SlowClient_WriteDeadlineTimeout(t *testing.T) {
+	r := router.New()
+	closedCh := make(chan struct{})
+	r.GET("/slow-stream", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/octet-stream")
+
+		pr, pw := io.Pipe()
+		res.StreamBody = struct {
+			io.Reader
+			io.Closer
+		}{
+			Reader: pr,
+			Closer: io.Closer(closerFunc(func() error {
+				select {
+				case <-closedCh:
+				default:
+					close(closedCh)
+				}
+				return pr.Close()
+			})),
+		}
+
+		go func() {
+			defer pw.Close()
+			bigChunk := bytes.Repeat([]byte("B"), 65536)
+			for {
+				_, err := pw.Write(bigChunk)
+				if err != nil {
+					return
+				}
+			}
+		}()
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.WriteTimeout = 100 * time.Millisecond
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	if tcpConn, ok := conn.(*net.TCPConn); ok {
+		_ = tcpConn.SetReadBuffer(1024)
+	}
+
+	reqStr := "GET /slow-stream HTTP/1.1\r\nHost: localhost\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	// Read initial small block
+	smallBuf := make([]byte, 128)
+	_, _ = conn.Read(smallBuf)
+
+	// Now stop reading completely (simulating stalled/slow client)
+	select {
+	case <-closedCh:
+		// StreamBody was closed because server aborted on write deadline!
+	case <-time.After(3 * time.Second):
+		t.Fatal("server failed to disconnect stalled slow client within write timeout")
+	}
+}
+
+// TC-129.17: Concurrent Streaming Stress Test under go test -race
+func TestStreaming_ConcurrentStress_RaceSafety(t *testing.T) {
+	r := router.New()
+	r.GET("/stream-chunked", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		pr, pw := io.Pipe()
+		res.StreamBody = pr
+		go func() {
+			defer pw.Close()
+			for i := 0; i < 5; i++ {
+				_, _ = fmt.Fprintf(pw, "chunk-%d\n", i)
+				time.Sleep(2 * time.Millisecond)
+			}
+		}()
+	})
+	r.GET("/static-ping", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("pong")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.IdleTimeout = 2 * time.Second
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	addr := ln.Addr().String()
+	var wg sync.WaitGroup
+
+	// 1. 40 HTTP/1.1 keep-alive clients sending sequential requests
+	for i := 0; i < 40; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			br := bufio.NewReader(conn)
+
+			for j := 0; j < 3; j++ {
+				path := "/stream-chunked"
+				if j%2 == 1 {
+					path = "/static-ping"
+				}
+				req := fmt.Sprintf("GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n", path)
+				if _, err := conn.Write([]byte(req)); err != nil {
+					return
+				}
+				resp, err := http.ReadResponse(br, nil)
+				if err != nil {
+					return
+				}
+				_, _ = io.Copy(io.Discard, resp.Body)
+				_ = resp.Body.Close()
+			}
+		}()
+	}
+
+	// 2. 30 HTTP/2 streaming requests via HTTP2AdapterHandler
+	h2Handler := srv.HTTP2AdapterHandler()
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+			defer cancel()
+			req := httptest.NewRequest("GET", "/stream-chunked", nil).WithContext(ctx)
+			rec := httptest.NewRecorder()
+			h2Handler.ServeHTTP(rec, req)
+		}(i)
+	}
+
+	// 3. 30 concurrent REST clients
+	for i := 0; i < 30; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", addr)
+			if err != nil {
+				return
+			}
+			defer conn.Close()
+			req := "GET /static-ping HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+			_, _ = conn.Write([]byte(req))
+			_, _ = io.ReadAll(conn)
+		}()
+	}
+
+	wg.Wait()
+}
+

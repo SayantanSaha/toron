@@ -11,21 +11,29 @@ depends_on:
   - REQ-004
   - REQ-005
   - REQ-126
+  - REQ-127
   - TASK-001
   - TASK-004
   - TASK-149
+  - TASK-150
   - ADR-001
   - ADR-083
   - ADR-126
+  - ADR-127
   - TC-126
+  - TC-127
   - CR-122
+  - CR-123
   - SR-126
+  - SR-127
 
 derived_from:
   - REQ-001
   - REQ-126
+  - REQ-127
   - ADR-001
   - ADR-126
+  - ADR-127
 
 documents:
   - EVENT-REACTOR-FEATURE
@@ -45,17 +53,22 @@ At the heart of Toron is the **Event Reactor** ([`pkg/reactor`](file:///Users/sn
 
 Beginning with [`REQ-126`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md) and [`ADR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-126.md) ([`TASK-149`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-149.md)), Toron incorporates **Adaptive Socket Deadline Amortization** and **Activity-Refreshed Streaming Timeouts**, slashing operating system deadline system calls by $>99\%$ while preserving 100% compliance with Slowloris ([`REQ-005`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-005.md) §2) and Slow-Read Denial of Service ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)) protections.
 
+Furthermore, under [`REQ-127`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-127.md) and [`ADR-127`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-127.md) ([`TASK-150`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-150.md)), Toron enforces **Explicit Client Socket Option Tuning** (`TCP_NODELAY`, 60-second TCP keep-alive probing) and **Recursive Socket Unwrapping** ([`ExtractTCPConn`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go#L15-L40)). This eliminates catastrophic 40ms–200ms Nagle delayed-ACK latency freezes on small payloads and real-time streaming frames (Server-Sent Events / SSE), while actively detecting and reaping half-open client sockets during quiet streaming intervals without leaking worker goroutines or upstream proxy handles ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)).
+
 ---
 
 ## Key Design Principles
 
 1. **Non-Blocking Socket Acceptance**: Socket connections are accepted on an asynchronous reactor listener loop and dispatched to worker task channels without blocking the accept thread.
-2. **Bounded Worker Pool**: A configurable worker pool (default `128` workers) enforces concurrency limits under heavy traffic spikes, preventing thread pool exhaustion.
-3. **Adaptive Socket Deadline Amortization**: Eliminates redundant kernel socket deadline system calls during rapid keep-alive HTTP bursts when $>50\%$ of the timeout window remains.
-4. **Strict Idle State Machine Alignment**: Immediately resets amortization and arms `idle_timeout` upon request completion (`br.Buffered() == 0`), preventing Slowloris socket starvation.
-5. **Activity-Refreshed Streaming Timeouts**: Refreshes socket write deadlines per transmitted chunk in persistent streaming (`res.StreamBody` for SSE or live feeds) and bidirectional relays (`relayStreams`), enabling indefinite healthy streaming while terminating slow-reading clients.
-6. **Buffer Pooling (`sync.Pool`)**: Recycles copy buffers, HTTP response objects, and header slabs across requests, reducing garbage collection overhead and heap churn.
-7. **Graceful Shutdown**: Listens for OS termination signals (`SIGINT`, `SIGTERM`) and cleanly drains active transactions within a bounded shutdown deadline.
+2. **Immediate Client Socket Tuning (`TCP_NODELAY`)**: Disables Nagle's algorithm immediately upon accept in `Reactor.Serve` and `Server.handleConn`, eliminating 40ms–200ms delayed-ACK latency freezes on small frames and real-time streams (SSE).
+3. **Kernel Keep-Alive Probing (60s)**: Probes idle streaming sockets to detect and teardown half-open connections during quiet intervals, defending against file descriptor and worker leaks ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)).
+4. **Transparent Recursive Socket Unwrapping (`ExtractTCPConn`)**: Traverses arbitrary wrapper hierarchies (TLS, deadline trackers, prefix conns) with circular reference guards (`maxDepth = 10`) to ensure underlying transport sockets are always tuned.
+5. **Bounded Worker Pool**: A configurable worker pool (default `128` workers) enforces concurrency limits under heavy traffic spikes, preventing thread pool exhaustion.
+6. **Adaptive Socket Deadline Amortization**: Eliminates redundant kernel socket deadline system calls during rapid keep-alive HTTP bursts when $>50\%$ of the timeout window remains.
+7. **Strict Idle State Machine Alignment**: Immediately resets amortization and arms `idle_timeout` upon request completion (`br.Buffered() == 0`), preventing Slowloris socket starvation.
+8. **Activity-Refreshed Streaming Timeouts**: Refreshes socket write deadlines per transmitted chunk in persistent streaming (`res.StreamBody` for SSE or live feeds) and bidirectional relays (`relayStreams`), enabling indefinite healthy streaming while terminating slow-reading clients.
+9. **Buffer Pooling (`sync.Pool`)**: Recycles copy buffers, HTTP response objects, and 4KB header slabs across requests, reducing garbage collection overhead and heap churn.
+10. **Graceful Shutdown**: Listens for OS termination signals (`SIGINT`, `SIGTERM`) and cleanly drains active transactions within a bounded shutdown deadline.
 
 ---
 
@@ -65,14 +78,23 @@ Beginning with [`REQ-126`](file:///Users/sneha/Developer/toron-research/toron/do
 TCP Client
    │
    ▼
-Reactor Listener (Accept Loop)
+Reactor Listener (Accept Loop: Reactor.Serve)
+   │
+   ├── ln.Accept() returns raw conn
+   ├── ConfigureTCPSocket(conn) [pkg/reactor/socket.go]
+   │    ├── ExtractTCPConn(conn) unwraps underlying *net.TCPConn
+   │    ├── SetNoDelay(true) ──────────────> Disable Nagle (eliminate 40ms-200ms delay)
+   │    ├── SetKeepAlive(true) ────────────> Enable keep-alive probes
+   │    └── SetKeepAlivePeriod(60s) ───────> Probe frequency 60s
+   ├── trackConn(conn, true)
    │
    ▼
-Task Channel Dispatch
+Task Channel Dispatch (r.tasks <- conn)
    │
    ▼
 Worker Goroutine (Server.handleConn)
    │
+   ├── Entry Safeguard: ConfigureTCPSocket(conn) (reinforces tuning on TLS / upgrades)
    ├── Wrap with connDeadlineTracker (pkg/server/deadline.go)
    │
    ├── [Loop: Active Burst Parsing] ──> SetAmortizedReadDeadline(ReadTimeout)
@@ -82,7 +104,7 @@ Worker Goroutine (Server.handleConn)
    │
    ├── Router & Middleware Pipeline (pkg/router, pkg/proxy, pkg/waf)
    │
-   ├── Response Serialization:
+   ├── Response Serialization (Zero-Allocation sync.Pool 4KB Slabs):
    │    ├── Discrete Response ────────> SetAmortizedWriteDeadline(WriteTimeout)
    │    └── Persistent Stream (SSE) ──> ForceSetWriteDeadline(now + WriteTimeout) [per chunk]
    │
@@ -394,7 +416,206 @@ To ensure that wrapping sockets in `connDeadlineTracker` does not break low-leve
 
 ---
 
-## Summary of Verification & Performance Results ([TC-126](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md))
+## Explicit Client Socket Option Tuning (`TCP_NODELAY` & Keep-Alive)
+
+Under [`REQ-127`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-127.md) and [`ADR-127`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-127.md) ([`TASK-150`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-150.md)), Toron explicitly tunes client transport sockets immediately upon accept via [`ConfigureTCPSocket`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go#L48-L71) in [`pkg/reactor/socket.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go).
+
+### The Nagle Algorithm & TCP Delayed ACK Latency Problem
+
+By default, operating systems initialize accepted TCP sockets with **Nagle's algorithm** (RFC 896) enabled:
+- **Nagle's Algorithm (RFC 896)**: Prevents network congestion from small packets ("tinygrams") by holding outgoing segments smaller than the Maximum Segment Size (MSS, typically 1460 bytes) whenever unacknowledged data is in flight. Segments remain queued in the kernel send buffer until an acknowledgment (ACK) is received or enough data accumulates to form a full MSS.
+- **TCP Delayed Acknowledgment (RFC 1122 §4.2.3.2)**: Operating system TCP stacks (Linux, macOS, Windows) delay emitting pure ACKs by **40ms to 200ms** (typically 40ms on Linux `TCP_DELACK_MIN`, up to 200ms on Windows/macOS) in the expectation that the receiving application will soon transmit reply traffic, allowing the ACK to be piggybacked.
+
+When these two algorithms collide during **real-time streaming (Server-Sent Events / SSE `text/event-stream`)** or small JSON API transactions, they create a severe head-of-line transmission stall:
+1. The server emits Event Frame #1 (e.g. 30 bytes). Because no unACKed data is in flight, Frame #1 is sent immediately.
+2. The client receives Frame #1. Because the client is merely consuming a downstream stream and has no data to return, its TCP stack delays the ACK for 40ms–200ms.
+3. The server generates Event Frame #2 shortly after (e.g. 2ms later).
+4. Nagle's algorithm blocks Frame #2 in the kernel because Frame #1 is unacknowledged and Frame #2 is smaller than MSS.
+5. The stream stalls completely until the client's delayed ACK timer expires. This introduces artificial **40ms–200ms latency spikes**, destroying real-time responsiveness.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor Client as SSE Client (Browser / Net)
+    participant ClientNet as Client TCP Stack (RFC 1122)
+    participant ServerNet as Server TCP Stack (Kernel)
+    participant Server as Toron Server (res.StreamBody)
+
+    Note over Client,Server: Scenario A: Default Socket (Nagle Enabled, Delayed ACK Stall)
+    Server->>ServerNet: Write Event #1 (data: {"seq":1}\n\n - 30 bytes)
+    ServerNet->>ClientNet: TCP Segment #1 (30B) [Sent immediately: no unACKed data]
+    ClientNet->>Client: Deliver Event #1
+    Note over ClientNet: Delayed ACK Timer Armed (RFC 1122 §4.2.3.2)<br/>ACK withheld waiting for return traffic (40ms-200ms)
+
+    Server->>ServerNet: Write Event #2 (data: {"seq":2}\n\n - 30 bytes) [T = 2ms]
+    Note over ServerNet: Nagle Check: UnACKed data in flight (Segment #1)<br/>AND Segment #2 (30B) < MSS (1460B)<br/>RESULT: Segment held in kernel send buffer!
+
+    Note over ClientNet,ServerNet: 40ms to 200ms Latency Stall (Stream Frozen)
+
+    Note over ClientNet: Delayed ACK Timer Expires!
+    ClientNet->>ServerNet: TCP ACK for Segment #1
+    Note over ServerNet: ACK Received -> Unblocks Event #2
+    ServerNet->>ClientNet: TCP Segment #2 (30B) [Delayed by ~40ms-200ms!]
+    ClientNet->>Client: Deliver Event #2 (High Jitter / Latency Spike)
+
+    Note over Client,Server: Scenario B: Toron Tuned Socket (TCP_NODELAY Enabled)
+    Server->>ServerNet: Write Event #1 (data: {"seq":1}\n\n - 30 bytes)
+    ServerNet->>ClientNet: TCP Segment #1 (30B) [Emitted immediately]
+    ClientNet->>Client: Deliver Event #1
+
+    Server->>ServerNet: Write Event #2 (data: {"seq":2}\n\n - 30 bytes) [T = 2ms]
+    Note over ServerNet: TCP_NODELAY Active: Nagle Bypassed!<br/>Emitted immediately without waiting for ACK!
+    ServerNet->>ClientNet: TCP Segment #2 (30B) [T = 2.1ms]
+    ClientNet->>Client: Deliver Event #2 (Sub-millisecond Real-Time Fidelity)
+```
+
+### Transport Configuration Implementation
+
+Toron resolves this by disabling Nagle's algorithm and activating 60-second keep-alive probes via [`ConfigureTCPSocket`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go#L48-L71):
+
+```go
+func ConfigureTCPSocket(conn net.Conn) error {
+    tcpConn := ExtractTCPConn(conn)
+    if tcpConn == nil {
+        // In-memory pipe, Unix domain socket, or mock: safe no-op
+        return nil
+    }
+
+    // 1. Disable Nagle's algorithm: emit small frames immediately without delayed ACK stalls
+    if err := tcpConn.SetNoDelay(true); err != nil {
+        return fmt.Errorf("failed to set TCP_NODELAY: %w", err)
+    }
+
+    // 2. Enable TCP keep-alive probes for detecting half-open sockets during quiet intervals
+    if err := tcpConn.SetKeepAlive(true); err != nil {
+        return fmt.Errorf("failed to enable TCP keepalive: %w", err)
+    }
+
+    // 3. Set keep-alive probe period to 60 seconds
+    if err := tcpConn.SetKeepAlivePeriod(60 * time.Second); err != nil {
+        return fmt.Errorf("failed to set TCP keepalive period: %w", err)
+    }
+
+    return nil
+}
+```
+
+#### Dual-Integration Points
+
+1. **Accept Loop Fast-Path ([`pkg/reactor/reactor.go:192`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/reactor.go#L192))**:
+   `ConfigureTCPSocket(conn)` is invoked immediately upon return from `ln.Accept()`. This guarantees that the transport socket is fully tuned **prior** to connection tracking (`r.trackConn(conn, true)`) and before worker queue submission (`r.tasks <- conn`).
+2. **Server Handler Safeguard ([`pkg/server/server.go:173`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L173))**:
+   An idempotent safeguard call `_ = ConfigureTCPSocket(conn)` executes at the entry of `Server.handleConn`. If a connection undergoes TLS termination or protocol upgrades, this ensures the underlying physical socket remains tuned.
+
+---
+
+## Detection of Half-Open Sockets During Quiet Streaming Intervals ([CWE-400](https://cwe.mitre.org/data/definitions/400.html))
+
+Persistent streaming connections (Server-Sent Events, live telemetry feeds, long-polling HTTP/1.1 keep-alive sessions) often experience quiet intervals between event emissions:
+
+1. **The Silent Failure Mode**:
+   Clients frequently disconnect abruptly without an orderly TCP FIN or RST handshake (e.g., laptop lid close / system sleep, mobile cellular tower handoffs, sudden WiFi loss, or stateful NAT firewall session drops). The connection enters a **half-open state**: the client is unreachable, but the server kernel still considers the connection established.
+2. **Resource Exhaustion Without Keep-Alive**:
+   Because no events are being sent during quiet intervals, no socket writes occur. Without socket writes, write deadlines do not trigger, and the server never discovers that the client is dead. Without explicit keep-alive configuration, half-open sockets remain pinned in the kernel and reactor indefinitely, exhausting operating system file descriptors and worker goroutines ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)).
+3. **Keep-Alive Probe Defense**:
+   By enforcing `SetKeepAlive(true)` and `SetKeepAlivePeriod(60 * time.Second)`, the operating system kernel begins transmitting periodic keep-alive probe packets after 60 seconds of silence. If the client fails to respond, the kernel resets the connection (`ETIMEDOUT` / `ECONNRESET`), immediately waking the blocked netpoller, terminating `Server.handleConn`, invoking `defer res.StreamBody.Close()`, and releasing all proxy resources.
+
+---
+
+## Recursive Socket Unwrapping Architecture (`ExtractTCPConn`)
+
+In Toron's modular pipeline, connections can be wrapped across multiple abstractions:
+1. Raw `*net.TCPConn` accepted from `net.TCPListener`.
+2. Standard library TLS wrappers (`*crypto/tls.Conn` exposing `NetConn() net.Conn`).
+3. Custom deadline amortization wrappers ([`*connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23) exposing `Unwrap() net.Conn`).
+4. HTTP/2 preface sniffing wrappers (`*prefixConn` exposing `Unwrap() net.Conn`).
+5. Arbitrary multi-tiered nesting (e.g. `*connDeadlineTracker` $\to$ `*prefixConn` $\to$ `*tls.Conn` $\to$ `*net.TCPConn`).
+
+To reliably reach the underlying transport socket regardless of wrapper hierarchy, [`ExtractTCPConn`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go#L15-L40) implements an iterative unwrapper with circular reference guards:
+
+```go
+func ExtractTCPConn(conn net.Conn) *net.TCPConn {
+    current := conn
+    const maxDepth = 10
+    depth := 0
+
+    for current != nil && depth < maxDepth {
+        depth++
+        if tcpConn, ok := current.(*net.TCPConn); ok {
+            return tcpConn
+        }
+        if tc, ok := current.(*tls.Conn); ok {
+            current = tc.NetConn()
+            continue
+        }
+        if tc, ok := current.(interface{ NetConn() net.Conn }); ok {
+            current = tc.NetConn()
+            continue
+        }
+        if uw, ok := current.(interface{ Unwrap() net.Conn }); ok {
+            current = uw.Unwrap()
+            continue
+        }
+        break
+    }
+    return nil
+}
+```
+
+```mermaid
+flowchart TD
+    Start(["Call ConfigureTCPSocket(conn)"]) --> Extract["ExtractTCPConn(conn)"]
+    Extract --> InitLoop["Set current = conn, depth = 0"]
+    
+    InitLoop --> CheckNil{"current == nil OR<br/>depth >= 10?"}
+    CheckNil -- Yes --> ReturnNil["Return nil (Non-TCP / Circular Bounded)"]
+    ReturnNil --> NoOp["ConfigureTCPSocket: No-op<br/>Return nil error"]
+    
+    CheckNil -- No --> IncDepth["depth++"]
+    IncDepth --> TypeSwitch{"Type Assertion on current"}
+    
+    TypeSwitch -- "*net.TCPConn" --> FoundTCP["Return *net.TCPConn"]
+    
+    TypeSwitch -- "*tls.Conn or NetConn()" --> UnwrapNetConn["current = current.NetConn()<br/>(e.g., crypto/tls)"]
+    UnwrapNetConn --> LoopBack["Continue Unwrapping Loop"]
+    LoopBack --> CheckNil
+    
+    TypeSwitch -- "interface{ Unwrap() net.Conn }" --> UnwrapCustom["current = current.Unwrap()<br/>(e.g., *connDeadlineTracker, *prefixConn)"]
+    UnwrapCustom --> LoopBack
+    
+    TypeSwitch -- "Other / Unknown" --> Terminate["Break Loop"]
+    Terminate --> ReturnNil
+    
+    FoundTCP --> SetOptions["Apply Socket Options to *net.TCPConn"]
+    
+    subgraph OptionEnforcement["TCP Socket Option Enforcement"]
+        SetOptions --> SetND["tcpConn.SetNoDelay(true)<br/>(Disable Nagle Algorithm)"]
+        SetND --> CheckND{"Error?"}
+        CheckND -- Yes --> FailND["Return fmt.Errorf('failed to set TCP_NODELAY')"]
+        CheckND -- No --> SetKA["tcpConn.SetKeepAlive(true)<br/>(Enable Keep-Alive Probes)"]
+        SetKA --> CheckKA{"Error?"}
+        CheckKA -- Yes --> FailKA["Return fmt.Errorf('failed to enable TCP keepalive')"]
+        CheckKA -- No --> SetKAPeriod["tcpConn.SetKeepAlivePeriod(60 * time.Second)<br/>(Probe Period = 60s)"]
+        SetKAPeriod --> CheckKAP{"Error?"}
+        CheckKAP -- Yes --> FailKAP["Return fmt.Errorf('failed to set TCP keepalive period')"]
+        CheckKAP -- No --> Success["Return nil (Configuration Successful)"]
+    end
+```
+
+### Invariants & Defenses
+
+1. **Stack Overflow Immunity (CWE-674)**:
+   The implementation is strictly iterative using a loop, preventing call-stack frame growth.
+2. **Circular Reference Protection (`maxDepth = 10`)**:
+   If mutually cyclic wrappers (e.g. wrapper A pointing to wrapper B pointing to wrapper A) are encountered, the traversal terminates at 10 iterations and returns `nil` safely without hanging or consuming CPU.
+3. **Graceful Non-TCP Degradation**:
+   For in-memory pipes (`net.Pipe()`), Unix domain sockets, or test mock connections, `ExtractTCPConn` returns `nil` and `ConfigureTCPSocket` returns `nil` without failing.
+
+---
+
+## Summary of Verification & Performance Results ([TC-126](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md), [TC-127](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-127.md))
+
+### Deadline Amortization & Streaming Timeouts ([TC-126](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md))
 
 | Test Case | Description | Verification Target | Benchmark Outcome |
 | :--- | :--- | :--- | :--- |
@@ -409,6 +630,21 @@ To ensure that wrapping sockets in `connDeadlineTracker` does not break low-leve
 | **`TC-126.9`** | Regression Safety | Zero regressions on `TC-087` / `TC-088` | 100% pass across all Slowloris test suites |
 | **`TC-126.10`**| Race Safety | Concurrency under mixed burst/stream traffic | 100% race-clean under `go test -race` |
 
+### Explicit Socket Tuning & Slab Recycling ([TC-127](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-127.md))
+
+| Test Case | Description | Verification Target | Test Result |
+| :--- | :--- | :--- | :--- |
+| **`TC-127.1`** | Socket Unwrapping | `ExtractTCPConn` penetrates plain TCP, TLS, tracker, prefix, 4-tier nesting, circular guards | **PASS** (Resolves to base `*net.TCPConn`; nil on circular / non-TCP) |
+| **`TC-127.2`** | Socket Option Routine | `ConfigureTCPSocket` enforces `TCP_NODELAY`, `KeepAlive`, `60s` period; idempotent; safe on pipes | **PASS** (Zero errors; idempotent) |
+| **`TC-127.3`** | Accept Loop Integration | `Reactor.Serve` tunes raw socket immediately after `ln.Accept()` before queue dispatch | **PASS** (Worker receives pre-tuned socket) |
+| **`TC-127.4`** | Server Safeguard | `Server.handleConn` reinforces options; preserves `*net.TCPConn` across wrappers | **PASS** (Idempotent safeguard verified) |
+| **`TC-127.5`** | SSE Immediate Delivery | 5 discrete 20-byte SSE frames emitted with 2ms delays arrive with $< 15\text{ms}$ delta | **PASS** (Delivered in $9.30\text{ms}$ total; 0 Nagle delay stalls) |
+| **`TC-127.6`** | Keep-Alive Verification | Accepted sockets verify `SO_KEEPALIVE == 1` and 60s probe period | **PASS** (Keep-alive probes armed in kernel) |
+| **`TC-127.7`** | Slab Buffer Recycling | `responseBufPool` recycles 4KB slabs, enforces clean `len=0` resetting, preserves capacity | **PASS** (Double-reset hygiene verified; zero leaks) |
+| **`TC-127.8`** | Zero-Allocation Serialization | `res.Serialize` achieves $\le 1.0$ alloc/op under `AllocsPerRun`; 0 B/op in benchmarks | **PASS** (**0 B/op, 0 allocs/op**, $137.0\text{ ns/op}$) |
+| **`TC-127.9`** | Header CRLF Protection | Dual-side CRLF neutralization; dual-write wire output verified via `http.ReadResponse` | **PASS** (Response splitting thwarted; 100% RFC compliance) |
+| **`TC-127.10`**| Concurrency Race Safety | 100 concurrent workers serializing responses from pooled slabs under `-race` | **PASS** (100% race-clean; 0 data races) |
+
 ---
 
 ## Related Pages
@@ -418,3 +654,4 @@ To ensure that wrapping sockets in `connDeadlineTracker` does not break low-leve
 - [Static File Serving](./static-file-serving.md)
 - [Layer 4 TCP & UDP Proxies](./layer4-proxy.md)
 - [WebSocket Support](./websocket.md)
+

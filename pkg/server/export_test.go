@@ -15,3 +15,7 @@ func NewConnDeadlineTracker(conn net.Conn) *connDeadlineTracker {
 func RelayStreams(conn1, conn2 net.Conn, idleTimeout time.Duration) {
 	relayStreams(conn1, conn2, idleTimeout)
 }
+
+func NewPrefixConn(conn net.Conn, prefix []byte) net.Conn {
+	return &prefixConn{Conn: conn, prefix: prefix}
+}

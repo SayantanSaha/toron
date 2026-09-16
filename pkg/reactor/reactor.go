@@ -188,6 +188,9 @@ func (r *Reactor) Serve(ln net.Listener) error {
 			return fmt.Errorf("reactor: accept error: %w", err)
 		}
 
+		// Explicitly tune TCP socket options immediately upon accept
+		_ = ConfigureTCPSocket(conn)
+
 		if r.isShutdown.Load() {
 			_ = conn.Close()
 			return ErrServerClosed

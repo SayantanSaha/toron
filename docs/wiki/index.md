@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-09
+updated: 2026-09-16
 
 depends_on:
   - REQ-001
@@ -23,6 +23,8 @@ depends_on:
   - REQ-091
   - REQ-123
   - REQ-124
+  - REQ-126
+  - REQ-127
 
 derived_from:
   - PRD.md
@@ -35,6 +37,8 @@ derived_from:
   - ADR-086
   - ADR-123
   - ADR-124
+  - ADR-126
+  - ADR-127
   - SEC-26
   - SEC-27
   - SEC-28
@@ -50,7 +54,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.11 Release)
+# Toron Documentation Wiki (v1.5.26 Release)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -63,7 +67,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Configuration Guide](./configuration.md) – Dual-file YAML configuration guide (`config.yaml` & `routes.yaml`).
 
 ### ⚙️ Core Architecture & Protocols
-- [Event Reactor Core](./features/event-reactor.md) – Event-driven concurrency, non-blocking I/O, and worker pool.
+- [Event Reactor Core](./features/event-reactor.md) – Event-driven concurrency, explicit TCP_NODELAY tuning, adaptive deadline amortization, and worker pool.
 - [HTTP/2 Engine](./features/http2.md) – Cleartext `h2c` prior-knowledge and stream multiplexing.
 - [HTTP/3 QUIC Protocol Engine](./features/http3.md) – HTTP/3 over QUIC (UDP), concurrent listener, and Alt-Svc upgrade advertising.
 - [HTTPS TLS & Auto Dev Certs](./features/tls-https.md) – TLS 1.2/1.3 encryption and ECDSA dev certificate generation.
@@ -77,7 +81,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Service Mesh Sidecar Mode](./features/service-mesh-sidecar.md) – Lightweight pod-to-pod mTLS, bounded request body limits (HTTP 413), and weighted traffic splitting.
 - [Native Kubernetes Ingress Controller](./features/kubernetes-ingress.md) – Zero-dependency Kubernetes `networking.k8s.io/v1` Ingress Controller.
 - [OCI Container Auto-Discovery](./features/oci-container-auto-discovery.md) – Vendor-agnostic Docker & Podman Unix socket container auto-discovery.
-- [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding, proxy headers, configurable transport, and distributed tracing (REQ-123, REQ-124).
+- [Reverse Proxy & Gateway Routing](./features/reverse-proxy.md) – Upstream request forwarding, zero-allocation response serialization, proxy headers, configurable transport, and distributed tracing (REQ-123, REQ-127).
 - [gRPC Edge Gateway & Health Probing](./features/grpc-gateway.md) – Native `grpc.health.v1` probing and HTTP/2 trailers preservation.
 - [Advanced Load Balancing Engine](./features/advanced-load-balancing.md) – 8 strategies: round-robin, weighted, least conn, least latency, sticky cookie, and IP hash.
 - [Circuit Breaker & Health Checks](./features/circuit-breaker.md) – 3-state circuit breaker and active upstream health probing.
@@ -105,4 +109,5 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.11).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.26).
+

@@ -14,6 +14,7 @@ depends_on:
   - REQ-123
   - REQ-125
   - REQ-126
+  - REQ-127
   - TASK-009
   - TASK-111
   - TASK-112
@@ -22,16 +23,21 @@ depends_on:
   - TASK-146
   - TASK-148
   - TASK-149
+  - TASK-150
   - ADR-004
   - ADR-087
   - ADR-122
   - ADR-123
   - ADR-125
   - ADR-126
+  - ADR-127
   - TC-123
   - TC-126
+  - TC-127
   - CR-119
+  - CR-123
   - SR-123
+  - SR-127
 
 derived_from:
   - REQ-009
@@ -39,11 +45,13 @@ derived_from:
   - REQ-123
   - REQ-125
   - REQ-126
+  - REQ-127
   - ADR-004
   - ADR-087
   - ADR-123
   - ADR-125
   - ADR-126
+  - ADR-127
   - SEC-31
 
 documents:
@@ -204,6 +212,181 @@ Toron prevents this exploit:
 - The worker goroutine terminates immediately and frees all resources ([`TC-126.5`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L295-L324)).
 
 For detailed low-level deadline amortization algorithms and idle timeout mechanics, see [Event Reactor Core Architecture](./event-reactor.md).
+
+---
+
+## Zero-Allocation Response Serialization Architecture (`pkg/httpparser`)
+
+During high-concurrency gateway forwarding ([`REQ-121`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-121.md)), Toron processes upwards of 25,000 requests per second. At this scale, naive response serialization creates massive garbage collection churn: dynamically creating `bytes.Buffer` structs, formatting status strings, and concatenating headers with payloads generates ~24,500 heap allocations per second, driving up GC pause spikes and CPU instruction cache pressure.
+
+Under [`REQ-127`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-127.md) and [`ADR-127`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-127.md) ([`TASK-150`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-150.md)), Toron introduces a dedicated **Zero-Allocation Response Serialization Architecture** in [`pkg/httpparser/response.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/response.go).
+
+### 1. Recycled 4KB Slabs via `sync.Pool` (`responseBufPool`)
+
+Toron maintains a package-level buffer slab pool recycling 4096-byte (`*[]byte`) slices:
+
+```go
+var responseBufPool = sync.Pool{
+    New: func() any {
+        b := make([]byte, 0, 4096)
+        return &b
+    },
+}
+
+func getResponseBuf() *[]byte {
+    b := responseBufPool.Get().(*[]byte)
+    *b = (*b)[:0]
+    return b
+}
+
+func putResponseBuf(b *[]byte) {
+    if b == nil {
+        return
+    }
+    *b = (*b)[:0]
+    responseBufPool.Put(b)
+}
+```
+
+- **4KB Capacity**: Sized to accommodate status lines and full HTTP/1.1 header sets for standard microservice responses with zero dynamic slice growth or reallocation.
+- **Double-Reset Memory Hygiene**: The slice length is reset to zero (`*b = (*b)[:0]`) **both** when returned in `putResponseBuf` and defensively when acquired in `getResponseBuf`. This guarantees that recycled buffers never bleed residual headers, tokens, or cookies from previous transactions across requests ([CWE-200](https://cwe.mitre.org/data/definitions/200.html) / [CWE-226](https://cwe.mitre.org/data/definitions/226.html)).
+- **Capacity Preservation**: Even if an atypical response with unusually large headers forces slice growth beyond 4096 bytes, `putResponseBuf` retains the enlarged capacity for subsequent requests without heap reallocations.
+
+### 2. Fast Status Line Lookup Tables
+
+To avoid string formatting allocations (`fmt.Sprintf` or `strconv.Itoa`), Toron evaluates status codes against pre-compiled static byte arrays:
+
+```go
+var (
+    statusLine200 = []byte("HTTP/1.1 200 OK\r\n")
+    statusLine204 = []byte("HTTP/1.1 204 No Content\r\n")
+    statusLine301 = []byte("HTTP/1.1 301 Moved Permanently\r\n")
+    statusLine302 = []byte("HTTP/1.1 302 Found\r\n")
+    statusLine304 = []byte("HTTP/1.1 304 Not Modified\r\n")
+    statusLine400 = []byte("HTTP/1.1 400 Bad Request\r\n")
+    statusLine401 = []byte("HTTP/1.1 401 Unauthorized\r\n")
+    statusLine403 = []byte("HTTP/1.1 403 Forbidden\r\n")
+    statusLine404 = []byte("HTTP/1.1 404 Not Found\r\n")
+    statusLine500 = []byte("HTTP/1.1 500 Internal Server Error\r\n")
+    statusLine502 = []byte("HTTP/1.1 502 Bad Gateway\r\n")
+    statusLine503 = []byte("HTTP/1.1 503 Service Unavailable\r\n")
+)
+```
+
+For non-standard or custom HTTP status codes, status numbers are appended directly into the pooled byte slice using `strconv.AppendInt(buf, int64(code), 10)`, completely avoiding string allocation or interface boxing.
+
+### 3. Zero-Allocation CRLF Header Sanitization
+
+To protect against HTTP response splitting and cache poisoning attacks ([CWE-113](https://cwe.mitre.org/data/definitions/113.html)), headers are sanitized before wire serialization:
+
+```go
+func appendSanitizedHeader(buf []byte, s string) []byte {
+    if strings.IndexByte(s, '\r') == -1 && strings.IndexByte(s, '\n') == -1 {
+        return append(buf, s...)
+    }
+    for i := 0; i < len(s); i++ {
+        c := s[i]
+        if c != '\r' && c != '\n' {
+            buf = append(buf, c)
+        }
+    }
+    return buf
+}
+```
+
+- **Zero-Allocation Fast-Path**: Using `strings.IndexByte(s, '\r')` and `strings.IndexByte(s, '\n')` utilizes SIMD-accelerated runtime byte scanning. For the vast majority of benign headers containing no line breaks, the string is appended directly to `buf` without allocating new string objects.
+- **In-Place Sanitization**: If malicious or malformed `\r` or `\n` characters are present, they are filtered out in-place byte-by-byte without regex engines or dynamic string replacers. Both header keys and header values are sanitized.
+
+### 4. Zero-Copy Dual-Write Wire Emission
+
+Rather than allocating a massive contiguous buffer to combine status lines, headers, and body payloads into a single byte array, Toron executes a **Zero-Copy Dual-Write**:
+
+```go
+func (r *Response) Serialize(w io.Writer) error {
+    bufPtr := getResponseBuf()
+    defer putResponseBuf(bufPtr)
+
+    buf := *bufPtr
+
+    // 1. Format Status Line into pooled slab
+    buf = appendStatusLine(buf, r.StatusCode)
+
+    // 2. Format Headers into pooled slab with CRLF protection
+    ...
+    // 3. Header/Body separator
+    buf = append(buf, '\r', '\n')
+    *bufPtr = buf
+
+    // 4. Dual-Write Step 1: Write header block to wire
+    if _, err := w.Write(buf); err != nil {
+        return err
+    }
+
+    // 5. Streaming Hand-Off: If StreamBody != nil, delegate body writing to server loop
+    if r.StreamBody != nil {
+        return nil
+    }
+
+    // 6. Dual-Write Step 2: Write payload directly to wire without intermediate concatenation
+    if r.Body != nil && r.Body.Len() > 0 {
+        _, err := w.Write(r.Body.Bytes())
+        return err
+    }
+
+    return nil
+}
+```
+
+```mermaid
+flowchart TD
+    Start(["Call res.Serialize(w io.Writer)"]) --> AcquireBuf["bufPtr = getResponseBuf()<br/>(Acquire 4KB slab from responseBufPool)"]
+    AcquireBuf --> DeferReturn["defer putResponseBuf(bufPtr)<br/>(Reset length to 0 on exit)"]
+    
+    DeferReturn --> FormatStatus{"Static Status Code<br/>(200, 404, 502, etc.)?"}
+    FormatStatus -- Yes --> AppendStatic["Append Pre-computed Status Line Bytes"]
+    FormatStatus -- No --> AppendDynamic["Append 'HTTP/1.1 ' + strconv.AppendInt()"]
+    
+    AppendStatic --> IterateHeaders["Iterate res.Header Entries"]
+    AppendDynamic --> IterateHeaders
+    
+    IterateHeaders --> ScanCRLF{"strings.IndexByte('\\r') == -1<br/>AND strings.IndexByte('\\n') == -1?"}
+    ScanCRLF -- "Yes (Clean)" --> AppendDirect["append(buf, s...)<br/>(Zero Heap Allocations)"]
+    ScanCRLF -- "No (Tainted)" --> FilterCRLF["Filter In-Place byte-by-byte<br/>(Strip \\r and \\n - CWE-113)"]
+    
+    AppendDirect --> CheckMoreHeaders{"More Headers?"}
+    FilterCRLF --> CheckMoreHeaders
+    CheckMoreHeaders -- Yes --> IterateHeaders
+    CheckMoreHeaders -- No --> EndHeaders["Append final '\\r\\n' separator"]
+    
+    EndHeaders --> Step1Write["Dual-Write Step 1:<br/>w.Write(buf) (Emit Header Block)"]
+    Step1Write --> CheckErr{"Write Error?"}
+    CheckErr -- Yes --> RetErr["Return Error"]
+    
+    CheckErr -- No --> CheckStream{"res.StreamBody != nil?"}
+    CheckStream -- "Yes (SSE / Live Feed)" --> StreamDone["Return nil immediately<br/>(Relay delegated to server chunk loop)"]
+    CheckStream -- "No (Standard HTTP)" --> CheckBody{"res.Body.Len() > 0?"}
+    CheckBody -- Yes --> Step2Write["Dual-Write Step 2:<br/>w.Write(r.Body.Bytes()) (Emit Payload)"]
+    Step2Write --> Done["Return nil"]
+    CheckBody -- No --> Done
+```
+
+### 5. Streaming Compatibility (`res.StreamBody`)
+
+When streaming endpoints (such as Server-Sent Events or chunked reverse proxy transfers) return a response:
+- `r.StreamBody != nil` signals to `Serialize` that the response body is dynamic and potentially unbounded.
+- `Content-Length` is **strictly omitted** to comply with HTTP/1.1 streaming specifications.
+- `Serialize` writes only the status line and headers to the wire, returning `nil` immediately.
+- The server chunk relay loop takes over `conn.Write` operations, using activity-refreshed write deadlines and zero intermediate memory buffering.
+
+### 6. Empirical Performance & Allocation Verification
+
+Benchmarking under [`TC-127.8`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-127.md#L420-L452) (`BenchmarkResponse_Serialize_Pooled`) confirms:
+- **0 B/op heap allocation** for standard HTTP response serialization.
+- **0 allocs/op** during hot-path execution.
+- Sub-150ns serialization throughput ($137.0\text{ ns/op}$ on Apple M1 Pro).
+- Zero data races under 100 concurrent workers (`go test -race`).
+
+---
 
 ## Programmatic Route Registration
 

@@ -64,6 +64,16 @@ func (c *prefixConn) SyscallConn() (syscall.RawConn, error) {
 	return nil, syscall.EINVAL
 }
 
+// ExtractTCPConn attempts to unwrap and return the underlying *net.TCPConn from conn.
+func ExtractTCPConn(conn net.Conn) *net.TCPConn {
+	return reactor.ExtractTCPConn(conn)
+}
+
+// ConfigureTCPSocket inspects conn and applies TCP socket options.
+func ConfigureTCPSocket(conn net.Conn) error {
+	return reactor.ConfigureTCPSocket(conn)
+}
+
 // Server orchestrates the reactor, router, HTTP/1.1, and HTTP/2 request processing lifecycle.
 type Server struct {
 	mu       sync.RWMutex
@@ -160,6 +170,8 @@ func (s *Server) Shutdown(ctx context.Context) error {
 
 // handleConn is the internal handler called by the reactor for each accepted TCP socket connection.
 func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
+	_ = ConfigureTCPSocket(conn)
+
 	opts := httpparser.ParserOptions{
 		MaxHeaderBytes: s.config.MaxHeaderBytes,
 		MaxBodyBytes:   s.config.MaxBodyBytes,

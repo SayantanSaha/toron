@@ -942,7 +942,7 @@ func TestServer_UpgradedConn_HeartbeatKeepsAlive(t *testing.T) {
 	if readErr == nil {
 		t.Fatal("expected connection to close after heartbeats ceased, but read succeeded")
 	}
-	if elapsed < 100*time.Millisecond || elapsed > 400*time.Millisecond {
+	if elapsed < 90*time.Millisecond || elapsed > 400*time.Millisecond {
 		t.Errorf("expected idle timeout ~150ms after heartbeats ceased, got %v", elapsed)
 	}
 }

@@ -6,7 +6,7 @@ BINARY_NAME=toron
 BUILD_DIR=bin
 MAIN_SRC=./cmd/toron
 
-VERSION ?= $(shell cat VERSION 2>/dev/null || echo "1.5.0")
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo "1.5.29")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS = -X toron/pkg/version.Version=$(VERSION) -X toron/pkg/version.GitCommit=$(GIT_COMMIT) -X toron/pkg/version.BuildDate=$(BUILD_DATE)

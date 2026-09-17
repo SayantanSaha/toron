@@ -10,7 +10,7 @@
   "preflight_checks": [
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "fast",
       "url": "http://127.0.0.1:8881/fast/health",
       "status_code": 200,
@@ -20,7 +20,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "go",
       "url": "http://127.0.0.1:8881/go/health",
       "status_code": 200,
@@ -30,7 +30,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "node",
       "url": "http://127.0.0.1:8881/node/health",
       "status_code": 200,
@@ -40,7 +40,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "python",
       "url": "http://127.0.0.1:8881/python/health",
       "status_code": 200,
@@ -212,7 +212,7 @@
   "results": [
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "fast",
       "backend_name": "Go Fast Echo",
       "target_url": "http://127.0.0.1:8881/fast/health",
@@ -271,7 +271,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "go",
       "backend_name": "Go Standard net/http",
       "target_url": "http://127.0.0.1:8881/go/health",
@@ -330,7 +330,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "node",
       "backend_name": "Node.js 20 llhttp",
       "target_url": "http://127.0.0.1:8881/node/health",
@@ -389,7 +389,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "python",
       "backend_name": "Python 3.11 uvicorn/h11",
       "target_url": "http://127.0.0.1:8881/python/health",
@@ -1392,7 +1392,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "fast",
       "backend_name": "Go Fast Echo",
       "target_url": "http://127.0.0.1:8881/fast/health",
@@ -1520,7 +1520,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "go",
       "backend_name": "Go Standard net/http",
       "target_url": "http://127.0.0.1:8881/go/health",
@@ -1648,7 +1648,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "node",
       "backend_name": "Node.js 20 llhttp",
       "target_url": "http://127.0.0.1:8881/node/health",
@@ -1776,7 +1776,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "python",
       "backend_name": "Python 3.11 uvicorn/h11",
       "target_url": "http://127.0.0.1:8881/python/health",
@@ -3952,7 +3952,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "fast",
       "backend_name": "Go Fast Echo",
       "target_url": "http://127.0.0.1:8881/fast/health",
@@ -4170,7 +4170,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "go",
       "backend_name": "Go Standard net/http",
       "target_url": "http://127.0.0.1:8881/go/health",
@@ -4388,7 +4388,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "node",
       "backend_name": "Node.js 20 llhttp",
       "target_url": "http://127.0.0.1:8881/node/health",
@@ -4606,7 +4606,7 @@
     },
     {
       "proxy_id": "toron",
-      "proxy_name": "Toron (v1.0.0)",
+      "proxy_name": "Toron (v1.5.29)",
       "backend_id": "python",
       "backend_name": "Python 3.11 uvicorn/h11",
       "target_url": "http://127.0.0.1:8881/python/health",

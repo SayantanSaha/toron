@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"toron/benchmarks/telemetry/gcparser"
+	"toron/pkg/version"
 )
 
 func TestFilterProxies(t *testing.T) {
@@ -99,7 +101,7 @@ func TestReportGeneration(t *testing.T) {
 		PreflightChecks: []PreflightResult{
 			{
 				ProxyID:    "toron",
-				ProxyName:  "Toron (v1.0.0)",
+				ProxyName:  fmt.Sprintf("Toron (%s)", version.ShortString()),
 				BackendID:  "fast",
 				URL:        "http://127.0.0.1:8881/fast/health",
 				StatusCode: 200,
@@ -111,7 +113,7 @@ func TestReportGeneration(t *testing.T) {
 		Results: []BenchmarkCellResult{
 			{
 				ProxyID:       "toron",
-				ProxyName:     "Toron (v1.0.0)",
+				ProxyName:     fmt.Sprintf("Toron (%s)", version.ShortString()),
 				BackendID:     "fast",
 				BackendName:   "Go Fast Echo",
 				TargetURL:     "http://127.0.0.1:8881/fast/health",
@@ -346,7 +348,7 @@ func TestReportGenerationWithGCTelemetry(t *testing.T) {
 		Results: []BenchmarkCellResult{
 			{
 				ProxyID:       "toron",
-				ProxyName:     "Toron (v1.0.0)",
+				ProxyName:     fmt.Sprintf("Toron (%s)", version.ShortString()),
 				BackendID:     "fast",
 				BackendName:   "Go Fast Echo",
 				TargetURL:     "http://127.0.0.1:8881/fast/health",
@@ -429,8 +431,9 @@ func TestReportGenerationWithGCTelemetry(t *testing.T) {
 	if !strings.Contains(mdContent, "## 4. Go Runtime GC Differential Analysis (Toron vs Traefik vs Caddy)") {
 		t.Errorf("missing Section 4 Go Runtime GC Differential Analysis header in markdown")
 	}
-	if !strings.Contains(mdContent, "Toron (v1.0.0)") {
-		t.Errorf("missing Toron row in markdown GC analysis")
+	expectedToronName := fmt.Sprintf("Toron (%s)", version.ShortString())
+	if !strings.Contains(mdContent, expectedToronName) {
+		t.Errorf("missing %s row in markdown GC analysis", expectedToronName)
 	}
 	// Check Section 1 Comparative Table columns
 	if !strings.Contains(mdContent, "GC Cycles") || !strings.Contains(mdContent, "P99 GC Pause") {

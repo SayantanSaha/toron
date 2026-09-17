@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"toron/benchmarks/telemetry/gcparser"
+	"toron/pkg/version"
 )
 
 // ProxyDescriptor defines metadata and address for a reverse proxy target.
@@ -127,7 +128,7 @@ type DockerCompareReport struct {
 }
 
 var defaultProxies = []ProxyDescriptor{
-	{ID: "toron", Name: "Toron (v1.0.0)", ContainerName: "toron-cmp-toron", Port: 8881, HealthPath: "/health"},
+	{ID: "toron", Name: fmt.Sprintf("Toron (%s)", version.ShortString()), ContainerName: "toron-cmp-toron", Port: 8881, HealthPath: "/health"},
 	{ID: "nginx", Name: "NGINX (Alpine)", ContainerName: "toron-cmp-nginx", Port: 8882, HealthPath: "/health"},
 	{ID: "traefik", Name: "Traefik (v3.1)", ContainerName: "toron-cmp-traefik", Port: 8883, HealthPath: "/ping"},
 	{ID: "caddy", Name: "Caddy (Alpine)", ContainerName: "toron-cmp-caddy", Port: 8884, HealthPath: "/health"},

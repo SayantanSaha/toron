@@ -58,7 +58,7 @@ related_to:
 ## 1. Overview & Motivation
 
 The **Multi-Proxy Differential Docker Benchmark Suite** ([`REQ-121`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-121.md), [`ADR-121`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-121.md), [`TASK-144`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-144.md)) delivers an automated, containerized benchmarking testbed comparing **Toron** against major production reverse proxies under identical network topology, connection pooling, and heterogeneous upstream runtime conditions:
-1. **Toron (v1.0.0)** (Go event-driven zero-dependency edge gateway)
+1. **Toron (v1.5.29)** (Go event-driven zero-dependency edge gateway)
 2. **NGINX (Alpine)** (C-based asynchronous multi-process reverse proxy)
 3. **Traefik (v3.1)** (Go-based cloud-native edge router)
 4. **Caddy (Alpine)** (Go-based memory-safe modern web server)

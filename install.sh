@@ -7,7 +7,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TORON_VERSION="$(cat "${SCRIPT_DIR}/VERSION" 2>/dev/null || echo "1.5.0")"
+TORON_VERSION="$(cat "${SCRIPT_DIR}/VERSION" 2>/dev/null || echo "1.5.29")"
 INSTALL_BIN_DIR="/usr/local/bin"
 INSTALL_CONF_DIR="/etc/toron"
 INSTALL_LOG_DIR="/var/log/toron"

@@ -6,7 +6,7 @@ rem ============================================================================
 
 setlocal enabledelayedexpansion
 
-set TORON_VERSION=1.5.0
+set TORON_VERSION=1.5.29
 if exist "%~dp0VERSION" (
     set /p TORON_VERSION=<"%~dp0VERSION"
 )

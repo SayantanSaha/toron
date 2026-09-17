@@ -318,4 +318,3 @@ func (w *watchCloseReader) Close() error {
 	}
 	return w.ReadCloser.Close()
 }
-

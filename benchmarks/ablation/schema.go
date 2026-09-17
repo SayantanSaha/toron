@@ -22,26 +22,26 @@ type TaskDef struct {
 
 // ConditionMetrics captures the quantitative evaluation results for a single task under one condition.
 type ConditionMetrics struct {
-	Condition                string   `json:"condition"`
-	TotalCriteria            int      `json:"total_criteria"`
-	ViolatedCriteria         int      `json:"violated_criteria"`
-	DriftRatePercent         float64  `json:"drift_rate_percent"`
-	ProtocolOmissions        int      `json:"protocol_omissions"`
+	Condition                 string   `json:"condition"`
+	TotalCriteria             int      `json:"total_criteria"`
+	ViolatedCriteria          int      `json:"violated_criteria"`
+	DriftRatePercent          float64  `json:"drift_rate_percent"`
+	ProtocolOmissions         int      `json:"protocol_omissions"`
 	SecurityVulnerabilities   int      `json:"security_vulnerabilities"`
-	Regressions              int      `json:"regressions"`
-	ConcurrencyHazards       int      `json:"concurrency_hazards"`
-	TotalDefects             int      `json:"total_defects"`
-	TotalTests               int      `json:"total_tests"`
-	PassedTests              int      `json:"passed_tests"`
-	TestPassRatePercent      float64  `json:"test_pass_rate_percent"`
-	InputTokens              int      `json:"input_tokens"`
-	OutputTokens             int      `json:"output_tokens"`
-	TotalTokens              int      `json:"total_tokens"`
-	ExecutionDurationMs      int64    `json:"execution_duration_ms"`
-	ReviewerPreMergeDefects  int      `json:"reviewer_premerge_defects"`
-	ReviewerArrestedDefects  int      `json:"reviewer_arrested_defects"`
-	ReviewerArrestRatePercent float64 `json:"reviewer_arrest_rate_percent"`
-	FailureModes             []string `json:"failure_modes,omitempty"`
+	Regressions               int      `json:"regressions"`
+	ConcurrencyHazards        int      `json:"concurrency_hazards"`
+	TotalDefects              int      `json:"total_defects"`
+	TotalTests                int      `json:"total_tests"`
+	PassedTests               int      `json:"passed_tests"`
+	TestPassRatePercent       float64  `json:"test_pass_rate_percent"`
+	InputTokens               int      `json:"input_tokens"`
+	OutputTokens              int      `json:"output_tokens"`
+	TotalTokens               int      `json:"total_tokens"`
+	ExecutionDurationMs       int64    `json:"execution_duration_ms"`
+	ReviewerPreMergeDefects   int      `json:"reviewer_premerge_defects"`
+	ReviewerArrestedDefects   int      `json:"reviewer_arrested_defects"`
+	ReviewerArrestRatePercent float64  `json:"reviewer_arrest_rate_percent"`
+	FailureModes              []string `json:"failure_modes,omitempty"`
 }
 
 // TaskComparison encapsulates the comparative performance of a task between Condition A and Condition B.
@@ -60,23 +60,23 @@ type TaskComparison struct {
 
 // AggregateStats holds the descriptive statistical aggregates for both conditions across all 10 tasks.
 type AggregateStats struct {
-	ConditionAMeanDrift        float64 `json:"condition_a_mean_drift_percent"`
-	ConditionBMeanDrift        float64 `json:"condition_b_mean_drift_percent"`
-	ConditionAStdDevDrift      float64 `json:"condition_a_stddev_drift_percent"`
-	ConditionBStdDevDrift      float64 `json:"condition_b_stddev_drift_percent"`
-	ConditionAMeanDefects      float64 `json:"condition_a_mean_defects"`
-	ConditionBMeanDefects      float64 `json:"condition_b_mean_defects"`
-	ConditionAStdDevDefects    float64 `json:"condition_a_stddev_defects"`
-	ConditionBStdDevDefects    float64 `json:"condition_b_stddev_defects"`
-	ConditionAMeanPassRate     float64 `json:"condition_a_mean_test_pass_rate_percent"`
-	ConditionBMeanPassRate     float64 `json:"condition_b_mean_test_pass_rate_percent"`
-	ConditionAStdDevPassRate   float64 `json:"condition_a_stddev_test_pass_rate_percent"`
-	ConditionBStdDevPassRate   float64 `json:"condition_b_stddev_test_pass_rate_percent"`
-	ConditionATotalTokens      int     `json:"condition_a_total_tokens"`
-	ConditionBTotalTokens      int     `json:"condition_b_total_tokens"`
-	OverallCostRatio           float64 `json:"overall_cost_ratio"`
-	ConditionAMeanArrestRate   float64 `json:"condition_a_mean_reviewer_arrest_rate_percent"`
-	ConditionBMeanArrestRate   float64 `json:"condition_b_mean_reviewer_arrest_rate_percent"`
+	ConditionAMeanDrift      float64 `json:"condition_a_mean_drift_percent"`
+	ConditionBMeanDrift      float64 `json:"condition_b_mean_drift_percent"`
+	ConditionAStdDevDrift    float64 `json:"condition_a_stddev_drift_percent"`
+	ConditionBStdDevDrift    float64 `json:"condition_b_stddev_drift_percent"`
+	ConditionAMeanDefects    float64 `json:"condition_a_mean_defects"`
+	ConditionBMeanDefects    float64 `json:"condition_b_mean_defects"`
+	ConditionAStdDevDefects  float64 `json:"condition_a_stddev_defects"`
+	ConditionBStdDevDefects  float64 `json:"condition_b_stddev_defects"`
+	ConditionAMeanPassRate   float64 `json:"condition_a_mean_test_pass_rate_percent"`
+	ConditionBMeanPassRate   float64 `json:"condition_b_mean_test_pass_rate_percent"`
+	ConditionAStdDevPassRate float64 `json:"condition_a_stddev_test_pass_rate_percent"`
+	ConditionBStdDevPassRate float64 `json:"condition_b_stddev_test_pass_rate_percent"`
+	ConditionATotalTokens    int     `json:"condition_a_total_tokens"`
+	ConditionBTotalTokens    int     `json:"condition_b_total_tokens"`
+	OverallCostRatio         float64 `json:"overall_cost_ratio"`
+	ConditionAMeanArrestRate float64 `json:"condition_a_mean_reviewer_arrest_rate_percent"`
+	ConditionBMeanArrestRate float64 `json:"condition_b_mean_reviewer_arrest_rate_percent"`
 }
 
 // AblationReport represents the complete output of the ablation experiment suite.

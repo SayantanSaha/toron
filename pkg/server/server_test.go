@@ -615,6 +615,7 @@ func TestServer_UnsupportedTransferEncodingRejection(t *testing.T) {
 	})
 
 	cfg := server.DefaultConfig()
+	cfg.InboundChunkedMode = "reject"
 	cfg.Addr = "127.0.0.1:0"
 
 	srv := server.New(cfg, r)
@@ -3087,6 +3088,7 @@ func TestServer_InboundChunkedRequest_Rejected501(t *testing.T) {
 	})
 
 	cfg := server.DefaultConfig()
+	cfg.InboundChunkedMode = "reject"
 	cfg.Addr = "127.0.0.1:0"
 	srv := server.New(cfg, r)
 
@@ -3752,3 +3754,311 @@ func TestStreaming_ConcurrentStress_RaceSafety(t *testing.T) {
 	wg.Wait()
 }
 
+// TC-133-16: Default Normalization Mode Live TCP End-to-End Execution
+func TestServer_E2E_InboundChunked_Normalize(t *testing.T) {
+	r := router.New()
+	r.POST("/echo", func(req *httpparser.Request, res *httpparser.Response) {
+		body, err := io.ReadAll(req.Body)
+		if err != nil {
+			res.SetStatus(http.StatusBadRequest)
+			return
+		}
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString(string(body))
+	})
+	r.GET("/ping", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		_, _ = res.WriteString("pong")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.InboundChunkedMode = "normalize"
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	addr := ln.Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("failed to dial server: %v", err)
+	}
+	defer conn.Close()
+
+	br := bufio.NewReader(conn)
+
+	// 1. Send Request 1 (chunked POST)
+	req1 := "POST /echo HTTP/1.1\r\n" +
+		"Host: localhost\r\n" +
+		"Transfer-Encoding: chunked\r\n" +
+		"\r\n" +
+		"d\r\n" +
+		"first request\r\n" +
+		"0\r\n" +
+		"\r\n"
+	if _, err := conn.Write([]byte(req1)); err != nil {
+		t.Fatalf("failed to write req1: %v", err)
+	}
+
+	resp1, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("failed to read response 1: %v", err)
+	}
+	body1, _ := io.ReadAll(resp1.Body)
+	_ = resp1.Body.Close()
+
+	if resp1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for req1, got %d", resp1.StatusCode)
+	}
+	if string(body1) != "first request" {
+		t.Fatalf("expected 'first request', got %q", string(body1))
+	}
+
+	// 2. Send Request 2 on same keep-alive connection
+	req2 := "GET /ping HTTP/1.1\r\nHost: localhost\r\n\r\n"
+	if _, err := conn.Write([]byte(req2)); err != nil {
+		t.Fatalf("failed to write req2: %v", err)
+	}
+
+	resp2, err := http.ReadResponse(br, nil)
+	if err != nil {
+		t.Fatalf("failed to read response 2: %v", err)
+	}
+	body2, _ := io.ReadAll(resp2.Body)
+	_ = resp2.Body.Close()
+
+	if resp2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for req2, got %d", resp2.StatusCode)
+	}
+	if string(body2) != "pong" {
+		t.Fatalf("expected 'pong', got %q", string(body2))
+	}
+}
+
+// TC-133-17: Legacy Rejection Mode ("reject") HTTP 501 E2E Socket Teardown
+func TestServer_E2E_InboundChunked_Reject(t *testing.T) {
+	r := router.New()
+	r.POST("/upload", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("should-not-reach")
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.InboundChunkedMode = "reject"
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	addr := ln.Addr().String()
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("failed to dial server: %v", err)
+	}
+	defer conn.Close()
+
+	req := "POST /upload HTTP/1.1\r\n" +
+		"Host: localhost\r\n" +
+		"Transfer-Encoding: chunked\r\n" +
+		"\r\n" +
+		"5\r\n" +
+		"hello\r\n" +
+		"0\r\n" +
+		"\r\n"
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	respBytes, err := io.ReadAll(conn)
+	if err != nil && !errors.Is(err, io.EOF) {
+		t.Fatalf("failed to read response: %v", err)
+	}
+	respStr := string(respBytes)
+
+	if !strings.Contains(respStr, "501 Not Implemented") {
+		t.Fatalf("expected 501 Not Implemented, got:\n%s", respStr)
+	}
+	if !strings.Contains(strings.ToLower(respStr), "connection: close") {
+		t.Fatalf("expected Connection: close, got:\n%s", respStr)
+	}
+	if !strings.Contains(respStr, "Inbound chunked transfer encoding is disabled") {
+		t.Fatalf("expected body to indicate chunked disabled, got:\n%s", respStr)
+	}
+}
+
+// TC-133-18: Route-Level Granular Profile Overrides & Priority Resolution Hierarchy
+func TestServer_E2E_RouteLevelOverrides(t *testing.T) {
+	var (
+		mu       sync.Mutex
+		lastTE   string
+		lastCL   string
+		lastBody string
+	)
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		lastTE = r.Header.Get("Transfer-Encoding")
+		if lastTE == "" && len(r.TransferEncoding) > 0 {
+			lastTE = r.TransferEncoding[0]
+		}
+		lastCL = r.Header.Get("Content-Length")
+		lastBody = string(body)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-ok"))
+	}))
+	defer backend.Close()
+
+	r := router.New()
+
+	// Route 1: /api/upload -> passthrough
+	uploadStrip := false
+	uploadOpts := proxy.ProxyOptions{
+		Targets:            []string{backend.URL},
+		StripPrefix:        &uploadStrip,
+		InboundChunkedMode: "passthrough",
+	}
+	if err := r.RoutePrefix(router.RouteTypeUpstream, "", "/api/upload", nil, "", uploadOpts); err != nil {
+		t.Fatalf("failed to route /api/upload: %v", err)
+	}
+
+	// Route 2: /api/auth -> reject
+	authStrip := false
+	authOpts := proxy.ProxyOptions{
+		Targets:            []string{backend.URL},
+		StripPrefix:        &authStrip,
+		InboundChunkedMode: "reject",
+	}
+	if err := r.RoutePrefix(router.RouteTypeUpstream, "", "/api/auth", nil, "", authOpts); err != nil {
+		t.Fatalf("failed to route /api/auth: %v", err)
+	}
+
+	// Route 3: /web/index -> normalize (fallback or explicit)
+	webStrip := false
+	webOpts := proxy.ProxyOptions{
+		Targets:            []string{backend.URL},
+		StripPrefix:        &webStrip,
+		InboundChunkedMode: "normalize",
+	}
+	if err := r.RoutePrefix(router.RouteTypeUpstream, "", "/web/index", nil, "", webOpts); err != nil {
+		t.Fatalf("failed to route /web/index: %v", err)
+	}
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.InboundChunkedMode = "normalize" // Global server default
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+	defer func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}()
+
+	addr := ln.Addr().String()
+
+	// 1. Request A: Chunked POST to /api/upload (expect passthrough)
+	{
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		rawReq := "POST /api/upload HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+		_, _ = conn.Write([]byte(rawReq))
+		respBytes, _ := io.ReadAll(conn)
+		_ = conn.Close()
+
+		respStr := string(respBytes)
+		if !strings.Contains(respStr, "200 OK") {
+			t.Fatalf("expected 200 OK on /api/upload, got:\n%s", respStr)
+		}
+
+		mu.Lock()
+		if lastTE != "chunked" {
+			t.Errorf("expected passthrough Transfer-Encoding: chunked, got %q", lastTE)
+		}
+		if lastBody != "hello" {
+			t.Errorf("expected body 'hello', got %q", lastBody)
+		}
+		mu.Unlock()
+	}
+
+	// 2. Request B: Chunked POST to /api/auth (expect reject 501)
+	{
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		rawReq := "POST /api/auth HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+		_, _ = conn.Write([]byte(rawReq))
+		respBytes, _ := io.ReadAll(conn)
+		_ = conn.Close()
+
+		respStr := string(respBytes)
+		if !strings.Contains(respStr, "501 Not Implemented") {
+			t.Fatalf("expected 501 Not Implemented on /api/auth, got:\n%s", respStr)
+		}
+	}
+
+	// 3. Request C: Chunked POST to /web/index (expect normalize 200 with Content-Length)
+	{
+		conn, err := net.Dial("tcp", addr)
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		rawReq := "POST /web/index HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+		_, _ = conn.Write([]byte(rawReq))
+		respBytes, _ := io.ReadAll(conn)
+		_ = conn.Close()
+
+		respStr := string(respBytes)
+		if !strings.Contains(respStr, "200 OK") {
+			t.Fatalf("expected 200 OK on /web/index, got:\n%s", respStr)
+		}
+
+		mu.Lock()
+		if lastTE != "" {
+			t.Errorf("expected Transfer-Encoding stripped in normalize mode, got %q", lastTE)
+		}
+		if lastCL != "5" {
+			t.Errorf("expected Content-Length 5 in normalize mode, got %q", lastCL)
+		}
+		if lastBody != "hello" {
+			t.Errorf("expected body 'hello', got %q", lastBody)
+		}
+		mu.Unlock()
+	}
+}

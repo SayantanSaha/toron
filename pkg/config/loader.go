@@ -169,6 +169,9 @@ func validateConfigDefaults(cfg *AppConfig) {
 	if cfg.Transcoder.MaxBodyBytes <= 0 {
 		cfg.Transcoder.MaxBodyBytes = 4 * 1024 * 1024
 	}
+	if cfg.Server.InboundChunkedMode == "" {
+		cfg.Server.InboundChunkedMode = "normalize"
+	}
 }
 
 // ValidateConfig performs strict validation of the configuration structure for dry-run CLI test checks.
@@ -235,6 +238,19 @@ func ValidateConfig(cfg *AppConfig) error {
 		}
 	}
 
+	isValidChunkedMode := func(m string) bool {
+		switch strings.ToLower(m) {
+		case "", "normalize", "reject", "passthrough":
+			return true
+		default:
+			return false
+		}
+	}
+
+	if !isValidChunkedMode(cfg.Server.InboundChunkedMode) {
+		return fmt.Errorf("server.inbound_chunked_mode invalid value %q: must be one of 'normalize', 'reject', 'passthrough'", cfg.Server.InboundChunkedMode)
+	}
+
 	if err := ValidateCORSConfig(cfg.Server.CORS, "server.cors"); err != nil {
 		return err
 	}
@@ -243,6 +259,13 @@ func ValidateConfig(cfg *AppConfig) error {
 		for i, route := range cfg.Proxy.Routes {
 			if err := ValidateCORSConfig(route.CORS, fmt.Sprintf("route %q cors", route.Prefix)); err != nil {
 				return err
+			}
+
+			if route.InboundChunkedMode != "" && !isValidChunkedMode(route.InboundChunkedMode) {
+				return fmt.Errorf("route %q inbound_chunked_mode invalid value %q: must be one of 'normalize', 'reject', 'passthrough'", route.Prefix, route.InboundChunkedMode)
+			}
+			if route.Transport != nil && route.Transport.InboundChunkedMode != "" && !isValidChunkedMode(route.Transport.InboundChunkedMode) {
+				return fmt.Errorf("route %q transport.inbound_chunked_mode invalid value %q: must be one of 'normalize', 'reject', 'passthrough'", route.Prefix, route.Transport.InboundChunkedMode)
 			}
 
 			if route.WAF.Enabled {

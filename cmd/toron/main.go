@@ -543,7 +543,23 @@ func main() {
 						Tracing:                tc.Tracing,
 						StreamResponse:         tc.StreamResponse,
 						ResponseHeaderTimeout:  tc.ResponseHeaderTimeout,
+						InboundChunkedMode:     tc.InboundChunkedMode,
 					},
+					InboundChunkedMode: func() string {
+						if pr.InboundChunkedMode != "" {
+							return pr.InboundChunkedMode
+						}
+						if tc.InboundChunkedMode != "" {
+							return tc.InboundChunkedMode
+						}
+						return appCfg.Server.InboundChunkedMode
+					}(),
+					MaxBodyBytes: func() int64 {
+						if pr.MaxBodyBytes > 0 {
+							return pr.MaxBodyBytes
+						}
+						return int64(appCfg.Server.MaxBodyBytes)
+					}(),
 				}
 				if err := r.RoutePrefix(router.RouteTypeUpstream, host, pr.Prefix, pr.Headers, "", opts); err != nil {
 					log.Fatalf("[TORON] Invalid proxy load balancer configuration for targets %v: %v", targets, err)

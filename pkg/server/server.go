@@ -91,6 +91,10 @@ func New(cfg Config, r *router.Router) *Server {
 		r = router.New()
 	}
 
+	if cfg.InboundChunkedMode == "" {
+		cfg.InboundChunkedMode = "normalize"
+	}
+
 	srv := &Server{
 		config: cfg,
 		router: r,
@@ -276,6 +280,24 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		req.RawConn = conn
+		if cr, ok := req.Body.(*httpparser.ChunkedBodyReader); ok {
+			cr.SetCloser(conn)
+		}
+
+		if strings.EqualFold(s.config.InboundChunkedMode, "reject") && req.ContentLength == -1 && req.Header.Get("Transfer-Encoding") != "" {
+			res := httpparser.NewResponse()
+			res.SetStatus(http.StatusNotImplemented)
+			res.Header.Set("Connection", "close")
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(`{"error":"501 Not Implemented: Inbound chunked transfer encoding is disabled"}`)
+			if s.config.WriteTimeout > 0 {
+				_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
+			}
+			_ = res.Serialize(conn)
+			_ = conn.Close()
+			return httpparser.ErrUnsupportedTransferEncoding
+		}
+
 		if conn != nil && conn.RemoteAddr() != nil {
 			req.RemoteAddr = conn.RemoteAddr().String()
 		}

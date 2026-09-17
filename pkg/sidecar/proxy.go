@@ -25,7 +25,7 @@ type ProxyEngine struct {
 	mu              sync.RWMutex
 	cfg             config.SidecarConfig
 	router          *router.Router
-	splitters       map[string]*WeightedSplitter // prefix -> splitter
+	splitters       map[string]*WeightedSplitter   // prefix -> splitter
 	proxies         map[string]*proxy.ReverseProxy // origin -> *proxy.ReverseProxy
 	clientTLS       *tls.Config
 	ingressServer   *http.Server

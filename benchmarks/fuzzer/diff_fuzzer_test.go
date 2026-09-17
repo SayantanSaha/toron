@@ -716,14 +716,14 @@ func TestExecuteRawTest_Equation7_TimingIsolation(t *testing.T) {
 	}()
 
 	tc := TestCase{
-		ID:                 "EQ7-ISOLATION-001",
-		Category:           "Timing",
-		Name:               "Equation 7 Timing Isolation Test",
+		ID:       "EQ7-ISOLATION-001",
+		Category: "Timing",
+		Name:     "Equation 7 Timing Isolation Test",
 		SequentialPayloads: []string{
 			"GET /prep HTTP/1.1\r\nHost: localhost\r\n\r\n",
 			"GET /probe HTTP/1.1\r\nHost: localhost\r\n\r\n",
 		},
-		ExpectedStatus:     []int{400},
+		ExpectedStatus: []int{400},
 	}
 
 	res := executeRawTest(ln.Addr().String(), tc)
@@ -1012,6 +1012,3 @@ func TestDifferentialReport_JSONSerialization(t *testing.T) {
 		t.Errorf("expected ComprehensiveSuite.P99LatencyUs 2378.00, got %.2f", parsed.ComprehensiveSuite.P99LatencyUs)
 	}
 }
-
-
-

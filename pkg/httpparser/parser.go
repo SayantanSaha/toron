@@ -42,6 +42,18 @@ var (
 	}
 )
 
+// GetBodyBuffer acquires a pooled 64KB byte slice pointer from bodyBufferPool.
+func GetBodyBuffer() *[]byte {
+	return bodyBufferPool.Get().(*[]byte)
+}
+
+// PutBodyBuffer recycles a pooled 64KB byte slice pointer into bodyBufferPool.
+func PutBodyBuffer(b *[]byte) {
+	if b != nil {
+		bodyBufferPool.Put(b)
+	}
+}
+
 type pooledBodyReader struct {
 	r      *bytes.Reader
 	bufPtr *[]byte
@@ -197,24 +209,73 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 				return nil, fmt.Errorf("%w: invalid header field-name token grammar", ErrBadRequest)
 			}
 		}
-		v := strings.TrimSpace(lineTrimmed[colonIdx+1:])
-		for i := 0; i < len(v); i++ {
-			b := v[i]
+		afterColon := lineTrimmed[colonIdx+1:]
+		if strings.EqualFold(k, "Transfer-Encoding") && strings.HasPrefix(afterColon, "\t") {
+			return nil, fmt.Errorf("%w: horizontal tab after colon in Transfer-Encoding header", ErrBadRequest)
+		}
+		for i := 0; i < len(afterColon); i++ {
+			b := afterColon[i]
 			if (b < 0x20 && b != '\t') || b == 0x7f {
 				return nil, fmt.Errorf("%w: control character in header value", ErrBadRequest)
 			}
 		}
+		v := strings.TrimSpace(afterColon)
 		req.Header.Add(k, v)
 	}
 
-	// HTTP Request Smuggling Prevention (RFC 7230 §3.3.3)
+	// HTTP Request Smuggling Prevention (RFC 9112 §6.3 / RFC 7230 §3.3.3)
 	clValues := req.Header.Values("Content-Length")
 	teValues := req.Header.Values("Transfer-Encoding")
+	if len(teValues) > 0 && len(clValues) > 0 {
+		return nil, fmt.Errorf("%w: conflicting Content-Length and Transfer-Encoding headers", ErrBadRequest)
+	}
+
 	if len(teValues) > 0 {
-		if len(clValues) > 0 {
-			return nil, fmt.Errorf("%w: conflicting Content-Length and Transfer-Encoding headers", ErrBadRequest)
+		var codings []string
+		for _, teRaw := range teValues {
+			trimmed := strings.TrimSpace(teRaw)
+			if trimmed == "" {
+				return nil, fmt.Errorf("%w: empty Transfer-Encoding header", ErrBadRequest)
+			}
+			parts := strings.Split(trimmed, ",")
+			for _, part := range parts {
+				c := strings.ToLower(strings.TrimSpace(part))
+				if c == "" {
+					return nil, fmt.Errorf("%w: empty transfer-coding in Transfer-Encoding header", ErrBadRequest)
+				}
+				codings = append(codings, c)
+			}
 		}
-		return nil, fmt.Errorf("%w: chunked or custom transfer-encoding is not supported", ErrUnsupportedTransferEncoding)
+
+		if len(codings) == 0 {
+			return nil, fmt.Errorf("%w: empty Transfer-Encoding header", ErrBadRequest)
+		}
+
+		finalCoding := codings[len(codings)-1]
+		if finalCoding != "chunked" {
+			return nil, fmt.Errorf("%w: final transfer-coding is %q (must be chunked)", ErrUnsupportedTransferEncoding, finalCoding)
+		}
+
+		chunkedCount := 0
+		for _, c := range codings {
+			if c == "chunked" {
+				chunkedCount++
+			} else {
+				return nil, fmt.Errorf("%w: unsupported transfer-coding %q", ErrUnsupportedTransferEncoding, c)
+			}
+		}
+
+		if chunkedCount > 1 {
+			return nil, fmt.Errorf("%w: chunked transfer-coding applied more than once", ErrBadRequest)
+		}
+
+		req.ContentLength = -1
+		var closer io.Closer
+		if c, ok := r.(io.Closer); ok {
+			closer = c
+		}
+		req.Body = newChunkedBodyReader(bufr, closer, opts.MaxBodyBytes, req.Header)
+		return req, nil
 	}
 
 	// Determine Body Length & Enforce RFC 7230 §3.3.2 (Multiple/Conflicting Content-Length)
@@ -296,4 +357,3 @@ func trimLineEnding(line string) string {
 	}
 	return line
 }
-

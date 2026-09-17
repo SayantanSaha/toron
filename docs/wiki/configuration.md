@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-16
+updated: 2026-09-17
 
 depends_on:
   - REQ-007
@@ -24,6 +24,7 @@ depends_on:
   - REQ-127
   - REQ-128
   - REQ-129
+  - REQ-133
   - TASK-007
   - TASK-019
   - TASK-027
@@ -43,12 +44,14 @@ depends_on:
   - TASK-150
   - TASK-151
   - TASK-152
+  - TASK-156
   - ADR-123
   - ADR-125
   - ADR-126
   - ADR-127
   - ADR-128
   - ADR-129
+  - ADR-133
 
 derived_from:
   - REQ-007
@@ -57,6 +60,8 @@ derived_from:
   - REQ-092
   - REQ-123
   - REQ-129
+  - REQ-133
+  - TASK-156
   - ADR-002
   - ADR-022
   - ADR-051
@@ -64,6 +69,7 @@ derived_from:
   - ADR-087
   - ADR-123
   - ADR-129
+  - ADR-133
   - SEC-26
   - SEC-31
   - SEC-36
@@ -116,6 +122,7 @@ server:
   idle_timeout: 30s
   max_header_bytes: 8192
   max_body_bytes: 4194304
+  inbound_chunked_mode: "normalize" # Policy: "normalize" (default safe de-chunking), "reject" (501), "passthrough" (REQ-133)
 
   # HTTP/2 Cleartext (h2c) and Stream Multiplexing
   http2:
@@ -289,6 +296,7 @@ proxy:
     stream_response: true           # true = streaming by default across raw_speed and balanced (REQ-129)
     max_payload_size: 1048576       # Buffer clamp limit in bytes (default: 1 MB / 1048576) (REQ-129)
     response_header_timeout: 10s    # Bounded timeout for initial response headers
+    inbound_chunked_mode: "normalize" # Policy: "normalize" (default), "reject", "passthrough" (REQ-133)
 
 logging:
   level: "info"
@@ -532,6 +540,7 @@ Toron's reverse proxy engine (`pkg/proxy`) features granular Layer 7 upstream co
 | `force_attempt_http2` | `transport.force_attempt_http2` | `boolean` | `false` (`raw_speed`) / `true` (`balanced`) | `false` = HTTP/1.1 wire transport; `true` = ALPN `h2` multiplexing to TLS origins. |
 | `tracing` | `transport.tracing` | `boolean` | `false` (`raw_speed`) / `true` (`balanced`) | `false` = raw performance; `true` = injects W3C `traceparent` headers with cryptographic random IDs (REQ-124). |
 | `response_header_timeout` | `transport.response_header_timeout` | `duration` | `"10s"` | Bounded timeout for upstream response header arrival (dial-to-first-byte), decoupling body streaming. |
+| `inbound_chunked_mode` | `transport.inbound_chunked_mode` / route | `string` | `"normalize"` | Inbound chunked ingestion mode: `"normalize"` (de-chunk into Content-Length at edge), `"reject"` (HTTP 501), or `"passthrough"` (canonical streaming upstream) (REQ-133). |
 
 #### Streaming by Default & Dynamic Bounded Ingestion Clamping (REQ-129 / TASK-152)
 
@@ -572,6 +581,90 @@ routes:
       stream_response: false      # Forces buffering in res.Body (bounded by max_payload_size)
       max_payload_size: 1048576   # 1 MB safety ceiling against rogue upstreams
 ```
+
+#### Inbound Chunked Transfer-Encoding Ingestion & Edge Normalization (REQ-133 / TASK-156)
+
+Toron acts as an **Active Ingress Smuggling Firewall** for incoming HTTP/1.1 chunked payloads (`Transfer-Encoding: chunked`). Rather than blindly passing untrusted chunk frames to origin backends or statically rejecting all chunked traffic, Toron provides zero-tolerance RFC 9112 §7.1 wire decoding and upstream canonical re-framing ([`REQ-133`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-133.md), [`ADR-133`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-133.md)).
+
+##### Operational Profiles (`inbound_chunked_mode`)
+
+- **`"normalize"` (Default)**: Consumes and validates chunked client streams at the edge, verifies exact payload length $L$, strips `Transfer-Encoding`, sets an authoritative `Content-Length: L` header, and forwards a clean, standard HTTP request upstream. Downstream microservices (Node.js, Python, Ruby, Go) are 100% shielded from chunked parsing vulnerabilities and desynchronizations ([CWE-444](https://cwe.mitre.org/data/definitions/444.html)).
+- **`"passthrough"`**: Streams validated canonical chunks upstream with $O(1) \le 32\,\text{KB}$ constant memory. If the client disconnects or transmits invalid framing, Toron immediately cancels the upstream context and closes the client TCP connection. Recommended for large file or media uploads.
+- **`"reject"`**: Immediately rejects incoming chunked requests with `HTTP/1.1 501 Not Implemented: Inbound chunked transfer encoding is disabled` and severs the TCP connection. Preserves legacy [`ADR-056`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-056.md) perimeter behavior for ultra-hardened, zero-trust endpoints.
+
+##### Priority Resolution Hierarchy
+
+Toron determines the effective `inbound_chunked_mode` hierarchically:
+
+1. **Route-Level Setting** (`routes[].inbound_chunked_mode`): Takes highest precedence for the matched route prefix.
+2. **Route Transport Setting** (`routes[].transport.inbound_chunked_mode`): Applied if route-level mode is unset.
+3. **Global Transport Setting** (`proxy.transport.inbound_chunked_mode`): Applied across all proxy routes if unset on the route.
+4. **Server Default** (`server.inbound_chunked_mode`): Applied if transport setting is unset.
+5. **Fallback Default**: `"normalize"` if all settings are omitted.
+
+In addition, each route can override the global body size ceiling using `routes[].max_body_bytes`.
+
+##### Configuration Reference
+
+| Option | Location | Type | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `inbound_chunked_mode` | `server` in `config.yaml` | `string` | `"normalize"` | Global server default policy (`"normalize"`, `"reject"`, `"passthrough"`). |
+| `inbound_chunked_mode` | `proxy.transport` in `config.yaml` | `string` | `""` | Transport-wide default policy for proxy routes. |
+| `inbound_chunked_mode` | `routes[]` in `routes.yaml` | `string` | `""` | Route-specific override policy for the route prefix. |
+| `max_body_bytes` | `server` in `config.yaml` | `integer` | `4194304` (4 MB) | Global request body ceiling in bytes (`HTTP 413` if exceeded). |
+| `max_body_bytes` | `routes[]` in `routes.yaml` | `integer` | `0` | Route-specific request body ceiling in bytes (`0` = inherit server limit). |
+
+##### Multi-Tier Configuration Example
+
+```yaml
+# config.yaml (Infrastructure)
+server:
+  host: "0.0.0.0"
+  port: 8080
+  max_body_bytes: 4194304             # 4 MB global body ceiling
+  inbound_chunked_mode: "normalize"  # Global default: edge normalization
+
+proxy:
+  enabled: true
+  transport:
+    profile: "raw_speed"
+    inbound_chunked_mode: "normalize"
+```
+
+```yaml
+# routes.yaml (Application Routing)
+routes:
+  # 1. Unbounded Streaming Uploads (Passthrough Mode)
+  # Large binary file ingest with 100 MB ceiling, bypassing edge buffering.
+  - type: "upstream"
+    prefix: "/api/upload"
+    target: "http://storage-service:9000"
+    inbound_chunked_mode: "passthrough"
+    max_body_bytes: 104857600         # 100 MB route ceiling
+
+  # 2. Strict Zero-Trust Security Perimeter (Reject Mode)
+  # Sensitive authentication endpoint that strictly forbids chunked ingestion (HTTP 501).
+  - type: "upstream"
+    prefix: "/api/auth"
+    target: "http://auth-service:8080"
+    inbound_chunked_mode: "reject"
+
+  # 3. SaaS Webhook Processing (Normalize Mode)
+  # Absorbs chunked JSON payloads from external SaaS providers (GitHub, Stripe),
+  # converts to verified Content-Length requests, and forwards upstream to Node.js backend.
+  - type: "upstream"
+    prefix: "/api/webhooks"
+    target: "http://webhook-service:3000"
+    inbound_chunked_mode: "normalize"
+    max_body_bytes: 2097152           # 2 MB limit
+
+  # 4. Standard API Gateway Route (Inherits Global "normalize")
+  - type: "upstream"
+    prefix: "/"
+    target: "http://backend-api:8080"
+```
+
+For complete technical specifications, wire grammar rules, state machine diagrams, and threat mitigations, refer to [Inbound Chunked Transfer-Encoding Ingestion](./features/inbound-chunked-ingestion.md).
 
 ---
 

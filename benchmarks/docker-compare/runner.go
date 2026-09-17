@@ -55,15 +55,15 @@ type PreflightResult struct {
 
 // LatencyStats contains calculated latency percentiles in milliseconds.
 type LatencyStats struct {
-	Min   float64 `json:"min_ms"`
-	Mean  float64 `json:"mean_ms"`
-	P50   float64 `json:"p50_ms"`
-	P75   float64 `json:"p75_ms"`
-	P90   float64 `json:"p90_ms"`
-	P95   float64 `json:"p95_ms"`
-	P99   float64 `json:"p99_ms"`
-	P999  float64 `json:"p999_ms"`
-	Max   float64 `json:"max_ms"`
+	Min  float64 `json:"min_ms"`
+	Mean float64 `json:"mean_ms"`
+	P50  float64 `json:"p50_ms"`
+	P75  float64 `json:"p75_ms"`
+	P90  float64 `json:"p90_ms"`
+	P95  float64 `json:"p95_ms"`
+	P99  float64 `json:"p99_ms"`
+	P999 float64 `json:"p999_ms"`
+	Max  float64 `json:"max_ms"`
 }
 
 // ResourceTelemetry records container CPU and memory consumption.
@@ -825,15 +825,15 @@ func computeLatencyStats(latencies []float64) LatencyStats {
 	}
 
 	return LatencyStats{
-		Min:   latencies[0],
-		Mean:  mean,
-		P50:   percentile(0.50),
-		P75:   percentile(0.75),
-		P90:   percentile(0.90),
-		P95:   percentile(0.95),
-		P99:   percentile(0.99),
-		P999:  percentile(0.999),
-		Max:   latencies[n-1],
+		Min:  latencies[0],
+		Mean: mean,
+		P50:  percentile(0.50),
+		P75:  percentile(0.75),
+		P90:  percentile(0.90),
+		P95:  percentile(0.95),
+		P99:  percentile(0.99),
+		P999: percentile(0.999),
+		Max:  latencies[n-1],
 	}
 }
 

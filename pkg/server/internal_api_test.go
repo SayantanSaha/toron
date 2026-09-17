@@ -1079,4 +1079,3 @@ func TestProxyTest_ConcurrentProbes_RaceClean(t *testing.T) {
 	}
 	wg.Wait()
 }
-

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"testing"
 
@@ -75,12 +76,19 @@ func TestParseRequest_StandaloneTransferEncodingRejection(t *testing.T) {
 	rawReq := "POST /submit HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
 	opts := httpparser.DefaultParserOptions()
 
-	_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
-	if err == nil {
-		t.Fatal("expected error parsing request with standalone Transfer-Encoding: chunked")
+	req, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+	if err != nil {
+		t.Fatalf("unexpected error parsing request with standalone Transfer-Encoding: chunked: %v", err)
 	}
-	if !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
-		t.Fatalf("expected ErrUnsupportedTransferEncoding, got %v", err)
+	if req.ContentLength != -1 {
+		t.Fatalf("expected ContentLength -1, got %d", req.ContentLength)
+	}
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("failed to read body: %v", err)
+	}
+	if string(body) != "hello" {
+		t.Fatalf("expected 'hello', got %q", string(body))
 	}
 }
 
@@ -735,14 +743,14 @@ func BenchmarkParseRequest_PooledBody(b *testing.B) {
 func TestParser_InboundSmugglingGuard_Preserved(t *testing.T) {
 	opts := httpparser.DefaultParserOptions()
 
-	t.Run("Standalone chunked transfer encoding rejected with 501", func(t *testing.T) {
+	t.Run("Standalone chunked transfer encoding parsed with ContentLength -1", func(t *testing.T) {
 		rawReq := "POST /submit HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
-		_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
-		if err == nil {
-			t.Fatal("expected error for inbound chunked request")
+		req, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+		if err != nil {
+			t.Fatalf("unexpected error for inbound chunked request: %v", err)
 		}
-		if !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
-			t.Fatalf("expected ErrUnsupportedTransferEncoding, got %v", err)
+		if req.ContentLength != -1 {
+			t.Fatalf("expected ContentLength -1, got %d", req.ContentLength)
 		}
 	})
 
@@ -757,25 +765,25 @@ func TestParser_InboundSmugglingGuard_Preserved(t *testing.T) {
 		}
 	})
 
-	t.Run("Empty Transfer-Encoding rejected with 501", func(t *testing.T) {
+	t.Run("Empty Transfer-Encoding rejected with 400", func(t *testing.T) {
 		rawReq := "GET / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding:\r\n\r\n"
 		_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
 		if err == nil {
 			t.Fatal("expected error for empty Transfer-Encoding header")
 		}
-		if !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
-			t.Fatalf("expected ErrUnsupportedTransferEncoding, got %v", err)
+		if !errors.Is(err, httpparser.ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest, got %v", err)
 		}
 	})
 
-	t.Run("Mixed case empty Transfer-Encoding rejected with 501", func(t *testing.T) {
+	t.Run("Mixed case empty Transfer-Encoding rejected with 400", func(t *testing.T) {
 		rawReq := "0 * HTTP/1.1\r\nTrAnsfer-EnCoding:\r\n\r\n"
 		_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
 		if err == nil {
 			t.Fatal("expected error for mixed case empty Transfer-Encoding header")
 		}
-		if !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
-			t.Fatalf("expected ErrUnsupportedTransferEncoding, got %v", err)
+		if !errors.Is(err, httpparser.ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest, got %v", err)
 		}
 	})
 
@@ -788,6 +796,154 @@ func TestParser_InboundSmugglingGuard_Preserved(t *testing.T) {
 		if !errors.Is(err, httpparser.ErrBadRequest) {
 			t.Fatalf("expected ErrBadRequest, got %v", err)
 		}
+	})
+}
+
+// TC-133-09: Conflicting CL.TE Smuggling Guard (Fail-Closed HTTP 400)
+func TestParser_CLTEConflictFailClosed(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+	vectors := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "CL_before_TE",
+			raw:  "POST /smuggle HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n",
+		},
+		{
+			name: "TE_before_CL",
+			raw:  "POST /upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\nContent-Length: 0\r\n\r\n0\r\n\r\n",
+		},
+		{
+			name: "InterveningHeader",
+			raw:  "POST /api/data HTTP/1.1\r\nHost: example.com\r\nContent-Length: 10\r\nX-Trace-ID: 98127391\r\nTransfer-Encoding: chunked\r\n\r\n",
+		},
+	}
+
+	for _, v := range vectors {
+		t.Run(v.name, func(t *testing.T) {
+			req, err := httpparser.ParseRequest(bytes.NewReader([]byte(v.raw)), opts)
+			if req != nil {
+				t.Fatalf("expected nil request, got %v", req)
+			}
+			if err == nil {
+				t.Fatalf("expected error for conflicting CL and TE, got nil")
+			}
+			if !errors.Is(err, httpparser.ErrBadRequest) {
+				t.Fatalf("expected ErrBadRequest, got: %v", err)
+			}
+			if !strings.Contains(err.Error(), "conflicting Content-Length and Transfer-Encoding") {
+				t.Fatalf("expected error message to contain 'conflicting Content-Length and Transfer-Encoding', got: %v", err)
+			}
+		})
+	}
+}
+
+// TC-133-10: Obfuscated Transfer-Encoding Detection
+func TestParser_ObfuscatedTransferEncoding(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+	vectors := []struct {
+		name string
+		raw  string
+	}{
+		{
+			name: "TabAfterColon",
+			raw:  "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding:\tchunked\r\n\r\n0\r\n\r\n",
+		},
+		{
+			name: "NullByteInValue",
+			raw:  "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\x00\r\n\r\n0\r\n\r\n",
+		},
+		{
+			name: "VerticalTabInValue",
+			raw:  "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: \x0bchunked\r\n\r\n0\r\n\r\n",
+		},
+		{
+			name: "WhitespaceBeforeColon",
+			raw:  "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding : chunked\r\n\r\n0\r\n\r\n",
+		},
+	}
+
+	for _, v := range vectors {
+		t.Run(v.name, func(t *testing.T) {
+			req, err := httpparser.ParseRequest(bytes.NewReader([]byte(v.raw)), opts)
+			if err == nil {
+				t.Fatalf("expected error for obfuscated TE vector %q, got nil", v.name)
+			}
+			if !errors.Is(err, httpparser.ErrBadRequest) {
+				t.Fatalf("expected ErrBadRequest, got: %v", err)
+			}
+			if req != nil {
+				t.Fatalf("expected nil request, got %v", req)
+			}
+		})
+	}
+}
+
+// TC-133-11: Transfer-Encoding Field Grammar, Empty Header Rejection & Unsupported Codings
+func TestParser_TransferEncodingGrammarAndCodings(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+
+	// 1. Empty header -> 400
+	t.Run("EmptyHeader", func(t *testing.T) {
+		raw := "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding:\r\n\r\n"
+		_, err := httpparser.ParseRequest(bytes.NewReader([]byte(raw)), opts)
+		if err == nil || !errors.Is(err, httpparser.ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest for empty TE, got: %v", err)
+		}
+	})
+
+	// 2. Whitespace-only header -> 400
+	t.Run("WhitespaceOnly", func(t *testing.T) {
+		raw := "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding:   \r\n\r\n"
+		_, err := httpparser.ParseRequest(bytes.NewReader([]byte(raw)), opts)
+		if err == nil || !errors.Is(err, httpparser.ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest for whitespace TE, got: %v", err)
+		}
+	})
+
+	// 3. Unsupported codings -> 501
+	unsupported := []string{
+		"gzip",
+		"deflate",
+		"identity",
+		"compress",
+		"custom-zip",
+		"chunked, gzip",
+	}
+	for _, coding := range unsupported {
+		t.Run("UnsupportedCoding_"+coding, func(t *testing.T) {
+			raw := fmt.Sprintf("POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: %s\r\n\r\n", coding)
+			_, err := httpparser.ParseRequest(bytes.NewReader([]byte(raw)), opts)
+			if err == nil || !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
+				t.Fatalf("expected ErrUnsupportedTransferEncoding for %q, got: %v", coding, err)
+			}
+		})
+	}
+
+	// 4. Repeated chunked -> 400
+	t.Run("RepeatedChunked", func(t *testing.T) {
+		raw := "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked, chunked\r\n\r\n"
+		_, err := httpparser.ParseRequest(bytes.NewReader([]byte(raw)), opts)
+		if err == nil || !errors.Is(err, httpparser.ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest for repeated chunked, got: %v", err)
+		}
+	})
+
+	// 5. Valid case-insensitive chunked -> success
+	t.Run("ValidCaseInsensitiveChunked", func(t *testing.T) {
+		raw := "POST / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: CHUNKED\r\n\r\n0\r\n\r\n"
+		req, err := httpparser.ParseRequest(bytes.NewReader([]byte(raw)), opts)
+		if err != nil {
+			t.Fatalf("expected clean parse, got: %v", err)
+		}
+		if req.ContentLength != -1 {
+			t.Fatalf("expected ContentLength == -1, got %d", req.ContentLength)
+		}
+		if req.Body == nil {
+			t.Fatalf("expected non-nil req.Body")
+		}
+		_ = req.CloseBody()
 	})
 }
 
@@ -960,6 +1116,3 @@ func TestParseRequest_HeaderValueControlCharRejection(t *testing.T) {
 		})
 	}
 }
-
-
-

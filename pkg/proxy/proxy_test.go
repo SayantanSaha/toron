@@ -3,7 +3,9 @@ package proxy_test
 import (
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"net"
@@ -2394,7 +2396,7 @@ func TestProxy_PureProxyRoute_StreamingFastPath(t *testing.T) {
 	defer upstream.Close()
 
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
-		Targets:              []string{upstream.URL},
+		Targets:             []string{upstream.URL},
 		RouteHasCompression: false,
 		RouteHasCache:       false,
 	})
@@ -2449,7 +2451,7 @@ func TestProxy_DynamicClamp_BoundedPayload_BuffersForMiddleware(t *testing.T) {
 	defer upstream.Close()
 
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
-		Targets:              []string{upstream.URL},
+		Targets:             []string{upstream.URL},
 		RouteHasCompression: true,
 		RouteHasCache:       true,
 		MaxPayloadSize:      1048576, // 1 MB
@@ -2503,7 +2505,7 @@ func TestProxy_DynamicClamp_OversizedPayload_StreamsDirectly(t *testing.T) {
 	defer upstream.Close()
 
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
-		Targets:              []string{upstream.URL},
+		Targets:             []string{upstream.URL},
 		RouteHasCompression: true,
 		RouteHasCache:       true,
 		MaxPayloadSize:      1048576, // 1 MB
@@ -2559,7 +2561,7 @@ func TestProxy_DynamicClamp_ChunkedUnknownLength_StreamsDirectly(t *testing.T) {
 	defer upstream.Close()
 
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
-		Targets:              []string{upstream.URL},
+		Targets:             []string{upstream.URL},
 		RouteHasCompression: true,
 		RouteHasCache:       true,
 	})
@@ -2622,7 +2624,7 @@ func TestProxy_DynamicClamp_InfiniteStream_OOMImmunity(t *testing.T) {
 	defer upstream.Close()
 
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
-		Targets:              []string{upstream.URL},
+		Targets:             []string{upstream.URL},
 		RouteHasCompression: true,
 		RouteHasCache:       true,
 	})
@@ -2686,7 +2688,7 @@ func TestProxy_DynamicClamp_LimitReaderSafetyClamp_DeceptiveUpstream(t *testing.
 
 	f := false
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
-		Targets:              []string{upstream.URL},
+		Targets:             []string{upstream.URL},
 		RouteHasCompression: true,
 		MaxPayloadSize:      1048576, // 1 MB
 		Transport: proxy.ProxyTransportConfig{
@@ -2715,3 +2717,384 @@ func TestProxy_DynamicClamp_LimitReaderSafetyClamp_DeceptiveUpstream(t *testing.
 	}
 }
 
+// TC-133-12: Canonical Normalization Mode ("normalize") De-chunking & Exact Content-Length Re-framing
+func TestReverseProxy_InboundChunked_Normalize(t *testing.T) {
+	var (
+		mu           sync.Mutex
+		receivedTE   string
+		receivedCL   string
+		receivedBody string
+		upstreamHit  bool
+	)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		upstreamHit = true
+		receivedTE = r.Header.Get("Transfer-Encoding")
+		receivedCL = r.Header.Get("Content-Length")
+		receivedBody = string(body)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer upstream.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:            []string{upstream.URL},
+		InboundChunkedMode: "normalize",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	raw := "POST /normalize-target HTTP/1.1\r\n" +
+		"Host: proxy.example.com\r\n" +
+		"Transfer-Encoding: chunked\r\n" +
+		"\r\n" +
+		"7\r\n" +
+		"Hello, \r\n" +
+		"6\r\n" +
+		"world!\r\n" +
+		"0\r\n\r\n"
+
+	req, err := httpparser.ParseRequest(strings.NewReader(raw), httpparser.DefaultParserOptions())
+	if err != nil {
+		t.Fatalf("ParseRequest failed: %v", err)
+	}
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (body: %s)", res.StatusCode, res.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !upstreamHit {
+		t.Fatal("expected upstream to be called")
+	}
+	if receivedTE != "" {
+		t.Errorf("expected Transfer-Encoding to be stripped, got %q", receivedTE)
+	}
+	if receivedCL != "13" {
+		t.Errorf("expected Content-Length 13, got %q", receivedCL)
+	}
+	if receivedBody != "Hello, world!" {
+		t.Errorf("expected body 'Hello, world!', got %q", receivedBody)
+	}
+}
+
+// TC-133-13: Canonical Passthrough Streaming Mode ("passthrough") with Validated Chunk Framing
+func TestReverseProxy_InboundChunked_Passthrough(t *testing.T) {
+	t.Run("FullStream1MB", func(t *testing.T) {
+		var (
+			mu           sync.Mutex
+			receivedTE   string
+			totalRead    int
+			upstreamDone = make(chan struct{})
+		)
+
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			mu.Lock()
+			receivedTE = r.Header.Get("Transfer-Encoding")
+			if receivedTE == "" && len(r.TransferEncoding) > 0 {
+				receivedTE = r.TransferEncoding[0]
+			}
+			mu.Unlock()
+
+			buf := make([]byte, 32*1024)
+			nRead := 0
+			for {
+				n, err := r.Body.Read(buf)
+				nRead += n
+				if err != nil {
+					break
+				}
+			}
+			mu.Lock()
+			totalRead = nRead
+			mu.Unlock()
+			close(upstreamDone)
+
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("streamed-ok"))
+		}))
+		defer upstream.Close()
+
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets:            []string{upstream.URL},
+			InboundChunkedMode: "passthrough",
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		// Generate 1 MB in 16 chunks of 64 KB
+		var buf bytes.Buffer
+		buf.WriteString("POST /stream/upload HTTP/1.1\r\nHost: proxy.example.com\r\nTransfer-Encoding: chunked\r\n\r\n")
+		chunk64K := bytes.Repeat([]byte("A"), 64*1024)
+		for i := 0; i < 16; i++ {
+			buf.WriteString(fmt.Sprintf("%x\r\n", len(chunk64K)))
+			buf.Write(chunk64K)
+			buf.WriteString("\r\n")
+		}
+		buf.WriteString("0\r\n\r\n")
+
+		req, err := httpparser.ParseRequest(bytes.NewReader(buf.Bytes()), httpparser.ParserOptions{
+			MaxHeaderBytes: 8192,
+			MaxBodyBytes:   2 * 1024 * 1024,
+		})
+		if err != nil {
+			t.Fatalf("ParseRequest failed: %v", err)
+		}
+		res := httpparser.NewResponse()
+
+		px.ServeHTTPWithPrefix(req, res, "")
+
+		select {
+		case <-upstreamDone:
+		case <-time.After(3 * time.Second):
+			t.Fatal("timeout waiting for upstream read completion")
+		}
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d (body: %s)", res.StatusCode, res.Body.String())
+		}
+
+		mu.Lock()
+		defer mu.Unlock()
+		if receivedTE != "chunked" {
+			t.Errorf("expected upstream Transfer-Encoding: chunked, got %q", receivedTE)
+		}
+		if totalRead != 16*64*1024 {
+			t.Errorf("expected 1MB (1048576) bytes, got %d", totalRead)
+		}
+	})
+
+	t.Run("PrematureDisconnectCancelsUpstream", func(t *testing.T) {
+		upstreamCtxDone := make(chan struct{})
+
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			go func() {
+				<-r.Context().Done()
+				select {
+				case <-upstreamCtxDone:
+				default:
+					close(upstreamCtxDone)
+				}
+			}()
+
+			// Try reading from body until client aborts
+			buf := make([]byte, 1024)
+			for {
+				_, err := r.Body.Read(buf)
+				if err != nil {
+					return
+				}
+			}
+		}))
+		defer upstream.Close()
+
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets:            []string{upstream.URL},
+			InboundChunkedMode: "passthrough",
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		// Stream that ends prematurely without terminal 0\r\n\r\n
+		raw := "POST /stream/upload HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n5\r\nworld\r\n"
+		req, err := httpparser.ParseRequest(strings.NewReader(raw), httpparser.DefaultParserOptions())
+		if err != nil {
+			t.Fatalf("ParseRequest failed: %v", err)
+		}
+		res := httpparser.NewResponse()
+
+		px.ServeHTTPWithPrefix(req, res, "")
+
+		select {
+		case <-upstreamCtxDone:
+			// Success: upstream request context was cancelled!
+		case <-time.After(2 * time.Second):
+			t.Fatal("expected upstream context cancellation upon premature disconnect within 2s")
+		}
+	})
+}
+
+// TC-133-14: Upstream Hop-by-Hop Header Sanitization & Trailer Forwarding
+func TestReverseProxy_InboundChunked_HopByHopAndTrailers(t *testing.T) {
+	var (
+		mu              sync.Mutex
+		receivedHeaders http.Header
+		receivedBody    string
+	)
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		receivedHeaders = r.Header.Clone()
+		receivedBody = string(body)
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:            []string{upstream.URL},
+		InboundChunkedMode: "normalize",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	raw := "POST /hopbyhop-test HTTP/1.1\r\n" +
+		"Host: proxy.local\r\n" +
+		"Connection: close, X-Custom-Hop\r\n" +
+		"X-Custom-Hop: sensitive-gateway-token\r\n" +
+		"Keep-Alive: timeout=5\r\n" +
+		"Upgrade: websocket\r\n" +
+		"Transfer-Encoding: chunked\r\n" +
+		"Trailer: X-Checksum\r\n" +
+		"\r\n" +
+		"5\r\n" +
+		"hello\r\n" +
+		"0\r\n" +
+		"X-Checksum: sha256-abcdef123456\r\n" +
+		"\r\n"
+
+	req, err := httpparser.ParseRequest(strings.NewReader(raw), httpparser.DefaultParserOptions())
+	if err != nil {
+		t.Fatalf("ParseRequest failed: %v", err)
+	}
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected status 200, got %d (body: %s)", res.StatusCode, res.Body.String())
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	// Assert hop-by-hop headers are strictly absent
+	if receivedHeaders.Get("Keep-Alive") != "" {
+		t.Errorf("Keep-Alive must be stripped, got %q", receivedHeaders.Get("Keep-Alive"))
+	}
+	if receivedHeaders.Get("Upgrade") != "" {
+		t.Errorf("Upgrade must be stripped, got %q", receivedHeaders.Get("Upgrade"))
+	}
+	if receivedHeaders.Get("X-Custom-Hop") != "" {
+		t.Errorf("X-Custom-Hop must be stripped, got %q", receivedHeaders.Get("X-Custom-Hop"))
+	}
+	if receivedHeaders.Get("Transfer-Encoding") != "" {
+		t.Errorf("Transfer-Encoding must be stripped, got %q", receivedHeaders.Get("Transfer-Encoding"))
+	}
+	if receivedHeaders.Get("Trailer") != "" {
+		t.Errorf("Trailer must be stripped, got %q", receivedHeaders.Get("Trailer"))
+	}
+
+	// Assert valid trailer is forwarded
+	if receivedHeaders.Get("X-Checksum") != "sha256-abcdef123456" {
+		t.Errorf("expected X-Checksum sha256-abcdef123456, got %q", receivedHeaders.Get("X-Checksum"))
+	}
+
+	if receivedBody != "hello" {
+		t.Errorf("expected body 'hello', got %q", receivedBody)
+	}
+}
+
+// TC-133-15: Zero-Allocation Buffer Pool Management & Recycling under High Concurrency
+func TestReverseProxy_BufferPoolRecyclingConcurrency(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		h := sha256.Sum256(body)
+		w.Header().Set("X-Echo-Hash", hex.EncodeToString(h[:]))
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:            []string{upstream.URL},
+		InboundChunkedMode: "normalize",
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	const workers = 50
+	const iterations = 5
+
+	for it := 0; it < iterations; it++ {
+		var wg sync.WaitGroup
+		errCh := make(chan error, workers)
+
+		for w := 0; w < workers; w++ {
+			wg.Add(1)
+			go func(workerID int) {
+				defer wg.Done()
+
+				// Build unique 32KB payload
+				pattern := fmt.Sprintf("Worker-%03d-Iter-%02d-", workerID, it)
+				var payloadBuf bytes.Buffer
+				for payloadBuf.Len() < 32*1024 {
+					payloadBuf.WriteString(pattern)
+				}
+				payload := payloadBuf.Bytes()[:32*1024]
+				expectedHash := sha256.Sum256(payload)
+				expectedHashHex := hex.EncodeToString(expectedHash[:])
+
+				// Format as chunked HTTP request
+				var chunkedReq bytes.Buffer
+				chunkedReq.WriteString("POST /concurrency HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding: chunked\r\n\r\n")
+				// Send in 4 chunks of 8KB
+				chunkSize := 8 * 1024
+				for offset := 0; offset < len(payload); offset += chunkSize {
+					chunkedReq.WriteString(fmt.Sprintf("%x\r\n", chunkSize))
+					chunkedReq.Write(payload[offset : offset+chunkSize])
+					chunkedReq.WriteString("\r\n")
+				}
+				chunkedReq.WriteString("0\r\n\r\n")
+
+				req, err := httpparser.ParseRequest(bytes.NewReader(chunkedReq.Bytes()), httpparser.DefaultParserOptions())
+				if err != nil {
+					errCh <- fmt.Errorf("worker %d: ParseRequest failed: %w", workerID, err)
+					return
+				}
+				res := httpparser.NewResponse()
+
+				px.ServeHTTPWithPrefix(req, res, "")
+
+				if res.StatusCode != http.StatusOK {
+					errCh <- fmt.Errorf("worker %d: expected 200, got %d", workerID, res.StatusCode)
+					return
+				}
+
+				gotHash := res.Header.Get("X-Echo-Hash")
+				if gotHash != expectedHashHex {
+					errCh <- fmt.Errorf("worker %d: hash mismatch: expected %s, got %s", workerID, expectedHashHex, gotHash)
+					return
+				}
+			}(w)
+		}
+
+		wg.Wait()
+		close(errCh)
+
+		for err := range errCh {
+			if err != nil {
+				t.Fatalf("iteration %d failed: %v", it, err)
+			}
+		}
+	}
+}

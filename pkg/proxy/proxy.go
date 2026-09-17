@@ -3,6 +3,7 @@ package proxy
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -459,6 +461,48 @@ type ReverseProxy struct {
 	routeHasCompression    bool
 	routeHasCache          bool
 	maxPayloadSize         int
+	modeMu                 sync.RWMutex
+	inboundChunkedMode     string
+	maxBodyBytes           int64
+}
+
+// InboundChunkedMode returns the configured inbound chunked handling mode ("normalize", "passthrough", "reject").
+func (p *ReverseProxy) InboundChunkedMode() string {
+	if p == nil {
+		return "normalize"
+	}
+	p.modeMu.RLock()
+	defer p.modeMu.RUnlock()
+	if p.inboundChunkedMode == "" {
+		return "normalize"
+	}
+	return p.inboundChunkedMode
+}
+
+// SetInboundChunkedMode updates the inbound chunked handling mode.
+func (p *ReverseProxy) SetInboundChunkedMode(mode string) {
+	if p == nil {
+		return
+	}
+	p.modeMu.Lock()
+	defer p.modeMu.Unlock()
+	p.inboundChunkedMode = mode
+}
+
+// MaxBodyBytes returns the maximum inbound payload bytes permitted before returning 413.
+func (p *ReverseProxy) MaxBodyBytes() int64 {
+	if p == nil {
+		return 0
+	}
+	return atomic.LoadInt64(&p.maxBodyBytes)
+}
+
+// SetMaxBodyBytes updates the maximum inbound payload bytes permitted.
+func (p *ReverseProxy) SetMaxBodyBytes(limit int64) {
+	if p == nil {
+		return
+	}
+	atomic.StoreInt64(&p.maxBodyBytes, limit)
 }
 
 // IsStreamResponseEnabled returns whether streaming response is enabled on this reverse proxy.
@@ -500,6 +544,7 @@ type ProxyTransportConfig struct {
 	Tracing                *bool
 	StreamResponse         *bool
 	ResponseHeaderTimeout  time.Duration
+	InboundChunkedMode     string
 }
 
 // DefaultProxyTransportConfig returns the canonical transport configuration for the given profile.
@@ -522,6 +567,7 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 			Tracing:                &t,
 			StreamResponse:         &t,
 			ResponseHeaderTimeout:  10 * time.Second,
+			InboundChunkedMode:     "normalize",
 		}
 	}
 	t := true
@@ -539,6 +585,7 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 		Tracing:                &f,
 		StreamResponse:         &t,
 		ResponseHeaderTimeout:  10 * time.Second,
+		InboundChunkedMode:     "normalize",
 	}
 }
 
@@ -574,6 +621,8 @@ type ProxyOptions struct {
 	RouteHasCache       bool
 	Transport           ProxyTransportConfig
 	MaxPayloadSize      int
+	InboundChunkedMode  string
+	MaxBodyBytes        int64
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.
@@ -787,6 +836,14 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		maxPayloadSize = 1024 * 1024 // 1 MB default
 	}
 
+	inboundMode := opts.InboundChunkedMode
+	if inboundMode == "" {
+		inboundMode = opts.Transport.InboundChunkedMode
+	}
+	if inboundMode == "" {
+		inboundMode = "normalize"
+	}
+
 	return &ReverseProxy{
 		TargetURL:              upstreamTargets[0].URL,
 		Balancer:               lb,
@@ -803,6 +860,8 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		routeHasCompression:    opts.RouteHasCompression,
 		routeHasCache:          opts.RouteHasCache,
 		maxPayloadSize:         maxPayloadSize,
+		inboundChunkedMode:     inboundMode,
+		maxBodyBytes:           opts.MaxBodyBytes,
 	}, nil
 }
 
@@ -824,9 +883,32 @@ var hopByHopHeaders = map[string]bool{
 	"proxy-authenticate":  true,
 	"proxy-authorization": true,
 	"te":                  true,
+	"trailer":             true,
 	"trailers":            true,
 	"transfer-encoding":   true,
 	"upgrade":             true,
+}
+
+type earlyCancelingReader struct {
+	r      io.Reader
+	cancel context.CancelFunc
+}
+
+func (e *earlyCancelingReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err != nil && !errors.Is(err, io.EOF) {
+		if e.cancel != nil {
+			e.cancel()
+		}
+	}
+	return n, err
+}
+
+func (e *earlyCancelingReader) Close() error {
+	if c, ok := e.r.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
 }
 
 type tlsConn interface {
@@ -995,15 +1077,76 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		return
 	}
 
+	isChunked := (req.ContentLength == -1 && req.Body != nil) || (req.Header.Get("Transfer-Encoding") != "")
+	effectiveMode := p.InboundChunkedMode()
+
 	var bodyReader io.Reader
-	if req.Body != nil {
+	var cleanupBuf func()
+	var cancelFunc context.CancelFunc
+	reqCtx := req.Context()
+
+	if isChunked {
+		if strings.EqualFold(effectiveMode, "reject") {
+			res.SetStatus(http.StatusNotImplemented)
+			res.Header.Set("Connection", "close")
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(`{"error":"501 Not Implemented: Inbound chunked transfer encoding is disabled"}`)
+			return
+		} else if strings.EqualFold(effectiveMode, "passthrough") {
+			var passthroughCancel context.CancelFunc
+			reqCtx, passthroughCancel = context.WithCancel(req.Context())
+			cancelFunc = passthroughCancel
+			bodyReader = &earlyCancelingReader{
+				r:      req.Body,
+				cancel: passthroughCancel,
+			}
+		} else { // "normalize" mode
+			decodedBytes, err := io.ReadAll(req.Body)
+			if err != nil {
+				res.Header.Set("Connection", "close")
+				res.Header.Set("Content-Type", "application/json")
+				switch {
+				case errors.Is(err, httpparser.ErrBodyTooLarge):
+					res.SetStatus(http.StatusRequestEntityTooLarge)
+					_, _ = res.WriteString(`{"error":"413 Payload Too Large"}`)
+				case errors.Is(err, httpparser.ErrHeaderTooLarge):
+					res.SetStatus(http.StatusRequestHeaderFieldsTooLarge)
+					_, _ = res.WriteString(`{"error":"431 Request Header Fields Too Large"}`)
+				default:
+					res.SetStatus(http.StatusBadRequest)
+					_, _ = res.WriteString(`{"error":"400 Bad Request"}`)
+				}
+				return
+			}
+			exactCL := int64(len(decodedBytes))
+			if exactCL > 0 {
+				if exactCL <= 65536 {
+					bufPtr := httpparser.GetBodyBuffer()
+					copy(*bufPtr, decodedBytes)
+					bodyReader = bytes.NewReader((*bufPtr)[:exactCL])
+					cleanupBuf = func() {
+						httpparser.PutBodyBuffer(bufPtr)
+					}
+				} else {
+					bodyReader = bytes.NewReader(decodedBytes)
+				}
+			}
+		}
+	} else if req.Body != nil {
 		bodyBytes, err := io.ReadAll(req.Body)
 		if err == nil && len(bodyBytes) > 0 {
 			bodyReader = bytes.NewReader(bodyBytes)
 		}
 	}
 
-	outReq, err := http.NewRequestWithContext(req.Context(), req.Method, outURL.String(), bodyReader)
+	if cleanupBuf != nil {
+		defer cleanupBuf()
+	}
+	if cancelFunc != nil {
+		defer cancelFunc()
+	}
+
+	outReq, err := http.NewRequestWithContext(reqCtx, req.Method, outURL.String(), bodyReader)
 	if err != nil {
 		p.writeBadGateway(res, fmt.Sprintf("Failed to construct proxy request: %v", err))
 		return
@@ -1032,6 +1175,34 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 		for _, val := range values {
 			outReq.Header.Add(key, val)
 		}
+	}
+
+	// Forward decoded trailers from chunked request
+	if cr, ok := req.Body.(*httpparser.ChunkedBodyReader); ok {
+		for k, vals := range cr.Trailers() {
+			for _, v := range vals {
+				outReq.Header.Add(k, v)
+			}
+		}
+	}
+
+	if isChunked {
+		if strings.EqualFold(effectiveMode, "passthrough") {
+			outReq.ContentLength = -1
+			outReq.TransferEncoding = []string{"chunked"}
+			outReq.Header.Del("Content-Length")
+			outReq.Header.Del("Transfer-Encoding")
+		} else { // "normalize"
+			exactCL := int64(0)
+			if r, ok := bodyReader.(*bytes.Reader); ok {
+				exactCL = int64(r.Len())
+			}
+			outReq.ContentLength = exactCL
+			outReq.Header.Set("Content-Length", strconv.FormatInt(exactCL, 10))
+			outReq.Header.Del("Transfer-Encoding")
+		}
+	} else if req.ContentLength > 0 {
+		outReq.ContentLength = req.ContentLength
 	}
 
 	// Derive client peer IP and trust status

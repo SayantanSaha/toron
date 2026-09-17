@@ -27,15 +27,15 @@ import (
 
 // LatencyPercentiles captures high-precision percentile distributions.
 type LatencyPercentiles struct {
-	Min   float64 `json:"min"`
-	Mean  float64 `json:"mean"`
-	P50   float64 `json:"p50"`
-	P75   float64 `json:"p75"`
-	P90   float64 `json:"p90"`
-	P95   float64 `json:"p95"`
-	P99   float64 `json:"p99"`
-	P999  float64 `json:"p999"`
-	Max   float64 `json:"max"`
+	Min  float64 `json:"min"`
+	Mean float64 `json:"mean"`
+	P50  float64 `json:"p50"`
+	P75  float64 `json:"p75"`
+	P90  float64 `json:"p90"`
+	P95  float64 `json:"p95"`
+	P99  float64 `json:"p99"`
+	P999 float64 `json:"p999"`
+	Max  float64 `json:"max"`
 }
 
 // StreamMetrics captures telemetry for a single decoupled traffic stream.
@@ -61,13 +61,13 @@ type AttackVectorSummary struct {
 	Name                 string  `json:"name"`
 	Category             string  `json:"category"`
 	ProbesSent           int64   `json:"probes_sent"`
-	Rejected             int64   `json:"rejected"`                 // Active defense (400, 403, 413, 431, 501)
-	RouteMiss            int64   `json:"route_miss"`               // Route miss (404)
-	Bypassed             int64   `json:"bypassed"`                 // Bypass (200)
-	Unhandled            int64   `json:"unhandled"`                // Anomaly (5xx, etc.)
+	Rejected             int64   `json:"rejected"`                // Active defense (400, 403, 413, 431, 501)
+	RouteMiss            int64   `json:"route_miss"`              // Route miss (404)
+	Bypassed             int64   `json:"bypassed"`                // Bypass (200)
+	Unhandled            int64   `json:"unhandled"`               // Anomaly (5xx, etc.)
 	ActiveDefenseRatePct float64 `json:"active_defense_rate_pct"` // Rejected / ProbesSent * 100
-	RouteMissRatePct     float64 `json:"route_miss_rate_pct"`      // RouteMiss / ProbesSent * 100
-	PassRatePct          float64 `json:"pass_rate_pct"`            // Alias for ActiveDefenseRatePct
+	RouteMissRatePct     float64 `json:"route_miss_rate_pct"`     // RouteMiss / ProbesSent * 100
+	PassRatePct          float64 `json:"pass_rate_pct"`           // Alias for ActiveDefenseRatePct
 }
 
 // SaturationStressReport aggregates all empirical evaluation data for BMK-04.
@@ -287,7 +287,7 @@ func RunLoadGen(cfg LoadGenConfig) (*SaturationStressReport, error) {
 		MaxIdleConnsPerHost: cfg.Concurrency * 4,
 		MaxConnsPerHost:     cfg.Concurrency * 8,
 		IdleConnTimeout:     90 * time.Second,
-		DisableCompression: true,
+		DisableCompression:  true,
 	}
 	client := &http.Client{
 		Transport: transport,

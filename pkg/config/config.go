@@ -245,6 +245,7 @@ type ServerConfig struct {
 	AdminAuth          AdminAuthConfig       `yaml:"admin_auth" json:"admin_auth"`
 	AdminSubnets       []string              `yaml:"admin_subnets" json:"admin_subnets"`
 	TrustedProxies     []string              `yaml:"trusted_proxies" json:"trusted_proxies"`
+	InboundChunkedMode string                `yaml:"inbound_chunked_mode" json:"inbound_chunked_mode"`
 }
 
 // StaticConfig captures legacy static asset directory settings.
@@ -269,6 +270,7 @@ type ProxyTransportConfig struct {
 	Tracing                *bool         `yaml:"tracing,omitempty" json:"tracing,omitempty"`
 	StreamResponse         *bool         `yaml:"stream_response,omitempty" json:"stream_response,omitempty"`
 	ResponseHeaderTimeout  time.Duration `yaml:"response_header_timeout,omitempty" json:"response_header_timeout,omitempty"`
+	InboundChunkedMode     string        `yaml:"inbound_chunked_mode,omitempty" json:"inbound_chunked_mode,omitempty"`
 }
 
 // DefaultProxyTransportConfig returns the canonical transport configuration for the given profile.
@@ -291,6 +293,7 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 			Tracing:                &t,
 			StreamResponse:         &t,
 			ResponseHeaderTimeout:  10 * time.Second,
+			InboundChunkedMode:     "normalize",
 		}
 	}
 	t := true
@@ -308,6 +311,7 @@ func DefaultProxyTransportConfig(profile string) ProxyTransportConfig {
 		Tracing:                &f,
 		StreamResponse:         &t,
 		ResponseHeaderTimeout:  10 * time.Second,
+		InboundChunkedMode:     "normalize",
 	}
 }
 
@@ -352,6 +356,9 @@ func MergeProxyTransportConfig(base, override ProxyTransportConfig) ProxyTranspo
 	}
 	if override.ResponseHeaderTimeout > 0 {
 		res.ResponseHeaderTimeout = override.ResponseHeaderTimeout
+	}
+	if override.InboundChunkedMode != "" {
+		res.InboundChunkedMode = override.InboundChunkedMode
 	}
 	return res
 }
@@ -405,6 +412,8 @@ type ProxyRouteConfig struct {
 	IdleTimeout         time.Duration         `yaml:"idle_timeout,omitempty" json:"idle_timeout,omitempty"`
 	MaxWorkers          int                   `yaml:"max_workers,omitempty" json:"max_workers,omitempty"`
 	Transport           *ProxyTransportConfig `yaml:"transport,omitempty" json:"transport,omitempty"`
+	InboundChunkedMode  string                `yaml:"inbound_chunked_mode,omitempty" json:"inbound_chunked_mode,omitempty"`
+	MaxBodyBytes        int64                 `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`
 }
 
 // ResolveTransport merges the route's transport settings with global defaults.
@@ -682,7 +691,8 @@ func DefaultAppConfig() *AppConfig {
 			AdminAuth: AdminAuthConfig{
 				Enabled: false,
 			},
-			AdminSubnets: []string{"127.0.0.1/32", "::1/128"},
+			AdminSubnets:       []string{"127.0.0.1/32", "::1/128"},
+			InboundChunkedMode: "normalize",
 		},
 		Static: StaticConfig{
 			Enabled: false,
@@ -725,6 +735,11 @@ func (c *AppConfig) ToServerConfig() server.Config {
 		upgradeIdleTimeout = 60 * time.Second
 	}
 
+	inboundChunkedMode := c.Server.InboundChunkedMode
+	if inboundChunkedMode == "" {
+		inboundChunkedMode = "normalize"
+	}
+
 	return server.Config{
 		Addr:                      addr,
 		WorkerPoolSize:            c.Server.WorkerPoolSize,
@@ -749,6 +764,7 @@ func (c *AppConfig) ToServerConfig() server.Config {
 		HTTPRedirectAllowedHosts:  c.Server.HTTPRedirect.AllowedHosts,
 		HTTPRedirectDefaultHost:   c.Server.HTTPRedirect.DefaultHost,
 		HTTPSPort:                 c.Server.Port,
+		InboundChunkedMode:        inboundChunkedMode,
 	}
 }
 

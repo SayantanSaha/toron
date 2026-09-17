@@ -1187,4 +1187,3 @@ func TestConfig_ProxyTransport_StreamResponseDefault(t *testing.T) {
 		}
 	}
 }
-

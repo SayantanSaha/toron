@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-09-17T07:47:42Z",
-  "target_edge": "127.0.0.1:64549",
+  "timestamp": "2026-09-17T09:56:28Z",
+  "target_edge": "127.0.0.1:55077",
   "execution_mode": "Standalone In-Process (Pure Go)",
   "total_scenarios": 30,
   "passed_scenarios": 30,
@@ -57,7 +57,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 4237
+      "execution_time_us": 3492
     },
     {
       "vector_id": "VECTOR-02",
@@ -78,7 +78,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1030
+      "execution_time_us": 836
     },
     {
       "vector_id": "VECTOR-03",
@@ -99,7 +99,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1119
+      "execution_time_us": 959
     },
     {
       "vector_id": "VECTOR-04",
@@ -121,7 +121,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1460
+      "execution_time_us": 1254
     },
     {
       "vector_id": "VECTOR-05",
@@ -143,7 +143,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1408
+      "execution_time_us": 1140
     },
     {
       "vector_id": "VECTOR-06",
@@ -165,7 +165,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1434
+      "execution_time_us": 1240
     },
     {
       "vector_id": "VECTOR-07",
@@ -186,7 +186,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 976
+      "execution_time_us": 748
     },
     {
       "vector_id": "VECTOR-08",
@@ -207,7 +207,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1952
+      "execution_time_us": 1832
     },
     {
       "vector_id": "VECTOR-09",
@@ -228,7 +228,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1664
+      "execution_time_us": 1563
     },
     {
       "vector_id": "VECTOR-10",
@@ -249,7 +249,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1861
+      "execution_time_us": 1749
     },
     {
       "vector_id": "VECTOR-01",
@@ -270,7 +270,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1157
+      "execution_time_us": 1321
     },
     {
       "vector_id": "VECTOR-02",
@@ -291,7 +291,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 906
+      "execution_time_us": 850
     },
     {
       "vector_id": "VECTOR-03",
@@ -312,7 +312,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 778
+      "execution_time_us": 747
     },
     {
       "vector_id": "VECTOR-04",
@@ -334,12 +334,34 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1231
+      "execution_time_us": 1166
     },
     {
       "vector_id": "VECTOR-05",
       "vector_name": "H1-TE.CL-Obfuscated Whitespace",
       "category": "HTTP/1.1 Header Syntax (RFC 7230 §3.2.4)",
+      "backend_runtime": "Python 3.11",
+      "backend_parser": "uvicorn / h11",
+      "backend_prefix": "python",
+      "protocol": "HTTP/1.1",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400,
+        501
+      ],
+      "stage1_socket_closed": true,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 1095
+    },
+    {
+      "vector_id": "VECTOR-06",
+      "vector_name": "H1-Pipelined-Smuggle Buffer Eviction",
+      "category": "HTTP/1.1 Pipelined Buffer Boundary",
       "backend_runtime": "Python 3.11",
       "backend_parser": "uvicorn / h11",
       "backend_prefix": "python",
@@ -359,28 +381,6 @@
       "execution_time_us": 1129
     },
     {
-      "vector_id": "VECTOR-06",
-      "vector_name": "H1-Pipelined-Smuggle Buffer Eviction",
-      "category": "HTTP/1.1 Pipelined Buffer Boundary",
-      "backend_runtime": "Python 3.11",
-      "backend_parser": "uvicorn / h11",
-      "backend_prefix": "python",
-      "protocol": "HTTP/1.1",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400,
-        501
-      ],
-      "stage1_socket_closed": true,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 1157
-    },
-    {
       "vector_id": "VECTOR-07",
       "vector_name": "CRLF-Header-Injection Wire Splitting",
       "category": "Header Injection Defense (CWE-117)",
@@ -399,7 +399,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 799
+      "execution_time_us": 668
     },
     {
       "vector_id": "VECTOR-08",
@@ -420,7 +420,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1606
+      "execution_time_us": 1361
     },
     {
       "vector_id": "VECTOR-09",
@@ -441,7 +441,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1383
+      "execution_time_us": 1247
     },
     {
       "vector_id": "VECTOR-10",
@@ -462,7 +462,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1539
+      "execution_time_us": 1436
     },
     {
       "vector_id": "VECTOR-01",
@@ -483,7 +483,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1050
+      "execution_time_us": 930
     },
     {
       "vector_id": "VECTOR-02",
@@ -504,7 +504,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 720
+      "execution_time_us": 605
     },
     {
       "vector_id": "VECTOR-03",
@@ -525,7 +525,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 710
+      "execution_time_us": 601
     },
     {
       "vector_id": "VECTOR-04",
@@ -547,7 +547,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1173
+      "execution_time_us": 1170
     },
     {
       "vector_id": "VECTOR-05",
@@ -569,7 +569,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1111
+      "execution_time_us": 1135
     },
     {
       "vector_id": "VECTOR-06",
@@ -591,7 +591,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1168
+      "execution_time_us": 1601
     },
     {
       "vector_id": "VECTOR-07",
@@ -612,7 +612,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 743
+      "execution_time_us": 1408
     },
     {
       "vector_id": "VECTOR-08",
@@ -633,7 +633,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1157
+      "execution_time_us": 1119
     },
     {
       "vector_id": "VECTOR-09",
@@ -654,7 +654,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1974
+      "execution_time_us": 1130
     },
     {
       "vector_id": "VECTOR-10",
@@ -675,7 +675,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1364
+      "execution_time_us": 1347
     }
   ]
 }

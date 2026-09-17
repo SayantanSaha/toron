@@ -28,6 +28,7 @@ type Config struct {
 	HTTPRedirectAllowedHosts  []string
 	HTTPRedirectDefaultHost   string
 	HTTPSPort                 int
+	InboundChunkedMode        string
 }
 
 // DefaultConfig provides recommended production defaults.
@@ -52,5 +53,6 @@ func DefaultConfig() Config {
 		HTTPRedirectEnabled:       false,
 		HTTPRedirectPort:          80,
 		HTTPSPort:                 443,
+		InboundChunkedMode:        "normalize",
 	}
 }

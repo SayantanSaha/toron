@@ -36,37 +36,37 @@ type RouteInfo struct {
 
 // InternalAPIConfig configures /internal/api/ route parameters without importing pkg/config.
 type InternalAPIConfig struct {
-	Port                   int                `json:"port"`
-	WorkerPoolSize         int                `json:"worker_pool_size"`
-	ProxyEnabled           bool               `json:"proxy_enabled"`
-	Routes                 []RouteInfo        `json:"routes"`
-	StaticEnabled          bool               `json:"static_enabled"`
-	StaticPrefix           string             `json:"static_prefix"`
-	StaticDir              string             `json:"static_dir"`
-	WAFEnabled             bool               `json:"waf_enabled"`
-	WAFMode                string             `json:"waf_mode"`
-	WAFAnomalyThreshold    int                `json:"waf_anomaly_threshold"`
-	WAFRulesCount          int                `json:"waf_rules_count"`
-	WAFCustomRulesCount    int                `json:"waf_custom_rules_count"`
-	WAFAllowedIPs          []string           `json:"waf_allowed_ips"`
-	WAFDeniedIPs           []string           `json:"waf_denied_ips"`
-	CORSEnabled            bool               `json:"cors_enabled"`
-	CORSAllowedOrigins     []string           `json:"cors_allowed_origins"`
-	SecurityHeadersEnabled bool               `json:"security_headers_enabled"`
-	MTLSEnabled            bool               `json:"mtls_enabled"`
-	DiscoveryEnabled       bool               `json:"discovery_enabled"`
-	DiscoveryFunc          func() []RouteInfo `json:"-"`
-	AuditLogger            *waf.AuditLogger   `json:"-"`
-	AdminAuthEnabled       bool               `json:"admin_auth_enabled"`
-	AdminToken             string             `json:"admin_token"`
-	AdminAPIKeys           []string           `json:"admin_api_keys"`
-	AdminUsername          string             `json:"admin_username"`
-	AdminPassword          string             `json:"admin_password"`
-	AdminUsers             map[string]string  `json:"admin_users"`
-	AdminSubnets           []string           `json:"admin_subnets"`
-	TrustedProxies         []string           `json:"trusted_proxies"`
-	AllowedProxyTestPaths  []string           `json:"allowed_proxy_test_paths"`
-	MaxProxyTestResponseBytes int64           `json:"max_proxy_test_response_bytes,omitempty"`
+	Port                      int                `json:"port"`
+	WorkerPoolSize            int                `json:"worker_pool_size"`
+	ProxyEnabled              bool               `json:"proxy_enabled"`
+	Routes                    []RouteInfo        `json:"routes"`
+	StaticEnabled             bool               `json:"static_enabled"`
+	StaticPrefix              string             `json:"static_prefix"`
+	StaticDir                 string             `json:"static_dir"`
+	WAFEnabled                bool               `json:"waf_enabled"`
+	WAFMode                   string             `json:"waf_mode"`
+	WAFAnomalyThreshold       int                `json:"waf_anomaly_threshold"`
+	WAFRulesCount             int                `json:"waf_rules_count"`
+	WAFCustomRulesCount       int                `json:"waf_custom_rules_count"`
+	WAFAllowedIPs             []string           `json:"waf_allowed_ips"`
+	WAFDeniedIPs              []string           `json:"waf_denied_ips"`
+	CORSEnabled               bool               `json:"cors_enabled"`
+	CORSAllowedOrigins        []string           `json:"cors_allowed_origins"`
+	SecurityHeadersEnabled    bool               `json:"security_headers_enabled"`
+	MTLSEnabled               bool               `json:"mtls_enabled"`
+	DiscoveryEnabled          bool               `json:"discovery_enabled"`
+	DiscoveryFunc             func() []RouteInfo `json:"-"`
+	AuditLogger               *waf.AuditLogger   `json:"-"`
+	AdminAuthEnabled          bool               `json:"admin_auth_enabled"`
+	AdminToken                string             `json:"admin_token"`
+	AdminAPIKeys              []string           `json:"admin_api_keys"`
+	AdminUsername             string             `json:"admin_username"`
+	AdminPassword             string             `json:"admin_password"`
+	AdminUsers                map[string]string  `json:"admin_users"`
+	AdminSubnets              []string           `json:"admin_subnets"`
+	TrustedProxies            []string           `json:"trusted_proxies"`
+	AllowedProxyTestPaths     []string           `json:"allowed_proxy_test_paths"`
+	MaxProxyTestResponseBytes int64              `json:"max_proxy_test_response_bytes,omitempty"`
 }
 
 // UpstreamNodeHealth describes the health state of an individual upstream service node.

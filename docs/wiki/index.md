@@ -28,6 +28,8 @@ depends_on:
   - REQ-128
   - REQ-130
   - REQ-132
+  - REQ-133
+  - TASK-156
 
 derived_from:
   - PRD.md
@@ -45,6 +47,7 @@ derived_from:
   - ADR-128
   - ADR-130
   - ADR-132
+  - ADR-133
   - SEC-26
   - SEC-27
   - SEC-28
@@ -60,7 +63,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.30 Milestone)
+# Toron Documentation Wiki (v1.5.31 Milestone)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -73,6 +76,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Configuration Guide](./configuration.md) – Dual-file YAML configuration guide (`config.yaml` & `routes.yaml`).
 
 ### ⚙️ Core Architecture & Protocols
+- [Inbound Chunked Ingestion & Edge Normalization](./features/inbound-chunked-ingestion.md) – Native HTTP/1.1 chunked request ingestion, zero-tolerance wire decoding (RFC 9112 §7.1), Active Ingress Smuggling Firewall, and upstream Content-Length re-framing.
 - [Event Reactor Core](./features/event-reactor.md) – Event-driven concurrency, explicit TCP_NODELAY tuning, adaptive deadline amortization, and worker pool.
 - [HTTP/2 Engine](./features/http2.md) – Cleartext `h2c` prior-knowledge and stream multiplexing.
 - [HTTP/3 QUIC Protocol Engine](./features/http3.md) – HTTP/3 over QUIC (UDP), concurrent listener, and Alt-Svc upgrade advertising.
@@ -116,5 +120,5 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.30).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.31).
 

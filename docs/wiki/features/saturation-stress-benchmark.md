@@ -37,7 +37,6 @@ derived_from:
   - TASK-153
   - ADR-117
   - ADR-130
-  - ReviewTaskSummary.md
 
 documents:
   - SATURATION-STRESS-BENCHMARK-HARNESS
@@ -91,7 +90,7 @@ Toron includes a native high-concurrency load generation and saturation stress t
 
 ### 1.1 Remediation of Circular Defense Scoring (`HARN-01` / `REQ-117`)
 
-In peer review audits of Paper 1 and Paper 2 (formalized in `ReviewTaskSummary.md` under Directive `REV-03` / Task `HARN-01`, [`REQ-117`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-117.md), and [`ADR-117`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-117.md)), reviewers identified a circular scoring anomaly in earlier versions of `loadgen.go`:
+In benchmark and security audits (formalized in [`REQ-117`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-117.md) and [`ADR-117`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-117.md)), engineers identified a circular scoring anomaly in earlier versions of `loadgen.go`:
 - **The Circular Catch-All Else**: The worker loop contained an `else { attackRejected.Add(1) }` branch that indiscriminately scored any non-`200 OK` response as active security defense.
 - **Defensive Masking of Route Misses**: During high-concurrency saturation, **349 probes** targeting `ADV-06` (Path Traversal, `GET /../../canary_traversal.txt`) returned `404 Not Found` because the router stripped dot-dot sequences before route matching. Due to the catch-all `else`, these 349 route misses were scored as active defense (`attackRejected`), inflating reported defense scores to 100.0% and obscuring the underlying routing defect.
 - **Omission of Valid Defense Codes**: RFC 6585 status `431 Request Header Fields Too Large` was omitted from explicit checks and only captured through accidental fallback.

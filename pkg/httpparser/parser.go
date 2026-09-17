@@ -137,13 +137,18 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 		return nil, fmt.Errorf("%w: %v", ErrBadRequest, err)
 	}
 
-	parts := strings.Split(strings.TrimRight(requestLine, "\r\n"), " ")
+	requestLineTrimmed := trimLineEnding(requestLine)
+	if strings.ContainsAny(requestLineTrimmed, "\r\n") {
+		return nil, fmt.Errorf("%w: bare CR or LF in request line", ErrBadRequest)
+	}
+
+	parts := strings.Split(requestLineTrimmed, " ")
 	if len(parts) != 3 {
 		return nil, fmt.Errorf("%w: invalid request line", ErrBadRequest)
 	}
 
 	method, reqURI, proto := parts[0], parts[1], parts[2]
-	if !strings.HasPrefix(proto, "HTTP/1.") {
+	if proto != "HTTP/1.1" && proto != "HTTP/1.0" {
 		return nil, ErrUnsupportedProtocol
 	}
 
@@ -160,9 +165,13 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 			return nil, err
 		}
 
-		lineTrimmed := strings.TrimRight(line, "\r\n")
+		lineTrimmed := trimLineEnding(line)
 		if lineTrimmed == "" {
 			break // End of HTTP headers
+		}
+
+		if strings.ContainsAny(lineTrimmed, "\r\n") {
+			return nil, fmt.Errorf("%w: bare CR or LF in header line", ErrBadRequest)
 		}
 
 		headerBytesCount += len(line)
@@ -189,12 +198,19 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 			}
 		}
 		v := strings.TrimSpace(lineTrimmed[colonIdx+1:])
+		for i := 0; i < len(v); i++ {
+			b := v[i]
+			if (b < 0x20 && b != '\t') || b == 0x7f {
+				return nil, fmt.Errorf("%w: control character in header value", ErrBadRequest)
+			}
+		}
 		req.Header.Add(k, v)
 	}
 
 	// HTTP Request Smuggling Prevention (RFC 7230 §3.3.3)
 	clValues := req.Header.Values("Content-Length")
-	if req.Header.Get("Transfer-Encoding") != "" {
+	teValues := req.Header.Values("Transfer-Encoding")
+	if len(teValues) > 0 {
 		if len(clValues) > 0 {
 			return nil, fmt.Errorf("%w: conflicting Content-Length and Transfer-Encoding headers", ErrBadRequest)
 		}
@@ -269,3 +285,15 @@ func readLineBounded(r *bufio.Reader, maxBytes int) (string, error) {
 	}
 	return buf.String(), nil
 }
+
+// trimLineEnding strips exactly one trailing CRLF or LF line ending without stripping bare CR/LF characters.
+func trimLineEnding(line string) string {
+	if strings.HasSuffix(line, "\r\n") {
+		return line[:len(line)-2]
+	}
+	if strings.HasSuffix(line, "\n") {
+		return line[:len(line)-1]
+	}
+	return line
+}
+

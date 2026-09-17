@@ -1,0 +1,380 @@
+=== RUN   TestRequest_RemoteHostAndIP_Parsing
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.1_Standard_IPv4_with_port
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.2_Bare_IPv4_without_port
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.3_Standard_IPv6_with_port_and_brackets
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.4_Bare_IPv6_without_brackets_or_port
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.5_Bracketed_IPv6_without_port_(bracket_stripping)
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.6_Surrounding_whitespace_handling
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.7_Fallback_to_RawConn.RemoteAddr()_when_RemoteAddr_empty
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.8_Fallback_to_RawConn_with_IPv6
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.9_Completely_empty_/_unpopulated_request
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.10_Malformed_address_string_(unparseable_IP)
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.11_Non-IP_string
+=== RUN   TestRequest_RemoteHostAndIP_Parsing/1.12_Nil_receiver_protection
+--- PASS: TestRequest_RemoteHostAndIP_Parsing (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.1_Standard_IPv4_with_port (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.2_Bare_IPv4_without_port (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.3_Standard_IPv6_with_port_and_brackets (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.4_Bare_IPv6_without_brackets_or_port (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.5_Bracketed_IPv6_without_port_(bracket_stripping) (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.6_Surrounding_whitespace_handling (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.7_Fallback_to_RawConn.RemoteAddr()_when_RemoteAddr_empty (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.8_Fallback_to_RawConn_with_IPv6 (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.9_Completely_empty_/_unpopulated_request (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.10_Malformed_address_string_(unparseable_IP) (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.11_Non-IP_string (0.00s)
+    --- PASS: TestRequest_RemoteHostAndIP_Parsing/1.12_Nil_receiver_protection (0.00s)
+=== RUN   TestRequest_NewRequestFromStd_RemoteAddr
+--- PASS: TestRequest_NewRequestFromStd_RemoteAddr (0.00s)
+=== RUN   TestValidateHTTP2Request
+=== RUN   TestValidateHTTP2Request/nil_request
+=== RUN   TestValidateHTTP2Request/valid_request
+=== RUN   TestValidateHTTP2Request/transfer_encoding_rejected
+=== RUN   TestValidateHTTP2Request/connection_header_rejected
+=== RUN   TestValidateHTTP2Request/multiple_content_length_rejected
+=== RUN   TestValidateHTTP2Request/crlf_in_header_rejected
+--- PASS: TestValidateHTTP2Request (0.00s)
+    --- PASS: TestValidateHTTP2Request/nil_request (0.00s)
+    --- PASS: TestValidateHTTP2Request/valid_request (0.00s)
+    --- PASS: TestValidateHTTP2Request/transfer_encoding_rejected (0.00s)
+    --- PASS: TestValidateHTTP2Request/connection_header_rejected (0.00s)
+    --- PASS: TestValidateHTTP2Request/multiple_content_length_rejected (0.00s)
+    --- PASS: TestValidateHTTP2Request/crlf_in_header_rejected (0.00s)
+=== RUN   TestCanonicalKey_Accept
+--- PASS: TestCanonicalKey_Accept (0.00s)
+=== RUN   TestParseRequest_ValidGET
+--- PASS: TestParseRequest_ValidGET (0.00s)
+=== RUN   TestParseRequest_ValidPOSTWithBody
+--- PASS: TestParseRequest_ValidPOSTWithBody (0.00s)
+=== RUN   TestParseRequest_SmugglingRejection
+--- PASS: TestParseRequest_SmugglingRejection (0.00s)
+=== RUN   TestParseRequest_StandaloneTransferEncodingRejection
+--- PASS: TestParseRequest_StandaloneTransferEncodingRejection (0.00s)
+=== RUN   TestParseRequest_HeaderLimits
+--- PASS: TestParseRequest_HeaderLimits (0.00s)
+=== RUN   TestResponse_Serialize
+--- PASS: TestResponse_Serialize (0.00s)
+=== RUN   TestResponse_HeaderCRLFInjection
+--- PASS: TestResponse_HeaderCRLFInjection (0.00s)
+=== RUN   TestIsWebSocketUpgrade
+--- PASS: TestIsWebSocketUpgrade (0.00s)
+=== RUN   TestNewRequestFromStd
+--- PASS: TestNewRequestFromStd (0.00s)
+=== RUN   TestRequest_QueryLazy
+--- PASS: TestRequest_QueryLazy (0.00s)
+=== RUN   TestParseRequest_HeaderFieldNameWhitespaceRejection
+=== RUN   TestParseRequest_HeaderFieldNameWhitespaceRejection/TC-073-01:_Transfer-Encoding_Space_Before_Colon
+=== RUN   TestParseRequest_HeaderFieldNameWhitespaceRejection/TC-073-02:_Header_Tab_Before_Colon
+=== RUN   TestParseRequest_HeaderFieldNameWhitespaceRejection/Leading_Space_Before_Header_Name
+=== RUN   TestParseRequest_HeaderFieldNameWhitespaceRejection/Empty_Header_Name
+=== RUN   TestParseRequest_HeaderFieldNameWhitespaceRejection/TC-073-03:_Valid_Header_Whitespace_Handling
+--- PASS: TestParseRequest_HeaderFieldNameWhitespaceRejection (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameWhitespaceRejection/TC-073-01:_Transfer-Encoding_Space_Before_Colon (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameWhitespaceRejection/TC-073-02:_Header_Tab_Before_Colon (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameWhitespaceRejection/Leading_Space_Before_Header_Name (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameWhitespaceRejection/Empty_Header_Name (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameWhitespaceRejection/TC-073-03:_Valid_Header_Whitespace_Handling (0.00s)
+=== RUN   TestParseRequest_ContentLengthMultiplicityAndConflict
+=== RUN   TestParseRequest_ContentLengthMultiplicityAndConflict/TC-074-01:_Conflicting_Multiple_Content-Length_Headers
+=== RUN   TestParseRequest_ContentLengthMultiplicityAndConflict/TC-074-02:_Comma-Separated_Distinct_Content-Length
+=== RUN   TestParseRequest_ContentLengthMultiplicityAndConflict/TC-074-03:_Duplicate_Identical_Content-Length_Headers
+=== RUN   TestParseRequest_ContentLengthMultiplicityAndConflict/Duplicate_Identical_Comma-Separated_Content-Length
+=== RUN   TestParseRequest_ContentLengthMultiplicityAndConflict/Invalid_Non-Numeric_Content-Length
+=== RUN   TestParseRequest_ContentLengthMultiplicityAndConflict/Negative_Content-Length
+--- PASS: TestParseRequest_ContentLengthMultiplicityAndConflict (0.00s)
+    --- PASS: TestParseRequest_ContentLengthMultiplicityAndConflict/TC-074-01:_Conflicting_Multiple_Content-Length_Headers (0.00s)
+    --- PASS: TestParseRequest_ContentLengthMultiplicityAndConflict/TC-074-02:_Comma-Separated_Distinct_Content-Length (0.00s)
+    --- PASS: TestParseRequest_ContentLengthMultiplicityAndConflict/TC-074-03:_Duplicate_Identical_Content-Length_Headers (0.00s)
+    --- PASS: TestParseRequest_ContentLengthMultiplicityAndConflict/Duplicate_Identical_Comma-Separated_Content-Length (0.00s)
+    --- PASS: TestParseRequest_ContentLengthMultiplicityAndConflict/Invalid_Non-Numeric_Content-Length (0.00s)
+    --- PASS: TestParseRequest_ContentLengthMultiplicityAndConflict/Negative_Content-Length (0.00s)
+=== RUN   TestParseRequest_BufioReaderReuse
+--- PASS: TestParseRequest_BufioReaderReuse (0.00s)
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_@
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Parentheses_(_)
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Comma_,
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Slash_/
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Semicolon_;
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Angle_Brackets_<_>
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Equal_Sign_=
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Question_Mark_?
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Square_Brackets_[_]
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Backslash_\
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Curly_Braces_{_}
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Double_Quote_"
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Control_Byte_NUL_(0x00)
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Control_Byte_BEL_(0x07)
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Control_Byte_ESC_(0x1B)
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Control_Byte_DEL_(0x7F)
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/High-Bit_Byte_0x80
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/High-Bit_Byte_0xFF
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Valid_RFC_7230_Special_Characters
+=== RUN   TestParseRequest_HeaderFieldNameTokenGrammar/Valid_Standard_Headers
+--- PASS: TestParseRequest_HeaderFieldNameTokenGrammar (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_@ (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Parentheses_(_) (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Comma_, (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Slash_/ (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Semicolon_; (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Angle_Brackets_<_> (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Equal_Sign_= (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Question_Mark_? (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Square_Brackets_[_] (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Backslash_\ (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Curly_Braces_{_} (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Delimiter_Double_Quote_" (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Control_Byte_NUL_(0x00) (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Control_Byte_BEL_(0x07) (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Control_Byte_ESC_(0x1B) (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Control_Byte_DEL_(0x7F) (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/High-Bit_Byte_0x80 (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/High-Bit_Byte_0xFF (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Valid_RFC_7230_Special_Characters (0.00s)
+    --- PASS: TestParseRequest_HeaderFieldNameTokenGrammar/Valid_Standard_Headers (0.00s)
+=== RUN   TestParseRequest_PooledBodyLifecycle
+--- PASS: TestParseRequest_PooledBodyLifecycle (0.00s)
+=== RUN   TestParseRequest_LargeBodyFallback
+--- PASS: TestParseRequest_LargeBodyFallback (0.00s)
+=== RUN   TestParseRequest_IdempotentClose
+--- PASS: TestParseRequest_IdempotentClose (0.00s)
+=== RUN   TestParseRequest_ConcurrentPoolRace
+--- PASS: TestParseRequest_ConcurrentPoolRace (0.00s)
+=== RUN   TestParser_InboundSmugglingGuard_Preserved
+=== RUN   TestParser_InboundSmugglingGuard_Preserved/Standalone_chunked_transfer_encoding_rejected_with_501
+=== RUN   TestParser_InboundSmugglingGuard_Preserved/Conflicting_Content-Length_and_Transfer-Encoding_rejected_with_400
+=== RUN   TestParser_InboundSmugglingGuard_Preserved/Empty_Transfer-Encoding_rejected_with_501
+=== RUN   TestParser_InboundSmugglingGuard_Preserved/Mixed_case_empty_Transfer-Encoding_rejected_with_501
+=== RUN   TestParser_InboundSmugglingGuard_Preserved/Conflicting_Content-Length_and_empty_Transfer-Encoding_rejected_with_400
+--- PASS: TestParser_InboundSmugglingGuard_Preserved (0.00s)
+    --- PASS: TestParser_InboundSmugglingGuard_Preserved/Standalone_chunked_transfer_encoding_rejected_with_501 (0.00s)
+    --- PASS: TestParser_InboundSmugglingGuard_Preserved/Conflicting_Content-Length_and_Transfer-Encoding_rejected_with_400 (0.00s)
+    --- PASS: TestParser_InboundSmugglingGuard_Preserved/Empty_Transfer-Encoding_rejected_with_501 (0.00s)
+    --- PASS: TestParser_InboundSmugglingGuard_Preserved/Mixed_case_empty_Transfer-Encoding_rejected_with_501 (0.00s)
+    --- PASS: TestParser_InboundSmugglingGuard_Preserved/Conflicting_Content-Length_and_empty_Transfer-Encoding_rejected_with_400 (0.00s)
+=== RUN   TestRequest_ContextMethods
+--- PASS: TestRequest_ContextMethods (0.00s)
+=== RUN   TestParseRequest_ProtocolVersionValidation
+=== RUN   TestParseRequest_ProtocolVersionValidation/HTTP/1.1_valid
+=== RUN   TestParseRequest_ProtocolVersionValidation/HTTP/1.0_valid
+=== RUN   TestParseRequest_ProtocolVersionValidation/HTTP/1.Chunk_invalid_suffix
+=== RUN   TestParseRequest_ProtocolVersionValidation/HTTP/1.2_unsupported
+=== RUN   TestParseRequest_ProtocolVersionValidation/HTTP/2.0_unsupported
+=== RUN   TestParseRequest_ProtocolVersionValidation/HTTP/0.9_unsupported
+=== RUN   TestParseRequest_ProtocolVersionValidation/HTTP/1._invalid
+=== RUN   TestParseRequest_ProtocolVersionValidation/CUSTOM_invalid
+--- PASS: TestParseRequest_ProtocolVersionValidation (0.00s)
+    --- PASS: TestParseRequest_ProtocolVersionValidation/HTTP/1.1_valid (0.00s)
+    --- PASS: TestParseRequest_ProtocolVersionValidation/HTTP/1.0_valid (0.00s)
+    --- PASS: TestParseRequest_ProtocolVersionValidation/HTTP/1.Chunk_invalid_suffix (0.00s)
+    --- PASS: TestParseRequest_ProtocolVersionValidation/HTTP/1.2_unsupported (0.00s)
+    --- PASS: TestParseRequest_ProtocolVersionValidation/HTTP/2.0_unsupported (0.00s)
+    --- PASS: TestParseRequest_ProtocolVersionValidation/HTTP/0.9_unsupported (0.00s)
+    --- PASS: TestParseRequest_ProtocolVersionValidation/HTTP/1._invalid (0.00s)
+    --- PASS: TestParseRequest_ProtocolVersionValidation/CUSTOM_invalid (0.00s)
+=== RUN   TestParseRequest_BareCRLFRejection
+=== RUN   TestParseRequest_BareCRLFRejection/Bare_CR_in_header_field_value
+=== RUN   TestParseRequest_BareCRLFRejection/Fuzzer_crash_payload:_0_*_HTTP/1.0_with_0:_Chunk0
+=== RUN   TestParseRequest_BareCRLFRejection/Bare_LF_in_header_line
+=== RUN   TestParseRequest_BareCRLFRejection/Bare_CR_in_request_line
+=== RUN   TestParseRequest_BareCRLFRejection/Fuzzer_crash_payload:_0_*_HTTP/1.0_with_rogue_CR_before_CRLF
+=== RUN   TestParseRequest_BareCRLFRejection/Rogue_CR_in_header_end:_\r\r\n
+--- PASS: TestParseRequest_BareCRLFRejection (0.00s)
+    --- PASS: TestParseRequest_BareCRLFRejection/Bare_CR_in_header_field_value (0.00s)
+    --- PASS: TestParseRequest_BareCRLFRejection/Fuzzer_crash_payload:_0_*_HTTP/1.0_with_0:_Chunk0 (0.00s)
+    --- PASS: TestParseRequest_BareCRLFRejection/Bare_LF_in_header_line (0.00s)
+    --- PASS: TestParseRequest_BareCRLFRejection/Bare_CR_in_request_line (0.00s)
+    --- PASS: TestParseRequest_BareCRLFRejection/Fuzzer_crash_payload:_0_*_HTTP/1.0_with_rogue_CR_before_CRLF (0.00s)
+    --- PASS: TestParseRequest_BareCRLFRejection/Rogue_CR_in_header_end:_\r\r\n (0.00s)
+=== RUN   TestParseRequest_HeaderValueControlCharRejection
+=== RUN   TestParseRequest_HeaderValueControlCharRejection/Valid_ASCII_value
+=== RUN   TestParseRequest_HeaderValueControlCharRejection/Valid_value_with_tab
+=== RUN   TestParseRequest_HeaderValueControlCharRejection/Valid_UTF-8_/_obs-text_value
+=== RUN   TestParseRequest_HeaderValueControlCharRejection/CONTROL-002_Bell_character_(0x07)
+=== RUN   TestParseRequest_HeaderValueControlCharRejection/Null_byte_(0x00)
+=== RUN   TestParseRequest_HeaderValueControlCharRejection/Escape_character_(0x1B)
+=== RUN   TestParseRequest_HeaderValueControlCharRejection/Backspace_character_(0x08)
+=== RUN   TestParseRequest_HeaderValueControlCharRejection/Delete_character_(0x7F)
+--- PASS: TestParseRequest_HeaderValueControlCharRejection (0.00s)
+    --- PASS: TestParseRequest_HeaderValueControlCharRejection/Valid_ASCII_value (0.00s)
+    --- PASS: TestParseRequest_HeaderValueControlCharRejection/Valid_value_with_tab (0.00s)
+    --- PASS: TestParseRequest_HeaderValueControlCharRejection/Valid_UTF-8_/_obs-text_value (0.00s)
+    --- PASS: TestParseRequest_HeaderValueControlCharRejection/CONTROL-002_Bell_character_(0x07) (0.00s)
+    --- PASS: TestParseRequest_HeaderValueControlCharRejection/Null_byte_(0x00) (0.00s)
+    --- PASS: TestParseRequest_HeaderValueControlCharRejection/Escape_character_(0x1B) (0.00s)
+    --- PASS: TestParseRequest_HeaderValueControlCharRejection/Backspace_character_(0x08) (0.00s)
+    --- PASS: TestParseRequest_HeaderValueControlCharRejection/Delete_character_(0x7F) (0.00s)
+=== RUN   TestHttpParser_BufferPool_RecyclingAndReset
+=== RUN   TestHttpParser_BufferPool_RecyclingAndReset/Subtest_8A_(Buffer_Hygiene_&_Clean_Reset)
+=== RUN   TestHttpParser_BufferPool_RecyclingAndReset/Subtest_8B_(Copy_Buffer_Slab_Pool)
+--- PASS: TestHttpParser_BufferPool_RecyclingAndReset (0.00s)
+    --- PASS: TestHttpParser_BufferPool_RecyclingAndReset/Subtest_8A_(Buffer_Hygiene_&_Clean_Reset) (0.00s)
+    --- PASS: TestHttpParser_BufferPool_RecyclingAndReset/Subtest_8B_(Copy_Buffer_Slab_Pool) (0.00s)
+=== RUN   TestHttpParser_Response_ZeroCopyDualWriteSerialization
+=== RUN   TestHttpParser_Response_ZeroCopyDualWriteSerialization/Subtest_8C_(Zero-Copy_Dual-Write_Serialization)
+=== RUN   TestHttpParser_Response_ZeroCopyDualWriteSerialization/Subtest_8D_(Streaming_Header_Serialization)
+--- PASS: TestHttpParser_Response_ZeroCopyDualWriteSerialization (0.00s)
+    --- PASS: TestHttpParser_Response_ZeroCopyDualWriteSerialization/Subtest_8C_(Zero-Copy_Dual-Write_Serialization) (0.00s)
+    --- PASS: TestHttpParser_Response_ZeroCopyDualWriteSerialization/Subtest_8D_(Streaming_Header_Serialization) (0.00s)
+=== RUN   TestHttpParser_ResponseBufPool_RecyclingAndHygiene
+=== RUN   TestHttpParser_ResponseBufPool_RecyclingAndHygiene/Subtest_7A_(Acquisition_&_Slab_Capacity)
+=== RUN   TestHttpParser_ResponseBufPool_RecyclingAndHygiene/Subtest_7B_(Modification_&_Clean_Resetting)
+=== RUN   TestHttpParser_ResponseBufPool_RecyclingAndHygiene/Subtest_7C_(Nil_Pointer_Safety)
+=== RUN   TestHttpParser_ResponseBufPool_RecyclingAndHygiene/Subtest_7D_(Large_Header_Reallocation_Safety)
+--- PASS: TestHttpParser_ResponseBufPool_RecyclingAndHygiene (0.00s)
+    --- PASS: TestHttpParser_ResponseBufPool_RecyclingAndHygiene/Subtest_7A_(Acquisition_&_Slab_Capacity) (0.00s)
+    --- PASS: TestHttpParser_ResponseBufPool_RecyclingAndHygiene/Subtest_7B_(Modification_&_Clean_Resetting) (0.00s)
+    --- PASS: TestHttpParser_ResponseBufPool_RecyclingAndHygiene/Subtest_7C_(Nil_Pointer_Safety) (0.00s)
+    --- PASS: TestHttpParser_ResponseBufPool_RecyclingAndHygiene/Subtest_7D_(Large_Header_Reallocation_Safety) (0.00s)
+=== RUN   TestHttpParser_Response_ZeroAllocationSerialization
+--- PASS: TestHttpParser_Response_ZeroAllocationSerialization (0.00s)
+=== RUN   TestHttpParser_Response_CRLFProtectionAndDualWrite
+=== RUN   TestHttpParser_Response_CRLFProtectionAndDualWrite/Subtest_9A_(Clean_Header_Path)
+=== RUN   TestHttpParser_Response_CRLFProtectionAndDualWrite/Subtest_9B_(CRLF_Injection_Neutralization)
+=== RUN   TestHttpParser_Response_CRLFProtectionAndDualWrite/Subtest_9C_(Wire_Format_RFC_Compliance)
+=== RUN   TestHttpParser_Response_CRLFProtectionAndDualWrite/Subtest_9D_(Dual-Write_Body_Handling)
+--- PASS: TestHttpParser_Response_CRLFProtectionAndDualWrite (0.00s)
+    --- PASS: TestHttpParser_Response_CRLFProtectionAndDualWrite/Subtest_9A_(Clean_Header_Path) (0.00s)
+    --- PASS: TestHttpParser_Response_CRLFProtectionAndDualWrite/Subtest_9B_(CRLF_Injection_Neutralization) (0.00s)
+    --- PASS: TestHttpParser_Response_CRLFProtectionAndDualWrite/Subtest_9C_(Wire_Format_RFC_Compliance) (0.00s)
+    --- PASS: TestHttpParser_Response_CRLFProtectionAndDualWrite/Subtest_9D_(Dual-Write_Body_Handling) (0.00s)
+=== RUN   TestHttpParser_ResponseBufPool_ConcurrentStress
+--- PASS: TestHttpParser_ResponseBufPool_ConcurrentStress (0.00s)
+=== RUN   FuzzParseRequest
+=== RUN   FuzzParseRequest/seed#0
+=== RUN   FuzzParseRequest/seed#1
+=== RUN   FuzzParseRequest/seed#2
+=== RUN   FuzzParseRequest/seed#3
+=== RUN   FuzzParseRequest/seed#4
+=== RUN   FuzzParseRequest/seed#5
+=== RUN   FuzzParseRequest/seed#6
+=== RUN   FuzzParseRequest/seed#7
+=== RUN   FuzzParseRequest/seed#8
+=== RUN   FuzzParseRequest/seed#9
+=== RUN   FuzzParseRequest/seed#10
+=== RUN   FuzzParseRequest/seed#11
+=== RUN   FuzzParseRequest/seed#12
+=== RUN   FuzzParseRequest/seed#13
+=== RUN   FuzzParseRequest/seed#14
+=== RUN   FuzzParseRequest/seed#15
+=== RUN   FuzzParseRequest/seed#16
+=== RUN   FuzzParseRequest/seed#17
+=== RUN   FuzzParseRequest/seed#18
+=== RUN   FuzzParseRequest/seed#19
+=== RUN   FuzzParseRequest/seed#20
+=== RUN   FuzzParseRequest/seed#21
+=== RUN   FuzzParseRequest/seed#22
+=== RUN   FuzzParseRequest/seed#23
+=== RUN   FuzzParseRequest/seed#24
+=== RUN   FuzzParseRequest/seed#25
+--- PASS: FuzzParseRequest (0.00s)
+    --- PASS: FuzzParseRequest/seed#0 (0.00s)
+    --- PASS: FuzzParseRequest/seed#1 (0.00s)
+    --- PASS: FuzzParseRequest/seed#2 (0.00s)
+    --- PASS: FuzzParseRequest/seed#3 (0.00s)
+    --- PASS: FuzzParseRequest/seed#4 (0.00s)
+    --- PASS: FuzzParseRequest/seed#5 (0.00s)
+    --- PASS: FuzzParseRequest/seed#6 (0.00s)
+    --- PASS: FuzzParseRequest/seed#7 (0.00s)
+    --- PASS: FuzzParseRequest/seed#8 (0.00s)
+    --- PASS: FuzzParseRequest/seed#9 (0.00s)
+    --- PASS: FuzzParseRequest/seed#10 (0.00s)
+    --- PASS: FuzzParseRequest/seed#11 (0.00s)
+    --- PASS: FuzzParseRequest/seed#12 (0.00s)
+    --- PASS: FuzzParseRequest/seed#13 (0.00s)
+    --- PASS: FuzzParseRequest/seed#14 (0.00s)
+    --- PASS: FuzzParseRequest/seed#15 (0.00s)
+    --- PASS: FuzzParseRequest/seed#16 (0.00s)
+    --- PASS: FuzzParseRequest/seed#17 (0.00s)
+    --- PASS: FuzzParseRequest/seed#18 (0.00s)
+    --- PASS: FuzzParseRequest/seed#19 (0.00s)
+    --- PASS: FuzzParseRequest/seed#20 (0.00s)
+    --- PASS: FuzzParseRequest/seed#21 (0.00s)
+    --- PASS: FuzzParseRequest/seed#22 (0.00s)
+    --- PASS: FuzzParseRequest/seed#23 (0.00s)
+    --- PASS: FuzzParseRequest/seed#24 (0.00s)
+    --- PASS: FuzzParseRequest/seed#25 (0.00s)
+=== RUN   FuzzDifferentialWithStdLib
+=== RUN   FuzzDifferentialWithStdLib/seed#0
+=== RUN   FuzzDifferentialWithStdLib/seed#1
+=== RUN   FuzzDifferentialWithStdLib/seed#2
+=== RUN   FuzzDifferentialWithStdLib/seed#3
+=== RUN   FuzzDifferentialWithStdLib/seed#4
+=== RUN   FuzzDifferentialWithStdLib/seed#5
+=== RUN   FuzzDifferentialWithStdLib/seed#6
+=== RUN   FuzzDifferentialWithStdLib/seed#7
+=== RUN   FuzzDifferentialWithStdLib/seed#8
+=== RUN   FuzzDifferentialWithStdLib/seed#9
+=== RUN   FuzzDifferentialWithStdLib/seed#10
+=== RUN   FuzzDifferentialWithStdLib/seed#11
+=== RUN   FuzzDifferentialWithStdLib/seed#12
+=== RUN   FuzzDifferentialWithStdLib/seed#13
+=== RUN   FuzzDifferentialWithStdLib/seed#14
+=== RUN   FuzzDifferentialWithStdLib/seed#15
+=== RUN   FuzzDifferentialWithStdLib/seed#16
+=== RUN   FuzzDifferentialWithStdLib/seed#17
+=== RUN   FuzzDifferentialWithStdLib/seed#18
+=== RUN   FuzzDifferentialWithStdLib/seed#19
+=== RUN   FuzzDifferentialWithStdLib/seed#20
+=== RUN   FuzzDifferentialWithStdLib/seed#21
+=== RUN   FuzzDifferentialWithStdLib/seed#22
+=== RUN   FuzzDifferentialWithStdLib/seed#23
+=== RUN   FuzzDifferentialWithStdLib/seed#24
+=== RUN   FuzzDifferentialWithStdLib/seed#25
+--- PASS: FuzzDifferentialWithStdLib (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#0 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#1 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#2 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#3 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#4 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#5 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#6 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#7 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#8 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#9 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#10 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#11 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#12 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#13 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#14 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#15 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#16 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#17 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#18 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#19 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#20 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#21 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#22 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#23 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#24 (0.00s)
+    --- PASS: FuzzDifferentialWithStdLib/seed#25 (0.00s)
+=== RUN   FuzzHeaderGrammar
+=== RUN   FuzzHeaderGrammar/seed#0
+=== RUN   FuzzHeaderGrammar/seed#1
+=== RUN   FuzzHeaderGrammar/seed#2
+=== RUN   FuzzHeaderGrammar/seed#3
+=== RUN   FuzzHeaderGrammar/seed#4
+=== RUN   FuzzHeaderGrammar/seed#5
+=== RUN   FuzzHeaderGrammar/seed#6
+=== RUN   FuzzHeaderGrammar/seed#7
+=== RUN   FuzzHeaderGrammar/seed#8
+=== RUN   FuzzHeaderGrammar/seed#9
+--- PASS: FuzzHeaderGrammar (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#0 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#1 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#2 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#3 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#4 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#5 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#6 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#7 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#8 (0.00s)
+    --- PASS: FuzzHeaderGrammar/seed#9 (0.00s)
+=== RUN   FuzzChunkFraming
+fuzz: elapsed: 0s, gathering baseline coverage: 0/185 completed
+fuzz: elapsed: 0s, gathering baseline coverage: 185/185 completed, now fuzzing with 8 workers
+fuzz: elapsed: 2s, execs: 252257 (120586/sec), new interesting: 7 (total: 192)
+--- PASS: FuzzChunkFraming (2.12s)
+=== NAME  
+PASS
+ok  	toron/pkg/httpparser	2.389s

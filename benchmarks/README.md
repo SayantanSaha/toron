@@ -15,6 +15,7 @@ The suite is engineered to generate empirical figures, tables, latency distribut
 5. [Throughput & Tail Latency Benchmark (`benchmarks/wrk2/run_wrk2.sh`)](#-2-throughput--tail-latency-benchmark-benchmarkswrk2run_wrk2sh)
 6. [Saturation Stress & Adversarial Injection Benchmark (`benchmarks/wrk2/run_saturation_stress.sh`, BMK-04, HARN-01)](#-3-saturation-stress--adversarial-injection-benchmark-benchmarkswrk2run_saturation_stresssh)
 7. [Differential Protocol Security Fuzzer (`benchmarks/fuzzer/run_fuzzer.sh`, BMK-01, BMK-02, HARN-02)](#-4-differential-protocol-security-fuzzer-benchmarksfuzzerrun_fuzzersh)
+   - [Methodological Disambiguation & Generative Fuzzing (`run_generative_fuzz.sh`)](#45-methodological-disambiguation-invariant-regression-suite-vs-generative-differential-fuzzing-req-132-adr-132-task-155)
 8. [Heterogeneous Multi-Hop Backend Origin Testbed (`benchmarks/multihop/run_multihop.sh`, BMK-03)](#-5-heterogeneous-multi-hop-backend-origin-testbed-benchmarksmultihoprun_multihopsh)
 9. [Controlled Ablation Experiment Suite (`benchmarks/ablation/run_ablation.sh`, BMK-05)](#-6-controlled-ablation-experiment-suite-benchmarksablationrun_ablationsh)
 10. [Result Retention & Historical Manifest Architecture (`REQ-119`, `ADR-119`, `TASK-142`)](#-7-result-retention--historical-manifest-architecture-req-119-adr-119)
@@ -409,6 +410,55 @@ bash benchmarks/fuzzer/run_fuzzer.sh -t 127.0.0.1:8080 -k 1000 -w 50
 
 # 3. Differential comparison against baseline server (e.g., NGINX on port 8081)
 bash benchmarks/fuzzer/run_fuzzer.sh -t 127.0.0.1:8080 -b 127.0.0.1:8081 -k 1000 -w 50
+```
+
+### 4.5 Methodological Disambiguation: Invariant Regression Suite vs. Generative Differential Fuzzing (`REQ-132`, `ADR-132`, `TASK-155`)
+
+To establish scientific clarity and resolve the circular oracle critique identified during peer reviews, Toron formalizes two distinct, complementary verification regimes:
+
+```text
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                         TORON PROTOCOL SECURITY & ROBUSTNESS SPECTRUM                            │
+├──────────────────────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                                  │
+│   PARADIGM A: PROTOCOL INVARIANT REGRESSION SUITE        PARADIGM B: GENERATIVE DIFFERENTIAL     │
+│   (benchmarks/fuzzer/diff_fuzzer.go)                     FUZZER (pkg/httpparser/fuzz_test.go)   │
+│   ───────────────────────────────────────────────        ────────────────────────────────────    │
+│   • Execution Target: Live TCP Sockets (:8080)           • Execution Target: In-Memory L7 Parser │
+│   • Input Space: Deterministic (19 curated vectors)      • Input Space: Unbounded / Generative   │
+│   • Feedback: Socket Round-Trip Latency (Timer)          • Feedback: Compiler Edge Coverage      │
+│   • Oracle: Hardcoded Status Set (Self-contained)        • Oracle: Non-Circular Differential     │
+│   • Objective: Measure wire-speed rejection speed        • Objective: Discover zero-day crashes  │
+│     under Equation 7 (K=1,000 trials, p99 tail).           and HTTP framing desynchronizations.  │
+│                                                                                                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+#### Taxonomy of Empirical Assurance Matrix
+
+| Dimension | Paradigm A: Protocol Invariant Regression Suite | Paradigm B: Coverage-Guided Generative Differential Fuzzer |
+| :--- | :--- | :--- |
+| **Primary Code Artifact** | [`benchmarks/fuzzer/diff_fuzzer.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/fuzzer/diff_fuzzer.go) | [`pkg/httpparser/fuzz_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/fuzz_test.go) |
+| **Runner Script** | [`benchmarks/fuzzer/run_fuzzer.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/fuzzer/run_fuzzer.sh) | [`benchmarks/fuzzer/run_generative_fuzz.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/fuzzer/run_generative_fuzz.sh) |
+| **Execution Command** | `go run benchmarks/fuzzer/diff_fuzzer.go` | `go test -fuzz=. ./pkg/httpparser` |
+| **Execution Target** | Live L4/L7 TCP Server Socket (`127.0.0.1:8080`) | In-Memory Core Parser (`httpparser.ParseRequest`) |
+| **Input Space** | 19 Curated Static Attack Vectors | Infinite / Stochastic Continuous Mutation |
+| **Feedback Mechanism** | High-Precision Microsecond Timer ($T_{\text{reject}}$) | Go Runtime Coverage Bitmap (`testing.F`) |
+| **Evaluation Oracle** | Invariant Status Match (`tc.ExpectedStatus`) | Reference Differential Oracle (`net/http.ReadRequest`) |
+| **Primary Output** | Mean Latency, Tail Latency ($p50, p90, p99, p99.9$), 95% CI | Mutations Evaluated, Coverage Paths, Crash Artifacts |
+| **Target Question** | *"How fast does Toron fail-fast reject known attacks?"* | *"Does Toron contain unknown parser flaws or desyncs?"* |
+
+#### Running Generative Fuzzing Campaigns
+
+```bash
+# 1. Standard full fuzzing campaign across all 4 targets (30s per target)
+bash benchmarks/fuzzer/run_generative_fuzz.sh -target all -fuzztime 30s
+
+# 2. Focused differential fuzzing against Go standard library (60s)
+bash benchmarks/fuzzer/run_generative_fuzz.sh -target FuzzDifferentialWithStdLib -fuzztime 60s
+
+# 3. Clean temporary fuzzing logs
+bash benchmarks/fuzzer/run_generative_fuzz.sh --clean
 ```
 
 ---

@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-16
+updated: 2026-09-17
 
 depends_on:
   - REQ-001
@@ -26,6 +26,8 @@ depends_on:
   - REQ-126
   - REQ-127
   - REQ-128
+  - REQ-130
+  - REQ-132
 
 derived_from:
   - PRD.md
@@ -41,6 +43,8 @@ derived_from:
   - ADR-126
   - ADR-127
   - ADR-128
+  - ADR-130
+  - ADR-132
   - SEC-26
   - SEC-27
   - SEC-28
@@ -56,7 +60,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.29 Release)
+# Toron Documentation Wiki (v1.5.30 Milestone)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -101,6 +105,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [High-Concurrency Saturation Stress Benchmark & Status Classification](./features/saturation-stress-benchmark.md) – Dual-stream saturation testing, four-tier status classification taxonomy, and Table 6 metrics (BMK-04, HARN-01).
 - [Heterogeneous Multi-Hop Origin Testbed](./features/multihop-testbed.md) – Dual-mode (standalone & Docker Compose) evaluation across Node.js (llhttp), Python (uvicorn/h11), and Go (net/http) origins, wire-level protocol adapters, and zero-desync canary validation (BMK-03, REQ-120).
 - [Multi-Proxy Differential Docker Benchmark](./features/docker-compare-benchmark.md) – Automated comparative benchmarking comparing Toron against NGINX, Traefik, Caddy, and HAProxy fronting identical heterogeneous upstreams (REQ-121, REQ-122).
+- [Protocol Invariant Regression Suite & Generative Fuzzing Engine](./features/differential-fuzzer-metrics.md) – Wire-level rejection latency profiling (Equation 7, K=1,000) and coverage-guided generative differential fuzzing against Go standard library (REQ-118, REQ-132).
 - [Dummy Microservices Suite](./features/dummy-services.md) – Cluster of 10 test microservices.
 
 ### 📖 References
@@ -111,5 +116,5 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.29).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.30).
 

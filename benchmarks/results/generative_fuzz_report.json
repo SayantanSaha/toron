@@ -1,0 +1,55 @@
+{
+  "timestamp": "2026-09-17T07:47:00Z",
+  "toron_version": "v1.5.29",
+  "git_commit": "37c706b",
+  "go_version": "go1.27.1",
+  "host_os": "darwin",
+  "host_arch": "arm64",
+  "fuzztime_per_target": "2s",
+  "total_duration_sec": 14,
+  "overall_status": "PASS",
+  "crashes_detected": 0,
+  "targets": [
+    {
+      "name": "FuzzParseRequest",
+      "status": "PASS",
+      "duration_sec": 4,
+      "total_executions": 199982,
+      "executions_per_sec": 0,
+      "log_file": "/Users/sneha/Developer/toron-research/toron/benchmarks/results/fuzz/fuzz_FuzzParseRequest.log"
+    }
+    ,
+    {
+      "name": "FuzzDifferentialWithStdLib",
+      "status": "PASS",
+      "duration_sec": 4,
+      "total_executions": 184959,
+      "executions_per_sec": 0,
+      "log_file": "/Users/sneha/Developer/toron-research/toron/benchmarks/results/fuzz/fuzz_FuzzDifferentialWithStdLib.log"
+    }
+    ,
+    {
+      "name": "FuzzHeaderGrammar",
+      "status": "PASS",
+      "duration_sec": 3,
+      "total_executions": 87629,
+      "executions_per_sec": 0,
+      "log_file": "/Users/sneha/Developer/toron-research/toron/benchmarks/results/fuzz/fuzz_FuzzHeaderGrammar.log"
+    }
+    ,
+    {
+      "name": "FuzzChunkFraming",
+      "status": "PASS",
+      "duration_sec": 3,
+      "total_executions": 252257,
+      "executions_per_sec": 120586,
+      "log_file": "/Users/sneha/Developer/toron-research/toron/benchmarks/results/fuzz/fuzz_FuzzChunkFraming.log"
+    }
+  ],
+  "oracles_summary": {
+    "oracle_1_panics": 0,
+    "oracle_2_framing_desyncs": 0,
+    "oracle_3_boundary_violations": 0,
+    "oracle_4_boundedness_violations": 0
+  }
+}

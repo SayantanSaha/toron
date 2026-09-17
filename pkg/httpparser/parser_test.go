@@ -756,6 +756,39 @@ func TestParser_InboundSmugglingGuard_Preserved(t *testing.T) {
 			t.Fatalf("expected ErrBadRequest, got %v", err)
 		}
 	})
+
+	t.Run("Empty Transfer-Encoding rejected with 501", func(t *testing.T) {
+		rawReq := "GET / HTTP/1.1\r\nHost: localhost\r\nTransfer-Encoding:\r\n\r\n"
+		_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+		if err == nil {
+			t.Fatal("expected error for empty Transfer-Encoding header")
+		}
+		if !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
+			t.Fatalf("expected ErrUnsupportedTransferEncoding, got %v", err)
+		}
+	})
+
+	t.Run("Mixed case empty Transfer-Encoding rejected with 501", func(t *testing.T) {
+		rawReq := "0 * HTTP/1.1\r\nTrAnsfer-EnCoding:\r\n\r\n"
+		_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+		if err == nil {
+			t.Fatal("expected error for mixed case empty Transfer-Encoding header")
+		}
+		if !errors.Is(err, httpparser.ErrUnsupportedTransferEncoding) {
+			t.Fatalf("expected ErrUnsupportedTransferEncoding, got %v", err)
+		}
+	})
+
+	t.Run("Conflicting Content-Length and empty Transfer-Encoding rejected with 400", func(t *testing.T) {
+		rawReq := "POST /test HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5\r\nTransfer-Encoding:\r\n\r\nhello"
+		_, err := httpparser.ParseRequest(bytes.NewBufferString(rawReq), opts)
+		if err == nil {
+			t.Fatal("expected error for conflicting Content-Length and empty Transfer-Encoding")
+		}
+		if !errors.Is(err, httpparser.ErrBadRequest) {
+			t.Fatalf("expected ErrBadRequest, got %v", err)
+		}
+	})
 }
 
 func TestRequest_ContextMethods(t *testing.T) {
@@ -801,3 +834,132 @@ func TestRequest_ContextMethods(t *testing.T) {
 	}
 	nilReq.SetContext(ctx) // Should not panic
 }
+
+func TestParseRequest_ProtocolVersionValidation(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+
+	tests := []struct {
+		name        string
+		proto       string
+		expectError bool
+		errIs       error
+	}{
+		{"HTTP/1.1 valid", "HTTP/1.1", false, nil},
+		{"HTTP/1.0 valid", "HTTP/1.0", false, nil},
+		{"HTTP/1.Chunk invalid suffix", "HTTP/1.Chunk", true, httpparser.ErrUnsupportedProtocol},
+		{"HTTP/1.2 unsupported", "HTTP/1.2", true, httpparser.ErrUnsupportedProtocol},
+		{"HTTP/2.0 unsupported", "HTTP/2.0", true, httpparser.ErrUnsupportedProtocol},
+		{"HTTP/0.9 unsupported", "HTTP/0.9", true, httpparser.ErrUnsupportedProtocol},
+		{"HTTP/1. invalid", "HTTP/1.", true, httpparser.ErrUnsupportedProtocol},
+		{"CUSTOM invalid", "CUSTOM/1.1", true, httpparser.ErrUnsupportedProtocol},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := fmt.Sprintf("GET / %s\r\nHost: example.com\r\n\r\n", tt.proto)
+			req, err := httpparser.ParseRequest(bytes.NewBufferString(raw), opts)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error for proto %q, got nil", tt.proto)
+				}
+				if tt.errIs != nil && !errors.Is(err, tt.errIs) {
+					t.Fatalf("expected error %v, got %v", tt.errIs, err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error for proto %q: %v", tt.proto, err)
+				}
+				if req.Proto != tt.proto {
+					t.Fatalf("expected proto %q, got %q", tt.proto, req.Proto)
+				}
+			}
+		})
+	}
+}
+
+func TestParseRequest_BareCRLFRejection(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+
+	tests := []struct {
+		name   string
+		rawReq string
+	}{
+		{
+			name:   "Bare CR in header field value",
+			rawReq: "GET / HTTP/1.1\r\nHost: example.com\r\nX-Bad: test\rvalue\r\n\r\n",
+		},
+		{
+			name:   "Fuzzer crash payload: 0 * HTTP/1.0 with 0:\rChunk0",
+			rawReq: "0 * HTTP/1.0\n0:\rChunk0\n\n",
+		},
+		{
+			name:   "Bare LF in header line",
+			rawReq: "GET / HTTP/1.1\r\nHost: example.com\r\nX-Bad: test\nvalue\r\n\r\n",
+		},
+		{
+			name:   "Bare CR in request line",
+			rawReq: "GET /te\rst HTTP/1.1\r\nHost: example.com\r\n\r\n",
+		},
+		{
+			name:   "Fuzzer crash payload: 0 * HTTP/1.0 with rogue CR before CRLF",
+			rawReq: "0 * HTTP/1.0\n\r\r\n",
+		},
+		{
+			name:   "Rogue CR in header end: \\r\\r\\n",
+			rawReq: "GET / HTTP/1.1\r\nHost: example.com\r\n\r\r\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := httpparser.ParseRequest(bytes.NewBufferString(tt.rawReq), opts)
+			if err == nil {
+				t.Fatalf("expected error for bare CR/LF in %q, got nil", tt.name)
+			}
+			if !errors.Is(err, httpparser.ErrBadRequest) {
+				t.Fatalf("expected ErrBadRequest, got %v", err)
+			}
+		})
+	}
+}
+
+func TestParseRequest_HeaderValueControlCharRejection(t *testing.T) {
+	opts := httpparser.DefaultParserOptions()
+
+	tests := []struct {
+		name        string
+		headerVal   string
+		expectError bool
+	}{
+		{"Valid ASCII value", "test value 123", false},
+		{"Valid value with tab", "test\tvalue", false},
+		{"Valid UTF-8 / obs-text value", "test\x80value", false},
+		{"CONTROL-002 Bell character (0x07)", "test\x07alert", true},
+		{"Null byte (0x00)", "test\x00value", true},
+		{"Escape character (0x1B)", "test\x1bvalue", true},
+		{"Backspace character (0x08)", "test\x08value", true},
+		{"Delete character (0x7F)", "test\x7fvalue", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			raw := fmt.Sprintf("GET / HTTP/1.1\r\nHost: example.com\r\nX-Audit: %s\r\n\r\n", tt.headerVal)
+			_, err := httpparser.ParseRequest(bytes.NewBufferString(raw), opts)
+			if tt.expectError {
+				if err == nil {
+					t.Fatalf("expected error for header value with control char in %q, got nil", tt.name)
+				}
+				if !errors.Is(err, httpparser.ErrBadRequest) {
+					t.Fatalf("expected ErrBadRequest, got %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error for %q: %v", tt.name, err)
+				}
+			}
+		})
+	}
+}
+
+
+

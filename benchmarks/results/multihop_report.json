@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-09-16T17:02:15Z",
-  "target_edge": "127.0.0.1:62543",
+  "timestamp": "2026-09-17T07:47:42Z",
+  "target_edge": "127.0.0.1:64549",
   "execution_mode": "Standalone In-Process (Pure Go)",
   "total_scenarios": 30,
   "passed_scenarios": 30,
@@ -57,7 +57,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 2051
+      "execution_time_us": 4237
     },
     {
       "vector_id": "VECTOR-02",
@@ -78,7 +78,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 373
+      "execution_time_us": 1030
     },
     {
       "vector_id": "VECTOR-03",
@@ -99,7 +99,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1762
+      "execution_time_us": 1119
     },
     {
       "vector_id": "VECTOR-04",
@@ -121,7 +121,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1074
+      "execution_time_us": 1460
     },
     {
       "vector_id": "VECTOR-05",
@@ -143,7 +143,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 756
+      "execution_time_us": 1408
     },
     {
       "vector_id": "VECTOR-06",
@@ -159,6 +159,153 @@
         501
       ],
       "stage1_socket_closed": true,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 1434
+    },
+    {
+      "vector_id": "VECTOR-07",
+      "vector_name": "CRLF-Header-Injection Wire Splitting",
+      "category": "Header Injection Defense (CWE-117)",
+      "backend_runtime": "Node.js 20 LTS",
+      "backend_parser": "llhttp (C-based)",
+      "backend_prefix": "node",
+      "protocol": "HTTP/2",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400
+      ],
+      "stage1_socket_closed": false,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 976
+    },
+    {
+      "vector_id": "VECTOR-08",
+      "vector_name": "Pseudo-Header Upstream Isolation",
+      "category": "HTTP/2 to HTTP/1.1 Isolation",
+      "backend_runtime": "Node.js 20 LTS",
+      "backend_parser": "llhttp (C-based)",
+      "backend_prefix": "node",
+      "protocol": "HTTP/2",
+      "stage1_edge_status": 200,
+      "stage1_expected_status": [
+        200
+      ],
+      "stage1_socket_closed": false,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 1952
+    },
+    {
+      "vector_id": "VECTOR-09",
+      "vector_name": "Baseline Benign GET Forwarding",
+      "category": "Transparent Proxy Round-Trip",
+      "backend_runtime": "Node.js 20 LTS",
+      "backend_parser": "llhttp (C-based)",
+      "backend_prefix": "node",
+      "protocol": "HTTP/1.1",
+      "stage1_edge_status": 200,
+      "stage1_expected_status": [
+        200
+      ],
+      "stage1_socket_closed": false,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 1664
+    },
+    {
+      "vector_id": "VECTOR-10",
+      "vector_name": "Baseline Benign POST Body Integrity",
+      "category": "Payload Body Round-Trip",
+      "backend_runtime": "Node.js 20 LTS",
+      "backend_parser": "llhttp (C-based)",
+      "backend_prefix": "node",
+      "protocol": "HTTP/1.1",
+      "stage1_edge_status": 200,
+      "stage1_expected_status": [
+        200
+      ],
+      "stage1_socket_closed": false,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 1861
+    },
+    {
+      "vector_id": "VECTOR-01",
+      "vector_name": "H2.TE Smuggling Probe",
+      "category": "HTTP/2 Translation Invariant",
+      "backend_runtime": "Python 3.11",
+      "backend_parser": "uvicorn / h11",
+      "backend_prefix": "python",
+      "protocol": "HTTP/2",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400
+      ],
+      "stage1_socket_closed": false,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 1157
+    },
+    {
+      "vector_id": "VECTOR-02",
+      "vector_name": "H2.CL-Duplicate Content-Length",
+      "category": "HTTP/2 Content-Length Validation",
+      "backend_runtime": "Python 3.11",
+      "backend_parser": "uvicorn / h11",
+      "backend_prefix": "python",
+      "protocol": "HTTP/2",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400
+      ],
+      "stage1_socket_closed": false,
+      "stage1_passed": true,
+      "stage2_canary_status": 200,
+      "stage2_canary_passed": true,
+      "desynchronization": false,
+      "pool_integrity": true,
+      "overall_passed": true,
+      "execution_time_us": 906
+    },
+    {
+      "vector_id": "VECTOR-03",
+      "vector_name": "H2.CL-Mismatch Payload Discrepancy",
+      "category": "HTTP/2 Payload Framing Invariant",
+      "backend_runtime": "Python 3.11",
+      "backend_parser": "uvicorn / h11",
+      "backend_prefix": "python",
+      "protocol": "HTTP/2",
+      "stage1_edge_status": 400,
+      "stage1_expected_status": [
+        400
+      ],
+      "stage1_socket_closed": false,
       "stage1_passed": true,
       "stage2_canary_status": 200,
       "stage2_canary_passed": true,
@@ -168,153 +315,6 @@
       "execution_time_us": 778
     },
     {
-      "vector_id": "VECTOR-07",
-      "vector_name": "CRLF-Header-Injection Wire Splitting",
-      "category": "Header Injection Defense (CWE-117)",
-      "backend_runtime": "Node.js 20 LTS",
-      "backend_parser": "llhttp (C-based)",
-      "backend_prefix": "node",
-      "protocol": "HTTP/2",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400
-      ],
-      "stage1_socket_closed": false,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 404
-    },
-    {
-      "vector_id": "VECTOR-08",
-      "vector_name": "Pseudo-Header Upstream Isolation",
-      "category": "HTTP/2 to HTTP/1.1 Isolation",
-      "backend_runtime": "Node.js 20 LTS",
-      "backend_parser": "llhttp (C-based)",
-      "backend_prefix": "node",
-      "protocol": "HTTP/2",
-      "stage1_edge_status": 200,
-      "stage1_expected_status": [
-        200
-      ],
-      "stage1_socket_closed": false,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 985
-    },
-    {
-      "vector_id": "VECTOR-09",
-      "vector_name": "Baseline Benign GET Forwarding",
-      "category": "Transparent Proxy Round-Trip",
-      "backend_runtime": "Node.js 20 LTS",
-      "backend_parser": "llhttp (C-based)",
-      "backend_prefix": "node",
-      "protocol": "HTTP/1.1",
-      "stage1_edge_status": 200,
-      "stage1_expected_status": [
-        200
-      ],
-      "stage1_socket_closed": false,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 852
-    },
-    {
-      "vector_id": "VECTOR-10",
-      "vector_name": "Baseline Benign POST Body Integrity",
-      "category": "Payload Body Round-Trip",
-      "backend_runtime": "Node.js 20 LTS",
-      "backend_parser": "llhttp (C-based)",
-      "backend_prefix": "node",
-      "protocol": "HTTP/1.1",
-      "stage1_edge_status": 200,
-      "stage1_expected_status": [
-        200
-      ],
-      "stage1_socket_closed": false,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 839
-    },
-    {
-      "vector_id": "VECTOR-01",
-      "vector_name": "H2.TE Smuggling Probe",
-      "category": "HTTP/2 Translation Invariant",
-      "backend_runtime": "Python 3.11",
-      "backend_parser": "uvicorn / h11",
-      "backend_prefix": "python",
-      "protocol": "HTTP/2",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400
-      ],
-      "stage1_socket_closed": false,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 886
-    },
-    {
-      "vector_id": "VECTOR-02",
-      "vector_name": "H2.CL-Duplicate Content-Length",
-      "category": "HTTP/2 Content-Length Validation",
-      "backend_runtime": "Python 3.11",
-      "backend_parser": "uvicorn / h11",
-      "backend_prefix": "python",
-      "protocol": "HTTP/2",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400
-      ],
-      "stage1_socket_closed": false,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 402
-    },
-    {
-      "vector_id": "VECTOR-03",
-      "vector_name": "H2.CL-Mismatch Payload Discrepancy",
-      "category": "HTTP/2 Payload Framing Invariant",
-      "backend_runtime": "Python 3.11",
-      "backend_parser": "uvicorn / h11",
-      "backend_prefix": "python",
-      "protocol": "HTTP/2",
-      "stage1_edge_status": 400,
-      "stage1_expected_status": [
-        400
-      ],
-      "stage1_socket_closed": false,
-      "stage1_passed": true,
-      "stage2_canary_status": 200,
-      "stage2_canary_passed": true,
-      "desynchronization": false,
-      "pool_integrity": true,
-      "overall_passed": true,
-      "execution_time_us": 349
-    },
-    {
       "vector_id": "VECTOR-04",
       "vector_name": "H1-CL.TE Dual Framing Smuggle",
       "category": "HTTP/1.1 Request Smuggling (CWE-444)",
@@ -334,7 +334,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 824
+      "execution_time_us": 1231
     },
     {
       "vector_id": "VECTOR-05",
@@ -356,7 +356,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 753
+      "execution_time_us": 1129
     },
     {
       "vector_id": "VECTOR-06",
@@ -378,7 +378,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 765
+      "execution_time_us": 1157
     },
     {
       "vector_id": "VECTOR-07",
@@ -399,7 +399,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 451
+      "execution_time_us": 799
     },
     {
       "vector_id": "VECTOR-08",
@@ -420,7 +420,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 732
+      "execution_time_us": 1606
     },
     {
       "vector_id": "VECTOR-09",
@@ -441,7 +441,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 900
+      "execution_time_us": 1383
     },
     {
       "vector_id": "VECTOR-10",
@@ -462,7 +462,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 955
+      "execution_time_us": 1539
     },
     {
       "vector_id": "VECTOR-01",
@@ -483,7 +483,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 595
+      "execution_time_us": 1050
     },
     {
       "vector_id": "VECTOR-02",
@@ -504,7 +504,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 320
+      "execution_time_us": 720
     },
     {
       "vector_id": "VECTOR-03",
@@ -525,7 +525,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 334
+      "execution_time_us": 710
     },
     {
       "vector_id": "VECTOR-04",
@@ -547,7 +547,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 682
+      "execution_time_us": 1173
     },
     {
       "vector_id": "VECTOR-05",
@@ -569,7 +569,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 586
+      "execution_time_us": 1111
     },
     {
       "vector_id": "VECTOR-06",
@@ -591,7 +591,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 520
+      "execution_time_us": 1168
     },
     {
       "vector_id": "VECTOR-07",
@@ -612,7 +612,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 264
+      "execution_time_us": 743
     },
     {
       "vector_id": "VECTOR-08",
@@ -633,7 +633,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 439
+      "execution_time_us": 1157
     },
     {
       "vector_id": "VECTOR-09",
@@ -654,7 +654,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 542
+      "execution_time_us": 1974
     },
     {
       "vector_id": "VECTOR-10",
@@ -675,7 +675,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 513
+      "execution_time_us": 1364
     }
   ]
 }

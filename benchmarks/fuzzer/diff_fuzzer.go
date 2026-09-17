@@ -1,3 +1,15 @@
+// ==============================================================================
+// Toron Deterministic Protocol Invariant Regression Suite & Latency Profiler
+//
+// Evaluates live TCP wire-level rejection latencies (Equation 7) across 19 curated
+// invariant attack vectors with repeated statistical trials (K=1,000).
+//
+// Note: For coverage-guided generative differential fuzzing using compiler
+// edge-instrumentation (testing.F), refer to:
+//   - In-memory engine:  pkg/httpparser/fuzz_test.go
+//   - Automated runner:  benchmarks/fuzzer/run_generative_fuzz.sh
+// ==============================================================================
+
 package main
 
 import (
@@ -799,7 +811,7 @@ func main() {
 	testCases := getTestCases()
 
 	fmt.Println("================================================================================")
-	fmt.Println("       TORON DIFFERENTIAL PROTOCOL SECURITY FUZZER & INVARIANT CHECKER         ")
+	fmt.Println("   TORON DETERMINISTIC PROTOCOL INVARIANT REGRESSION SUITE & LATENCY PROFILER  ")
 	fmt.Println("================================================================================")
 	fmt.Printf(" Target Under Test:   %s\n", *targetHost)
 	if *baselineHost != "" {

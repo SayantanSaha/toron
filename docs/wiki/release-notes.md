@@ -1,5 +1,96 @@
 # Release Notes
 
+## 2026-09-17 - Toron v1.5.32 Milestone (RFC 9111 Cache Session Boundary Isolation, Application Path Confusion Scope, and Comprehensive Host Port Routing Invariants - REQ-134 / TASK-157)
+
+### Milestone Summary
+- **Disambiguation of Route Table Matching & Origin Authority Derivation ([REQ-134](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-134.md), [TASK-157](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-157.md), [ADR-134](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-134.md), [TC-134](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-134.md), [CR-134](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-134.md), [SR-134](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-134.md))**: Resolved architectural conflation between route dispatching flexibility and origin cache identity. Toron adopts a **Decoupled Dual-Track Processing Architecture**, preserving wildcard-port domain routing for general dispatch while strictly enforcing explicit host-and-port authority in cache keys.
+- **Cross-Port Cache Key Poisoning Elimination ([CWE-524](https://cwe.mitre.org/data/definitions/524.html))**: Implemented dedicated authority derivation function [`extractCacheHostPort`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go#L327) in [`pkg/router/cache.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go), constructing canonical primary cache keys:
+  $$\text{CacheKey} = \text{req.Method} + \texttt{":"} + \text{extractCacheHostPort}(req) + \texttt{":"} + \text{uri} \, [ + \texttt{":ae="} + \text{AcceptEncoding} ]$$
+  Preserves explicit network ports (`service.internal:8080` vs `service.internal:80`), mathematically guaranteeing that confidential payloads served on private administrative ports can never be leaked to unauthenticated clients querying public ports.
+- **Disambiguated Route Table Matching & Precedence**:
+  - Enhanced [`headersAndHostMatch`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go#L1066) in [`pkg/router/router.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go): domain-only routes (`example.com`) act as port-wildcard matches, while port-qualified routes (`example.com:8080`) enforce strict port equality.
+  - Resolved route shadowing by formalizing a **4-tier exact route precedence hierarchy** (Tier 1: Explicit port routes; Tier 2: Domain-only routes; Tier 3: Header-constrained wildcards; Tier 4: Hostless fallback routes) and refining prefix route specificity sorting.
+- **Hardened IPv6 Bracket Literal Parsing**: Hardened both [`extractCacheHostPort`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go#L327) and [`extractHost`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go#L1049) to safely parse bracketed IPv6 addresses (`[::1]:8080`, `[2001:0db8::1]:8443`), eliminating colon truncation bugs where IPv6 colons were incorrectly split as port delimiters.
+- **RFC 9111 Shared Cache Session Boundary Isolation**:
+  - Refuses unshared authenticated requests bearing `Authorization` headers (RFC 9111 §3.5).
+  - Enforces dual-stage `Set-Cookie` and `Set-Cookie2` header stripping before storage and upon cache delivery ([CWE-384](https://cwe.mitre.org/data/definitions/384.html)).
+  - Strictly enforces `Cache-Control: private`, `no-store`, and `no-cache` directives (RFC 9111 §5.2.2).
+  - Exempts real-time streaming connections (`text/event-stream`, `X-Accel-Buffering: no`, upgraded sockets) ([REQ-128](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md)).
+- **Web Cache Deception & The Shared Responsibility Model**: Formally codified the physical boundary between edge transparent proxy caching and upstream application framework routing hygiene in `docs/wiki/features/response-caching.md`, detailing developer best practices for application frameworks.
+- **Exhaustive 9 Routing Methods Verification**: Audited and confirmed host-port invariants across all 9 routing methods supported by Toron (Exact, Prefix, Domain/VHost, Header, Method, Reverse Proxy, Static File, K8s Ingress / Container Discovery, Multi-Port Gateway Listeners).
+- **The 4 Non-Negotiable Invariants Preserved**:
+  1. *Zero External Dependencies*: Pure Go standard library (`strings`, `net/http`, `sync`, `time`); `go.mod` untouched.
+  2. *Core Reactor Modularity Preserved ([ADR-001](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-001.md))*: Caching middleware and router dispatch logic operate exclusively on abstract `*httpparser.Request` and `*httpparser.Response` within `HandlerFunc`; physical sockets (`net.Conn`) are never accessed or wrapped.
+  3. *Memory Boundedness & Minimal Footprint ([ADR-030](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-030.md), [ADR-129](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md))*: Zero heap allocations on standard hostnames without ports; bounded storage clamped by `max_entries` and `max_payload_size`.
+  4. *Zero Data Races under `go test -race ./...`*: 100% thread safety verified under Go's race detector across concurrent route dispatching, cache lookups, admissions, and evictions.
+- **100% Verification across TC-134.1 to TC-134.12**: Validated all 12 formal test specifications in [`TC-134`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-134.md) with 0 failures and 0 race warnings.
+
+### Added
+- **`pkg/router/cache.go`**:
+  - `extractCacheHostPort(req *httpparser.Request) string`: Dedicated authority derivation preserving explicit ports, trimming whitespace, converting host to lowercase, and parsing bracketed IPv6 literals.
+- **`pkg/router/router.go`**:
+  - `hasExplicitPort(host string) bool`: Detects explicit port specifications outside bracketed IPv6 addresses.
+  - `extractFullHostPort(req *httpparser.Request) string`: Extracts canonical full host-and-port authority from request headers.
+- **`pkg/router/export_test.go`**:
+  - Export shims `HasExplicitPort`, `ExtractFullHostPort`, `ExtractHost`, and `ExtractCacheHostPort` for unit test verification.
+- **`pkg/router/cache_test.go`**:
+  - `TestCache_HostPortIsolation` (`TC-134.1`): Cross-port cache isolation integration test (`:8080` vs `:9090`).
+  - `TestCache_HostPortKeyDerivation` (`TC-134.2`): 18 table vectors evaluating `extractCacheHostPort`.
+  - `TestCache_IPv6HostPortIsolation` (`TC-134.3`): IPv6 cross-port isolation (`[::1]:8080` vs `[::1]:8443` vs `[::1]`).
+  - `TestCache_DualStageSetCookieStripped` (`TC-134.4`): Dual-stage cookie stripping at storage and delivery.
+  - `TestCache_RFC9111_AuthorizationBoundary` (`TC-134.5`): Authorization refusal without `public` directive.
+  - `TestCache_RFC9111_OriginDirectivesEnforcement` (`TC-134.6`): Enforcement of `private`, `no-store`, and `no-cache`.
+  - `TestCache_StreamingCacheExemption` (`TC-134.7`): Real-time streaming cache bypass.
+  - `TestCache_ConcurrentHostPortAccess_RaceClean` (`TC-134.12`): High-concurrency stress test (20 workers, 1,000 requests) under `-race`.
+- **`pkg/router/router_test.go`**:
+  - `TestRouter_HostPortDisambiguation` (`TC-134.8`): Port-specific vs domain-only route dispatching.
+  - `TestRouter_RoutePrecedence_HostPortOverDomain` (`TC-134.9`): Explicit host:port precedence over domain fallbacks.
+  - `TestRouter_IPv6HostMatchingAndPortStripping` (`TC-134.10`): IPv6 matching and port stripping without colon mangling.
+  - `TestRouter_AllNineRoutingMethods_HostPortInvariants` (`TC-134.11`): Exhaustive audit across all 9 routing methods.
+- **Documentation**:
+  - `docs/requirements/REQ-134.md`: Authoritative requirements specification.
+  - `docs/tasks/TASK-157.md`: Engineering work breakdown structure.
+  - `docs/architecture/ADR-134.md`: Architecture Decision Record.
+  - `docs/testCases/TC-134.md`: Test case specification for TC-134.1 through TC-134.12.
+  - `docs/codeReview/CR-134.md`: Formal code review sign-off.
+  - `docs/securityReview/SR-134.md`: Threat-modeled security review.
+
+### Changed
+- **`pkg/router/cache.go`**:
+  - Replaced legacy `extractHost(req)` with dedicated `extractCacheHostPort(req)` at line 199.
+  - Eliminated all usage of `extractHost` inside `cache.go`.
+- **`pkg/router/router.go`**:
+  - Hardened `extractHost` to handle bracketed IPv6 literals safely without string corruption.
+  - Enhanced `headersAndHostMatch` to support dual-mode matching (port-qualified vs domain-only).
+  - Implemented 4-tier exact route matching precedence hierarchy in `ServeHTTP`, resolving wildcard route shadowing.
+  - Enhanced prefix route specificity sorting (Tier 2 host specificity prioritizes routes with explicit ports).
+- **`docs/wiki/features/response-caching.md`**:
+  - Updated title and header to reference RFC 9111 Shared Cache Session Boundary Isolation and Host:Port Cache Key Authority Derivation.
+  - Documented primary cache key derivation formula and explicit port preservation rationale.
+  - Added dedicated section "Web Cache Deception & The Shared Responsibility Model" and "Developer Best Practices for Application Frameworks".
+  - Updated Troubleshooting & FAQ sections for cross-port isolation and path confusion defenses.
+- **`docs/wiki/configuration.md`**:
+  - Updated caching configuration section with Host:Port authority derivation, cross-port isolation, and virtual host routing interactions.
+- **`docs/wiki/index.md`**:
+  - Updated response caching feature entry and documentation milestone version to v1.5.32.
+
+### Security Hardening (CWE-524, CWE-384, CWE-20)
+- **Cross-Port Cache Key Poisoning & Information Exposure ([CWE-524](https://cwe.mitre.org/data/definitions/524.html))**: Preserving network ports in primary cache keys eliminates cross-port cache collisions across multi-tenant microservices, container sidecars, and multi-port listeners sharing a hostname.
+- **Shared Cache Session Fixation & Credential Bleed ([CWE-384](https://cwe.mitre.org/data/definitions/384.html))**: Dual-stage `Set-Cookie` and `Set-Cookie2` header stripping purges cookie headers before storing responses in RAM and again before transmitting cache hits to downstream clients.
+- **IPv6 Colon Mangling & Malformed Host Parsing ([CWE-20](https://cwe.mitre.org/data/definitions/20.html))**: Safely parses bracketed IPv6 literals (`[::1]:8080`), isolating IPv6 addresses from port delimiters and eliminating string truncation bugs.
+- **Route Shadowing & Precedence Inversion ([CWE-20](https://cwe.mitre.org/data/definitions/20.html))**: Strict 4-tier exact route matching and Tier 2 prefix specificity sorting ensure explicit port routes and domain-specific routes are never shadowed by hostless wildcard fallbacks.
+- **Denial-of-Service & Memory Exhaustion ([CWE-400](https://cwe.mitre.org/data/definitions/400.html))**: Cache storage is strictly bounded by `max_entries` and `max_payload_size` configurations with thread-safe capacity and TTL evictions under `sync.RWMutex`.
+- **Web Cache Deception Defense (Shared Responsibility Model)**: Formally delineated edge transparent proxy guarantees from upstream application routing hygiene, providing clear developer best practices.
+
+### Related Tasks & Documents
+- [`TASK-157`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-157.md): Host Port Disambiguation in Route Matching and Cache Key Authority Derivation (RFC 9111 Session Boundary Isolation)
+- [`REQ-134`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-134.md): RFC 9111 Cache Session Boundary Isolation, Application Path Confusion Scope, and Comprehensive Host Port Routing Invariants
+- [`ADR-134`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-134.md): Host Port Disambiguation in Route Matching and Cache Key Authority Derivation Architecture
+- [`TC-134`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-134.md): Test Case Specification for Host Port Disambiguation and RFC 9111 Session Boundaries
+- [`CR-134`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-134.md): Code Review of Host Port Disambiguation in Route Matching and Cache Key Authority Derivation
+- [`SR-134`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-134.md): Security Review of RFC 9111 Cache Session Boundary Isolation, Cross-Port Collision Prevention, and Host Port Routing Invariants
+- Relevant Standards & CWEs: [CWE-524](https://cwe.mitre.org/data/definitions/524.html), [CWE-384](https://cwe.mitre.org/data/definitions/384.html), [CWE-20](https://cwe.mitre.org/data/definitions/20.html), [CWE-400](https://cwe.mitre.org/data/definitions/400.html), RFC 9110 §4.2, RFC 9111 §2, RFC 9111 §3.5, RFC 9111 §5.2, RFC 9111 §8
+
 ## 2026-09-17 - Toron v1.5.31 Milestone (Inbound Chunked Transfer-Encoding Ingestion, Zero-Tolerance Wire Decoding, and Upstream Re-Framing Normalization - REQ-133 / TASK-156)
 
 ### Milestone Summary

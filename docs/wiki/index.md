@@ -29,7 +29,9 @@ depends_on:
   - REQ-130
   - REQ-132
   - REQ-133
+  - REQ-134
   - TASK-156
+  - TASK-157
 
 derived_from:
   - PRD.md
@@ -48,6 +50,7 @@ derived_from:
   - ADR-130
   - ADR-132
   - ADR-133
+  - ADR-134
   - SEC-26
   - SEC-27
   - SEC-28
@@ -63,7 +66,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.31 Milestone)
+# Toron Documentation Wiki (v1.5.32 Milestone)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -103,7 +106,7 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 - [Web Application Firewall (WAF) & Injection Protection](./features/waf.md) – OWASP Top 10 SQLi, XSS, Path Traversal, and RCE threat mitigation.
 - [CORS Policies & Enterprise Security Headers](./features/cors-security-headers.md) – Preflight OPTIONS handling, origin matching, and OWASP security headers.
 - [Transparent Response Compression](./features/compression.md) – Streaming Zstd, Brotli, Gzip & Deflate response compression.
-- [In-Memory Response Caching](./features/response-caching.md) – RFC 7234 HTTP response caching and telemetry headers.
+- [In-Memory Response Caching](./features/response-caching.md) – RFC 9111 HTTP response caching, Shared Cache Session Boundary Isolation, Host:Port authority derivation, cross-port cache isolation (CWE-524), dual-stage Set-Cookie purging (CWE-384), and Web Cache Deception Shared Responsibility Model (REQ-134 / TASK-157).
 - [Multi-Scheme Authentication](./features/authentication.md) – JWT (HS256), API Key, and HTTP Basic authentication.
 - [Native Go Benchmarking](./features/benchmarking.md) – Performance benchmarks and allocation metrics.
 - [High-Concurrency Saturation Stress Benchmark & Status Classification](./features/saturation-stress-benchmark.md) – Dual-stream saturation testing, four-tier status classification taxonomy, and Table 6 metrics (BMK-04, HARN-01).
@@ -120,5 +123,5 @@ Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.31).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.32).
 

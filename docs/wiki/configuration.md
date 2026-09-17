@@ -25,6 +25,7 @@ depends_on:
   - REQ-128
   - REQ-129
   - REQ-133
+  - REQ-134
   - TASK-007
   - TASK-019
   - TASK-027
@@ -45,6 +46,7 @@ depends_on:
   - TASK-151
   - TASK-152
   - TASK-156
+  - TASK-157
   - ADR-123
   - ADR-125
   - ADR-126
@@ -52,6 +54,7 @@ depends_on:
   - ADR-128
   - ADR-129
   - ADR-133
+  - ADR-134
 
 derived_from:
   - REQ-007
@@ -61,7 +64,9 @@ derived_from:
   - REQ-123
   - REQ-129
   - REQ-133
+  - REQ-134
   - TASK-156
+  - TASK-157
   - ADR-002
   - ADR-022
   - ADR-051
@@ -70,6 +75,7 @@ derived_from:
   - ADR-123
   - ADR-129
   - ADR-133
+  - ADR-134
   - SEC-26
   - SEC-31
   - SEC-36
@@ -169,10 +175,12 @@ server:
       - "gzip"
       - "deflate"
 
-  # In-Memory HTTP Response Caching (RFC 7234)
+  # In-Memory HTTP Response Caching (RFC 9111 & Host:Port Authority Isolation - REQ-134)
   cache:
-    enabled: true
-    default_ttl: 60s
+    enabled: true             # Enable in-memory response caching
+    default_ttl: 60s          # Fallback TTL if origin omits Cache-Control max-age
+    max_entries: 10000        # Maximum number of responses retained in memory
+    max_payload_size: 1048576 # 1 MB maximum body size per cached entry (bytes)
   # Enterprise Browser Security Headers
   security_headers:
     enabled: true
@@ -396,6 +404,54 @@ server:
   http3:
     enabled: false            # Disables UDP listener and Alt-Svc headers
 ```
+
+---
+
+### In-Memory HTTP Response Caching & Host:Port Authority Isolation (`server.cache`)
+
+Toron provides an enterprise-grade in-memory HTTP response caching engine ([`pkg/router/cache.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go)) compliant with the **RFC 9111 HTTP Caching specification** ([`REQ-134`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-134.md), [`ADR-134`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-134.md)).
+
+#### Configuration Options
+
+| Option | Location | Type | Default | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `enabled` | `server.cache.enabled` | `boolean` | `false` | Enables or disables in-memory response caching. |
+| `default_ttl` | `server.cache.default_ttl` | `duration` | `"60s"` | Default expiration duration for responses lacking an explicit `Cache-Control: max-age=N` directive. |
+| `max_entries` | `server.cache.max_entries` | `integer` | `1000` | Maximum number of cache entries retained in memory before capacity eviction is triggered. |
+| `max_payload_size` | `server.cache.max_payload_size` | `integer` | `1048576` (1 MB) | Maximum response body size in bytes eligible for caching. Larger responses bypass cache storage. |
+
+#### Host:Port Authority Derivation & Cross-Port Isolation (CWE-524)
+
+Under RFC 9110 §4.2 and RFC 9111 §2, the primary cache key for an HTTP resource incorporates the target URI's authority component, which includes both the host identifier and the port number:
+
+$$\text{CacheKey} = \text{req.Method} + \texttt{":"} + \text{extractCacheHostPort}(req) + \texttt{":"} + \text{uri} \, [ + \texttt{":ae="} + \text{AcceptEncoding} ]$$
+
+- **Explicit Port Preservation**: Port numbers in `Host` headers are strictly preserved (e.g. `service.internal:8080` vs `service.internal:80`).
+- **Cross-Port Cache Poisoning Elimination ([CWE-524](https://cwe.mitre.org/data/definitions/524.html))**: In multi-tenant environments, container clusters, or microservice deployments where multiple services share the same hostname across distinct ports (e.g. `service.internal:80` for public catalog listings and `service.internal:8080` for restricted administrative metrics), requests generate completely separate cache keys (`GET:service.internal:80:/data` vs `GET:service.internal:8080:/data`). Private administrative payloads served on port 8080 are never leaked to unauthenticated users querying public port 80.
+- **IPv6 Bracket Literal Safety**: Bracketed IPv6 literal addresses (`[::1]:8080`, `[2001:db8::1]:8443`) are parsed safely, isolating the closing bracket `]` from the trailing port delimiter and preventing internal IPv6 colons from causing string truncation.
+
+#### Virtual Host Routing Interactions & Disambiguation
+
+Toron disambiguates **virtual host route table matching** (`pkg/router/router.go`) from **cache key authority derivation** (`pkg/router/cache.go`):
+
+1. **Domain-Only Route Matching (`routeHost = "example.com"` or `"[::1]"`)**:
+   - Matches incoming requests to `example.com` on any port (`example.com`, `example.com:80`, `example.com:8080`) as a wildcard port.
+   - Ideal for general web applications exposed across standard HTTP and HTTPS ports.
+2. **Port-Qualified Route Matching (`routeHost = "example.com:8080"` or `"[::1]:8080"`)**:
+   - Enforces strict port equality. Matches incoming requests if and only if the request's authority matches the exact specified port.
+   - Requests targeting other ports (e.g. `example.com:8443`) or omitting the port will not match this route.
+   - Ideal for dedicating specific ports to administrative dashboards, metrics endpoints, or health probes.
+3. **Route Specificity Precedence**:
+   - Port-specific routes take strict precedence over domain-only fallback routes.
+   - When both `api.example.com` and `api.example.com:8080` are registered for the same path, requests to port 8080 dispatch to the port 8080 handler, while requests to other ports fall back to the domain handler.
+4. **Reverse Proxy Upstream Routing Interaction**:
+   - When proxying requests upstream via `proxy.ReverseProxy`, the cache key authority is derived strictly from the **downstream client `Host` header**, NEVER the upstream target IP or port (e.g. `127.0.0.1:9001`).
+   - Multiple virtual host routes forwarding to common upstream clusters remain strictly partitioned in cache.
+5. **Multi-Port Gateway Listeners Interaction**:
+   - Toron operates concurrent listeners across cleartext HTTP (port 80), TLS HTTPS (port 443), and HTTP/3 QUIC (port 8443).
+   - Preserving explicit ports guarantees that cleartext HTTP requests and encrypted HTTPS/QUIC requests targeting the same URL never collide in cache.
+
+For complete architectural details on RFC 9111 session boundaries, dual-stage `Set-Cookie` stripping, and the Web Cache Deception Shared Responsibility Model, consult the [In-Memory HTTP Response Caching Feature Guide](./features/response-caching.md).
 
 ---
 
@@ -979,6 +1035,7 @@ routes:
 ## Related Pages
 
 - [Documentation Index](./index.md)
+- [In-Memory HTTP Response Caching Feature Guide](./features/response-caching.md)
 - [Layer 4 TCP & UDP Transport Proxies Feature Guide](./features/layer4-proxy.md)
 - [Static File Serving Feature Guide](./features/static-file-serving.md)
 - [Configuration Options Reference](./reference/config-options.md)

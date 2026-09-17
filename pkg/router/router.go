@@ -222,6 +222,16 @@ func comparePrefixRoutes(a, b prefixRoute) int {
 		}
 		return 1
 	}
+	if aHasHost && bHasHost {
+		aHasPort := hasExplicitPort(a.host)
+		bHasPort := hasExplicitPort(b.host)
+		if aHasPort != bHasPort {
+			if aHasPort {
+				return -1
+			}
+			return 1
+		}
+	}
 
 	// Tier 3: Header Specificity (More headers before fewer headers)
 	if len(a.headers) != len(b.headers) {
@@ -310,6 +320,16 @@ func comparePrefixRouteSpecs(a, b PrefixRouteSpec) int {
 			return -1
 		}
 		return 1
+	}
+	if aHasHost && bHasHost {
+		aHasPort := hasExplicitPort(aHost)
+		bHasPort := hasExplicitPort(bHost)
+		if aHasPort != bHasPort {
+			if aHasPort {
+				return -1
+			}
+			return 1
+		}
 	}
 
 	if len(a.Headers) != len(b.Headers) {
@@ -824,20 +844,47 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 		entries, methodExists := methodsMap[req.Method]
 		if methodExists {
 			var fallbackEntry *routeEntry
+
+			// Tier 1: Seek an exact match among explicit port route entries
 			for i := range entries {
-				if headersAndHostMatch(reqHost, req, entries[i].host, entries[i].headers) {
-					targetHandler = entries[i].handler
-					break
+				if entries[i].host != "" && hasExplicitPort(entries[i].host) {
+					if headersAndHostMatch(reqHost, req, entries[i].host, entries[i].headers) {
+						targetHandler = entries[i].handler
+						break
+					}
 				}
 				if entries[i].host == "" && len(entries[i].headers) == 0 {
 					fallbackEntry = &entries[i]
 				}
 			}
+
+			// Tier 2: If no explicit port route matched, evaluate domain-only routes with host specified
+			if targetHandler == nil {
+				for i := range entries {
+					if entries[i].host != "" && !hasExplicitPort(entries[i].host) {
+						if headersAndHostMatch(reqHost, req, entries[i].host, entries[i].headers) {
+							targetHandler = entries[i].handler
+							break
+						}
+					}
+				}
+			}
+
+			// Tier 3: If no domain route matched, evaluate header-constrained wildcard routes
+			if targetHandler == nil {
+				for i := range entries {
+					if entries[i].host == "" && len(entries[i].headers) > 0 {
+						if headersAndHostMatch(reqHost, req, entries[i].host, entries[i].headers) {
+							targetHandler = entries[i].handler
+							break
+						}
+					}
+				}
+			}
+
+			// Tier 4: Fall back to wildcard route if registered and no specific route matched
 			if targetHandler == nil && fallbackEntry != nil {
 				targetHandler = fallbackEntry.handler
-			}
-			if targetHandler == nil && len(entries) > 0 {
-				targetHandler = entries[0].handler
 			}
 		} else {
 			targetHandler = r.MethodNotAllowed
@@ -964,12 +1011,53 @@ func (r *Router) ShouldRedirectHTTP(req *httpparser.Request) bool {
 	return true
 }
 
+func hasExplicitPort(host string) bool {
+	host = strings.TrimSpace(host)
+	if strings.HasPrefix(host, "[") {
+		idx := strings.Index(host, "]")
+		return idx != -1 && strings.Contains(host[idx+1:], ":")
+	}
+	return strings.Contains(host, ":")
+}
+
+func extractFullHostPort(req *httpparser.Request) string {
+	if req == nil {
+		return ""
+	}
+	h := strings.TrimSpace(req.Header.Get("Host"))
+	if h == "" {
+		return ""
+	}
+	if strings.HasPrefix(h, "[") {
+		closeBracket := strings.Index(h, "]")
+		if closeBracket != -1 {
+			ipv6 := strings.ToLower(h[1:closeBracket])
+			rest := h[closeBracket+1:]
+			if strings.HasPrefix(rest, ":") {
+				return "[" + ipv6 + "]:" + strings.TrimSpace(rest[1:])
+			}
+			return "[" + ipv6 + "]"
+		}
+	}
+	colonIdx := strings.LastIndex(h, ":")
+	if colonIdx != -1 {
+		return strings.ToLower(strings.TrimSpace(h[:colonIdx])) + ":" + strings.TrimSpace(h[colonIdx+1:])
+	}
+	return strings.ToLower(h)
+}
+
 func extractHost(req *httpparser.Request) string {
 	h := req.Header.Get("Host")
 	if h == "" {
 		return ""
 	}
-	if idx := strings.Index(h, ":"); idx != -1 {
+	h = strings.TrimSpace(h)
+	if strings.HasPrefix(h, "[") {
+		if idx := strings.Index(h, "]"); idx != -1 {
+			return strings.ToLower(h[:idx+1])
+		}
+	}
+	if idx := strings.LastIndex(h, ":"); idx != -1 {
 		h = h[:idx]
 	}
 	return strings.ToLower(strings.TrimSpace(h))
@@ -977,8 +1065,18 @@ func extractHost(req *httpparser.Request) string {
 
 func headersAndHostMatch(reqHost string, req *httpparser.Request, routeHost string, expectedHeaders map[string]string) bool {
 	if routeHost != "" {
-		if reqHost != strings.ToLower(routeHost) {
-			return false
+		cleanRouteHost := strings.ToLower(strings.TrimSpace(routeHost))
+		if hasExplicitPort(cleanRouteHost) {
+			// Port-specific route: must match full incoming authority (host and port)
+			reqAuthority := extractFullHostPort(req)
+			if reqAuthority != cleanRouteHost {
+				return false
+			}
+		} else {
+			// Domain-only route: matches port-stripped reqHost (wildcard port)
+			if reqHost != cleanRouteHost {
+				return false
+			}
 		}
 	}
 	for k, expectedVal := range expectedHeaders {

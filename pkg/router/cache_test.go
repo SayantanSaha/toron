@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -888,3 +889,619 @@ func TestCache_ZeroAllocations_HeaderGuards(t *testing.T) {
 func TestRouter_HeaderInspectionGuards_ZeroAllocation(t *testing.T) {
 	TestCache_ZeroAllocations_HeaderGuards(t)
 }
+
+// TC-134.1: Cross-Port Cache Isolation (service.local:8080 vs service.local:9090)
+func TestCache_HostPortIsolation(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	var hitCount int64
+
+	r.GET("/api/isolated", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&hitCount, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		res.Header.Set("Cache-Control", "max-age=60")
+		_, _ = res.WriteString("response-from-" + req.Header.Get("Host"))
+	})
+
+	// 1. Dispatch Request 1 (Host: service.local:8080) -> Cache MISS
+	req1, _ := httpparser.NewRequest("GET", "/api/isolated", "HTTP/1.1")
+	req1.Header.Set("Host", "service.local:8080")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if res1.StatusCode != http.StatusOK {
+		t.Fatalf("req1: expected status 200, got %d", res1.StatusCode)
+	}
+	if xCache := res1.Header.Get("X-Cache"); xCache != "MISS" {
+		t.Fatalf("req1: expected X-Cache MISS, got %q", xCache)
+	}
+	if age := res1.Header.Get("Age"); age != "" {
+		t.Fatalf("req1: expected empty Age header, got %q", age)
+	}
+	if calls := atomic.LoadInt64(&hitCount); calls != 1 {
+		t.Fatalf("req1: expected 1 handler call, got %d", calls)
+	}
+	if body := res1.Body.String(); body != "response-from-service.local:8080" {
+		t.Fatalf("req1: expected body %q, got %q", "response-from-service.local:8080", body)
+	}
+
+	// 2. Dispatch Request 2 (Host: service.local:9090) -> CRITICAL: Cache MISS (must NOT hit port 8080 cache!)
+	req2, _ := httpparser.NewRequest("GET", "/api/isolated", "HTTP/1.1")
+	req2.Header.Set("Host", "service.local:9090")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("req2: expected status 200, got %d", res2.StatusCode)
+	}
+	if xCache := res2.Header.Get("X-Cache"); xCache != "MISS" {
+		t.Fatalf("req2: expected X-Cache MISS for distinct port, got %q", xCache)
+	}
+	if age := res2.Header.Get("Age"); age != "" {
+		t.Fatalf("req2: expected empty Age header, got %q", age)
+	}
+	if calls := atomic.LoadInt64(&hitCount); calls != 2 {
+		t.Fatalf("req2: expected 2 handler calls, got %d", calls)
+	}
+	if body := res2.Body.String(); body != "response-from-service.local:9090" {
+		t.Fatalf("req2: expected body %q, got %q", "response-from-service.local:9090", body)
+	}
+
+	// 3. Dispatch Request 3 (Host: service.local:8080) -> Cache HIT
+	req3, _ := httpparser.NewRequest("GET", "/api/isolated", "HTTP/1.1")
+	req3.Header.Set("Host", "service.local:8080")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+
+	if res3.StatusCode != http.StatusOK {
+		t.Fatalf("req3: expected status 200, got %d", res3.StatusCode)
+	}
+	if xCache := res3.Header.Get("X-Cache"); xCache != "HIT" {
+		t.Fatalf("req3: expected X-Cache HIT, got %q", xCache)
+	}
+	if age := res3.Header.Get("Age"); age == "" {
+		t.Fatalf("req3: expected Age header on cache HIT")
+	}
+	if calls := atomic.LoadInt64(&hitCount); calls != 2 {
+		t.Fatalf("req3: handler should not be called on cache HIT, got %d", calls)
+	}
+	if body := res3.Body.String(); body != "response-from-service.local:8080" {
+		t.Fatalf("req3: expected body %q, got %q", "response-from-service.local:8080", body)
+	}
+
+	// 4. Dispatch Request 4 (Host: service.local:9090) -> Cache HIT
+	req4, _ := httpparser.NewRequest("GET", "/api/isolated", "HTTP/1.1")
+	req4.Header.Set("Host", "service.local:9090")
+	res4 := httpparser.NewResponse()
+	r.ServeHTTP(req4, res4)
+
+	if res4.StatusCode != http.StatusOK {
+		t.Fatalf("req4: expected status 200, got %d", res4.StatusCode)
+	}
+	if xCache := res4.Header.Get("X-Cache"); xCache != "HIT" {
+		t.Fatalf("req4: expected X-Cache HIT, got %q", xCache)
+	}
+	if age := res4.Header.Get("Age"); age == "" {
+		t.Fatalf("req4: expected Age header on cache HIT")
+	}
+	if calls := atomic.LoadInt64(&hitCount); calls != 2 {
+		t.Fatalf("req4: handler should not be called on cache HIT, got %d", calls)
+	}
+	if body := res4.Body.String(); body != "response-from-service.local:9090" {
+		t.Fatalf("req4: expected body %q, got %q", "response-from-service.local:9090", body)
+	}
+
+	// 5. Assert cache store contains exactly 2 isolated entries
+	if count := store.Len(); count != 2 {
+		t.Fatalf("expected 2 distinct entries in cache store, got %d", count)
+	}
+}
+
+// TC-134.2: Host Authority Derivation Unit Vectors for extractCacheHostPort
+func TestCache_HostPortKeyDerivation(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		isNilReq bool
+		expected string
+	}{
+		{"V1 standard host without port", "example.com", false, "example.com"},
+		{"V2 uppercase host without port", "EXAMPLE.COM", false, "example.com"},
+		{"V3 standard host with port", "example.com:8080", false, "example.com:8080"},
+		{"V4 uppercase host with port", "EXAMPLE.COM:8080", false, "example.com:8080"},
+		{"V5 whitespace around host and port", "   api.toron.local:9090   ", false, "api.toron.local:9090"},
+		{"V6 whitespace between hostname and colon/port", "  api.toron.local : 9090  ", false, "api.toron.local:9090"},
+		{"V7 IPv6 localhost with port", "[::1]:8080", false, "[::1]:8080"},
+		{"V8 IPv6 localhost without port", "[::1]", false, "[::1]"},
+		{"V9 full uppercase IPv6 address with port", "[2001:0DB8::1]:8443", false, "[2001:0db8::1]:8443"},
+		{"V10 full uppercase IPv6 address without port", "[2001:0DB8::1]", false, "[2001:0db8::1]"},
+		{"V11 IPv4 address with port", "127.0.0.1:9000", false, "127.0.0.1:9000"},
+		{"V12 IPv4 address without port", "127.0.0.1", false, "127.0.0.1"},
+		{"V13 empty host header", "", false, ""},
+		{"V14 missing host header (nil request)", "", true, ""},
+		{"V15 whitespace-only host header", "    ", false, ""},
+		{"V16 trailing colon with empty port", "example.com:", false, "example.com"},
+		{"V17 malformed IPv6 (unclosed bracket)", "[::1:8080", false, "[::1:8080"},
+		{"V18 custom sidecar high port", "mesh.internal:65535", false, "mesh.internal:65535"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var req *httpparser.Request
+			if !tc.isNilReq {
+				var err error
+				req, err = httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+				if err != nil {
+					t.Fatalf("failed to create request: %v", err)
+				}
+				req.Header.Set("Host", tc.input)
+			}
+			actual := extractCacheHostPort(req)
+			if actual != tc.expected {
+				t.Fatalf("for input %q: expected %q, got %q", tc.input, tc.expected, actual)
+			}
+		})
+	}
+}
+
+// TC-134.3: IPv6 Cross-Port Isolation ([::1]:8080 vs [::1]:8443 vs [::1])
+func TestCache_IPv6HostPortIsolation(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	r.GET("/ipv6/endpoint", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		res.Header.Set("Cache-Control", "max-age=60")
+		_, _ = res.WriteString("ipv6-response-" + req.Header.Get("Host"))
+	})
+
+	// Req A: Host: [::1]:8080
+	reqA, _ := httpparser.NewRequest("GET", "/ipv6/endpoint", "HTTP/1.1")
+	reqA.Header.Set("Host", "[::1]:8080")
+	resA := httpparser.NewResponse()
+	r.ServeHTTP(reqA, resA)
+	if resA.Header.Get("X-Cache") != "MISS" || resA.Body.String() != "ipv6-response-[::1]:8080" {
+		t.Fatalf("reqA MISS expected, got X-Cache=%q, body=%q", resA.Header.Get("X-Cache"), resA.Body.String())
+	}
+
+	// Req B: Host: [::1]:8443
+	reqB, _ := httpparser.NewRequest("GET", "/ipv6/endpoint", "HTTP/1.1")
+	reqB.Header.Set("Host", "[::1]:8443")
+	resB := httpparser.NewResponse()
+	r.ServeHTTP(reqB, resB)
+	if resB.Header.Get("X-Cache") != "MISS" || resB.Body.String() != "ipv6-response-[::1]:8443" {
+		t.Fatalf("reqB MISS expected, got X-Cache=%q, body=%q", resB.Header.Get("X-Cache"), resB.Body.String())
+	}
+
+	// Req C: Host: [::1] (no port)
+	reqC, _ := httpparser.NewRequest("GET", "/ipv6/endpoint", "HTTP/1.1")
+	reqC.Header.Set("Host", "[::1]")
+	resC := httpparser.NewResponse()
+	r.ServeHTTP(reqC, resC)
+	if resC.Header.Get("X-Cache") != "MISS" || resC.Body.String() != "ipv6-response-[::1]" {
+		t.Fatalf("reqC MISS expected, got X-Cache=%q, body=%q", resC.Header.Get("X-Cache"), resC.Body.String())
+	}
+
+	// Re-executions must all HIT with their respective payloads
+	resA2 := httpparser.NewResponse()
+	r.ServeHTTP(reqA, resA2)
+	if resA2.Header.Get("X-Cache") != "HIT" || resA2.Body.String() != "ipv6-response-[::1]:8080" {
+		t.Fatalf("reqA HIT expected, got X-Cache=%q, body=%q", resA2.Header.Get("X-Cache"), resA2.Body.String())
+	}
+
+	resB2 := httpparser.NewResponse()
+	r.ServeHTTP(reqB, resB2)
+	if resB2.Header.Get("X-Cache") != "HIT" || resB2.Body.String() != "ipv6-response-[::1]:8443" {
+		t.Fatalf("reqB HIT expected, got X-Cache=%q, body=%q", resB2.Header.Get("X-Cache"), resB2.Body.String())
+	}
+
+	resC2 := httpparser.NewResponse()
+	r.ServeHTTP(reqC, resC2)
+	if resC2.Header.Get("X-Cache") != "HIT" || resC2.Body.String() != "ipv6-response-[::1]" {
+		t.Fatalf("reqC HIT expected, got X-Cache=%q, body=%q", resC2.Header.Get("X-Cache"), resC2.Body.String())
+	}
+
+	if count := store.Len(); count != 3 {
+		t.Fatalf("expected 3 distinct entries in cache store, got %d", count)
+	}
+}
+
+// TC-134.4: Dual-Stage Set-Cookie / Set-Cookie2 Stripping Verification
+func TestCache_DualStageSetCookieStripped(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	r.GET("/auth/session", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "application/json")
+		res.Header.Set("Cache-Control", "max-age=60")
+		res.Header.Set("Set-Cookie", "session_id=SECRET987; Secure; HttpOnly")
+		res.Header.Set("Set-Cookie2", "session_id2=SECRET456")
+		_, _ = res.WriteString(`{"authenticated": true}`)
+	})
+
+	// 1. Client 1 makes first request (Cache MISS)
+	req1, _ := httpparser.NewRequest("GET", "/auth/session", "HTTP/1.1")
+	req1.Header.Set("Host", "example.com")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	if res1.StatusCode != http.StatusOK {
+		t.Fatalf("req1: expected status 200, got %d", res1.StatusCode)
+	}
+	if res1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("req1: expected X-Cache MISS, got %q", res1.Header.Get("X-Cache"))
+	}
+	if res1.Header.Get("Set-Cookie") == "" {
+		t.Fatalf("req1: expected initial response to have Set-Cookie header")
+	}
+
+	// 2. Stage 1 Purge: Inspect the cached snapshot in store
+	cached, found := store.Get("GET:example.com:/auth/session", time.Now())
+	if !found {
+		t.Fatalf("expected cached entry in store")
+	}
+	if cookie := cached.Header.Get("Set-Cookie"); cookie != "" {
+		t.Fatalf("CRITICAL Stage 1 Purge Failure: Set-Cookie leaked into cached snapshot: %q", cookie)
+	}
+	if cookie2 := cached.Header.Get("Set-Cookie2"); cookie2 != "" {
+		t.Fatalf("CRITICAL Stage 1 Purge Failure: Set-Cookie2 leaked into cached snapshot: %q", cookie2)
+	}
+
+	// 3. Stage 2 Purge: Client 2 makes subsequent request (Cache HIT)
+	req2, _ := httpparser.NewRequest("GET", "/auth/session", "HTTP/1.1")
+	req2.Header.Set("Host", "example.com")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("req2: expected status 200, got %d", res2.StatusCode)
+	}
+	if res2.Header.Get("X-Cache") != "HIT" {
+		t.Fatalf("req2: expected X-Cache HIT, got %q", res2.Header.Get("X-Cache"))
+	}
+	if cookie := res2.Header.Get("Set-Cookie"); cookie != "" {
+		t.Fatalf("CRITICAL Stage 2 Purge Failure: Set-Cookie leaked on cache HIT: %q", cookie)
+	}
+	if cookie2 := res2.Header.Get("Set-Cookie2"); cookie2 != "" {
+		t.Fatalf("CRITICAL Stage 2 Purge Failure: Set-Cookie2 leaked on cache HIT: %q", cookie2)
+	}
+
+	// 4. Direct Poisoning Injection Test: Manually inject a poisoned CachedResponse containing Set-Cookie
+	poisonedHeader := make(httpparser.Header)
+	poisonedHeader["Set-Cookie"] = []string{"rogue=leak"}
+	poisonedHeader["Set-Cookie2"] = []string{"rogue2=leak"}
+	poisonedHeader["Content-Type"] = []string{"application/json"}
+	now := time.Now()
+	store.Set("GET:example.com:/auth/poisoned", &CachedResponse{
+		StatusCode: http.StatusOK,
+		Header:     poisonedHeader,
+		Body:       []byte(`{"poisoned": true}`),
+		CachedAt:   now,
+		ExpiresAt:  now.Add(60 * time.Second),
+		Public:     true,
+	})
+
+	reqPoison, _ := httpparser.NewRequest("GET", "/auth/poisoned", "HTTP/1.1")
+	reqPoison.Header.Set("Host", "example.com")
+	resPoison := httpparser.NewResponse()
+	r.ServeHTTP(reqPoison, resPoison)
+
+	if resPoison.Header.Get("X-Cache") != "HIT" {
+		t.Fatalf("poisoned req: expected HIT, got %q", resPoison.Header.Get("X-Cache"))
+	}
+	if leak := resPoison.Header.Get("Set-Cookie"); leak != "" {
+		t.Fatalf("CRITICAL: Delivery-stage purge failed to strip poisoned Set-Cookie: %q", leak)
+	}
+	if leak2 := resPoison.Header.Get("Set-Cookie2"); leak2 != "" {
+		t.Fatalf("CRITICAL: Delivery-stage purge failed to strip poisoned Set-Cookie2: %q", leak2)
+	}
+}
+
+// TC-134.5: RFC 9111 Authorization Refusal & Shared Cache Public Exception
+func TestCache_RFC9111_AuthorizationBoundary(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	var privateCalls int64
+	r.GET("/api/private-data", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&privateCalls, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Cache-Control", "max-age=60")
+		_, _ = res.WriteString(`{"data": "secret"}`)
+	})
+
+	var publicCalls int64
+	r.GET("/api/public-catalog", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&publicCalls, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Cache-Control", "public, max-age=60")
+		_, _ = res.WriteString(`{"catalog": "items"}`)
+	})
+
+	var unauthCalls int64
+	r.GET("/api/unauth-resource", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&unauthCalls, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Cache-Control", "max-age=60")
+		_, _ = res.WriteString(`{"unauth": "data"}`)
+	})
+
+	// Case A: Authenticated request without public directive
+	reqA1, _ := httpparser.NewRequest("GET", "/api/private-data", "HTTP/1.1")
+	reqA1.Header.Set("Host", "example.com")
+	reqA1.Header.Set("Authorization", "Bearer token-alice")
+	resA1 := httpparser.NewResponse()
+	r.ServeHTTP(reqA1, resA1)
+	if resA1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("case A1: expected X-Cache MISS, got %q", resA1.Header.Get("X-Cache"))
+	}
+	if store.Len() != 0 {
+		t.Fatalf("case A1: response without public must NOT be cached, store.Len() = %d", store.Len())
+	}
+
+	reqA2, _ := httpparser.NewRequest("GET", "/api/private-data", "HTTP/1.1")
+	reqA2.Header.Set("Host", "example.com")
+	reqA2.Header.Set("Authorization", "Bearer token-alice")
+	resA2 := httpparser.NewResponse()
+	r.ServeHTTP(reqA2, resA2)
+	if resA2.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("case A2: expected X-Cache MISS, got %q", resA2.Header.Get("X-Cache"))
+	}
+	if calls := atomic.LoadInt64(&privateCalls); calls != 2 {
+		t.Fatalf("case A2: expected handler called twice, got %d", calls)
+	}
+
+	// Case B: Authenticated request with explicit public directive (RFC 9111 §3.5 exception)
+	reqB1, _ := httpparser.NewRequest("GET", "/api/public-catalog", "HTTP/1.1")
+	reqB1.Header.Set("Host", "example.com")
+	reqB1.Header.Set("Authorization", "Bearer token-bob")
+	resB1 := httpparser.NewResponse()
+	r.ServeHTTP(reqB1, resB1)
+	if resB1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("case B1: expected X-Cache MISS, got %q", resB1.Header.Get("X-Cache"))
+	}
+	if store.Len() != 1 {
+		t.Fatalf("case B1: public response must be stored in cache, store.Len() = %d", store.Len())
+	}
+
+	reqB2, _ := httpparser.NewRequest("GET", "/api/public-catalog", "HTTP/1.1")
+	reqB2.Header.Set("Host", "example.com")
+	reqB2.Header.Set("Authorization", "Bearer token-bob")
+	resB2 := httpparser.NewResponse()
+	r.ServeHTTP(reqB2, resB2)
+	if resB2.Header.Get("X-Cache") != "HIT" {
+		t.Fatalf("case B2: expected X-Cache HIT for public cached resource, got %q", resB2.Header.Get("X-Cache"))
+	}
+	if calls := atomic.LoadInt64(&publicCalls); calls != 1 {
+		t.Fatalf("case B2: expected handler called only once on cache HIT, got %d", calls)
+	}
+
+	// Case C: Authenticated request querying pre-cached non-public resource
+	reqC1, _ := httpparser.NewRequest("GET", "/api/unauth-resource", "HTTP/1.1")
+	reqC1.Header.Set("Host", "example.com")
+	resC1 := httpparser.NewResponse()
+	r.ServeHTTP(reqC1, resC1)
+	if resC1.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("case C1: expected MISS, got %q", resC1.Header.Get("X-Cache"))
+	}
+	if calls := atomic.LoadInt64(&unauthCalls); calls != 1 {
+		t.Fatalf("case C1: expected 1 unauth call, got %d", calls)
+	}
+
+	// Client with Authorization arrives for that unauth-cached resource
+	reqC2, _ := httpparser.NewRequest("GET", "/api/unauth-resource", "HTTP/1.1")
+	reqC2.Header.Set("Host", "example.com")
+	reqC2.Header.Set("Authorization", "Bearer token-charlie")
+	resC2 := httpparser.NewResponse()
+	r.ServeHTTP(reqC2, resC2)
+	if resC2.Header.Get("X-Cache") != "MISS" {
+		t.Fatalf("case C2: request with Authorization must refuse non-public cached entry, got %q", resC2.Header.Get("X-Cache"))
+	}
+	if calls := atomic.LoadInt64(&unauthCalls); calls != 2 {
+		t.Fatalf("case C2: handler must be invoked when cached entry refused, got %d calls", calls)
+	}
+}
+
+// TC-134.6: RFC 9111 Origin Directives Enforcement (private, no-store, no-cache)
+func TestCache_RFC9111_OriginDirectivesEnforcement(t *testing.T) {
+	directives := []string{
+		"private",
+		"no-store",
+		"no-cache",
+		"no-cache, max-age=3600",
+		"private, no-store, max-age=86400",
+	}
+
+	for _, ccVal := range directives {
+		t.Run(ccVal, func(t *testing.T) {
+			r := New()
+			cfg := DefaultCacheConfig()
+			cfg.DefaultTTL = 60 * time.Second
+			store := NewResponseCache(cfg)
+			r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+			var calls int64
+			r.GET("/directive-test", func(req *httpparser.Request, res *httpparser.Response) {
+				atomic.AddInt64(&calls, 1)
+				res.SetStatus(http.StatusOK)
+				res.Header.Set("Cache-Control", ccVal)
+				_, _ = res.WriteString("directive-payload")
+			})
+
+			req1, _ := httpparser.NewRequest("GET", "/directive-test", "HTTP/1.1")
+			req1.Header.Set("Host", "example.com")
+			res1 := httpparser.NewResponse()
+			r.ServeHTTP(req1, res1)
+			if res1.Header.Get("X-Cache") != "MISS" {
+				t.Fatalf("req1: expected MISS, got %q", res1.Header.Get("X-Cache"))
+			}
+			if res1.Header.Get("Age") != "" {
+				t.Fatalf("req1: expected empty Age header")
+			}
+			if store.Len() != 0 {
+				t.Fatalf("response with Cache-Control: %q must NOT be cached, store.Len() = %d", ccVal, store.Len())
+			}
+
+			req2, _ := httpparser.NewRequest("GET", "/directive-test", "HTTP/1.1")
+			req2.Header.Set("Host", "example.com")
+			res2 := httpparser.NewResponse()
+			r.ServeHTTP(req2, res2)
+			if res2.Header.Get("X-Cache") != "MISS" {
+				t.Fatalf("req2: expected MISS, got %q", res2.Header.Get("X-Cache"))
+			}
+			if calls := atomic.LoadInt64(&calls); calls != 2 {
+				t.Fatalf("expected handler invoked on second request for non-cacheable directive %q, got %d calls", ccVal, calls)
+			}
+		})
+	}
+}
+
+// TC-134.7: Streaming Cache Exemption (text/event-stream, X-Accel-Buffering: no)
+func TestCache_StreamingCacheExemption(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.DefaultTTL = 60 * time.Second
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	var sseCalls int64
+	r.GET("/events", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&sseCalls, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/event-stream; charset=utf-8")
+		_, _ = res.WriteString("data: live-event\n\n")
+	})
+
+	var unbufferedCalls int64
+	r.GET("/unbuffered", func(req *httpparser.Request, res *httpparser.Response) {
+		atomic.AddInt64(&unbufferedCalls, 1)
+		res.SetStatus(http.StatusOK)
+		res.Header.Set("Content-Type", "text/plain")
+		res.Header.Set("X-Accel-Buffering", "no")
+		_, _ = res.WriteString("unbuffered data")
+	})
+
+	// 1. SSE Stream
+	for i := 0; i < 2; i++ {
+		req, _ := httpparser.NewRequest("GET", "/events", "HTTP/1.1")
+		req.Header.Set("Host", "stream.local")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+		if res.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("SSE iter %d: expected MISS, got %q", i, res.Header.Get("X-Cache"))
+		}
+	}
+	if calls := atomic.LoadInt64(&sseCalls); calls != 2 {
+		t.Fatalf("expected 2 SSE handler calls, got %d", calls)
+	}
+
+	// 2. Unbuffered feed
+	for i := 0; i < 2; i++ {
+		req, _ := httpparser.NewRequest("GET", "/unbuffered", "HTTP/1.1")
+		req.Header.Set("Host", "stream.local")
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+		if res.Header.Get("X-Cache") != "MISS" {
+			t.Fatalf("unbuffered iter %d: expected MISS, got %q", i, res.Header.Get("X-Cache"))
+		}
+	}
+	if calls := atomic.LoadInt64(&unbufferedCalls); calls != 2 {
+		t.Fatalf("expected 2 unbuffered handler calls, got %d", calls)
+	}
+
+	if store.Len() != 0 {
+		t.Fatalf("streaming responses must never be stored in cache, store.Len() = %d", store.Len())
+	}
+}
+
+// TestCache_SessionBoundaryDirectives verifies RFC 9111 session boundaries: Set-Cookie stripping, Authorization refusal without public, and private/no-store/no-cache directives.
+func TestCache_SessionBoundaryDirectives(t *testing.T) {
+	t.Run("SetCookieStripping", func(t *testing.T) {
+		TestCache_DualStageSetCookieStripped(t)
+	})
+	t.Run("AuthorizationBoundary", func(t *testing.T) {
+		TestCache_RFC9111_AuthorizationBoundary(t)
+	})
+	t.Run("OriginDirectives", func(t *testing.T) {
+		TestCache_RFC9111_OriginDirectivesEnforcement(t)
+	})
+	t.Run("StreamingExemption", func(t *testing.T) {
+		TestCache_StreamingCacheExemption(t)
+	})
+}
+
+// TC-134.12: High-Concurrency Thread Safety & Race-Free Verification under go test -race
+func TestCache_ConcurrentHostPortAccess_RaceClean(t *testing.T) {
+	r := New()
+	cfg := DefaultCacheConfig()
+	cfg.MaxEntries = 500
+	store := NewResponseCache(cfg)
+	r.Use(NewCacheMiddlewareWithStore(cfg, store))
+
+	targets := []string{
+		"service.local:8080",
+		"service.local:9090",
+		"[::1]:8080",
+		"[::1]:8443",
+	}
+
+	for _, host := range targets {
+		h := host
+		r.GETHost(h, "/data", func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Cache-Control", "public, max-age=60")
+			_, _ = res.WriteString("payload-for-" + h)
+		})
+	}
+
+	var wg sync.WaitGroup
+	workers := 20
+	iterations := 50
+
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(workerID int) {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				targetHost := targets[(workerID+i)%len(targets)]
+				req, _ := httpparser.NewRequest("GET", "/data", "HTTP/1.1")
+				req.Header.Set("Host", targetHost)
+
+				// Alternate with Authorization header
+				if (workerID+i)%3 == 0 {
+					req.Header.Set("Authorization", "Bearer concurrent-token")
+				}
+
+				res := httpparser.NewResponse()
+				r.ServeHTTP(req, res)
+
+				if res.StatusCode != http.StatusOK {
+					t.Errorf("worker %d iter %d: expected status 200, got %d", workerID, i, res.StatusCode)
+				}
+				expectedBody := "payload-for-" + targetHost
+				if body := res.Body.String(); body != expectedBody {
+					t.Errorf("worker %d iter %d: expected body %q, got %q", workerID, i, expectedBody, body)
+				}
+			}
+		}(w)
+	}
+
+	wg.Wait()
+}
+

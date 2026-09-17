@@ -1,6 +1,7 @@
 package router_test
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1632,3 +1633,524 @@ func TestRouter_ADR062_Canonicalization(t *testing.T) {
 		t.Errorf("expected 200 OK 'status' for /api/v1/../v1/status, got %d %q", res3.StatusCode, res3.Body.String())
 	}
 }
+
+// TC-134.8: Router Host:Port Disambiguation (domain-only wildcard vs explicit port matching)
+func TestRouter_HostPortDisambiguation(t *testing.T) {
+	r := router.New()
+
+	// Route A (Domain-only wildcard)
+	r.GETHost("api.toron.local", "/data", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("domain-wildcard-metrics")
+	})
+
+	// Route B (Port-specific route)
+	r.GETHost("api.toron.local:9000", "/data", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("port-9000-admin-metrics")
+	})
+
+	// 1. Request with Host: api.toron.local:9000 -> routes to handlerPort9000
+	req1, _ := httpparser.NewRequest("GET", "/data", "HTTP/1.1")
+	req1.Header.Set("Host", "api.toron.local:9000")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.StatusCode != http.StatusOK || res1.Body.String() != "port-9000-admin-metrics" {
+		t.Fatalf("req1: expected 200 OK 'port-9000-admin-metrics', got %d %q", res1.StatusCode, res1.Body.String())
+	}
+
+	// 2. Request with Host: api.toron.local:8080 -> routes to handlerDomain (wildcard port)
+	req2, _ := httpparser.NewRequest("GET", "/data", "HTTP/1.1")
+	req2.Header.Set("Host", "api.toron.local:8080")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.StatusCode != http.StatusOK || res2.Body.String() != "domain-wildcard-metrics" {
+		t.Fatalf("req2: expected 200 OK 'domain-wildcard-metrics', got %d %q", res2.StatusCode, res2.Body.String())
+	}
+
+	// 3. Request with Host: api.toron.local -> routes to handlerDomain (no port)
+	req3, _ := httpparser.NewRequest("GET", "/data", "HTTP/1.1")
+	req3.Header.Set("Host", "api.toron.local")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+	if res3.StatusCode != http.StatusOK || res3.Body.String() != "domain-wildcard-metrics" {
+		t.Fatalf("req3: expected 200 OK 'domain-wildcard-metrics', got %d %q", res3.StatusCode, res3.Body.String())
+	}
+
+	// 4. Request with Host: api.toron.local:80 -> routes to handlerDomain
+	req4, _ := httpparser.NewRequest("GET", "/data", "HTTP/1.1")
+	req4.Header.Set("Host", "api.toron.local:80")
+	res4 := httpparser.NewResponse()
+	r.ServeHTTP(req4, res4)
+	if res4.StatusCode != http.StatusOK || res4.Body.String() != "domain-wildcard-metrics" {
+		t.Fatalf("req4: expected 200 OK 'domain-wildcard-metrics', got %d %q", res4.StatusCode, res4.Body.String())
+	}
+
+	// 5. Request with Host: other.toron.local:9000 -> returns 404 (host mismatch)
+	req5, _ := httpparser.NewRequest("GET", "/data", "HTTP/1.1")
+	req5.Header.Set("Host", "other.toron.local:9000")
+	res5 := httpparser.NewResponse()
+	r.ServeHTTP(req5, res5)
+	if res5.StatusCode != http.StatusNotFound {
+		t.Fatalf("req5: expected 404 Not Found for host mismatch, got %d %q", res5.StatusCode, res5.Body.String())
+	}
+
+	// 6. Request with Host: other.toron.local -> returns 404 (host mismatch)
+	req6, _ := httpparser.NewRequest("GET", "/data", "HTTP/1.1")
+	req6.Header.Set("Host", "other.toron.local")
+	res6 := httpparser.NewResponse()
+	r.ServeHTTP(req6, res6)
+	if res6.StatusCode != http.StatusNotFound {
+		t.Fatalf("req6: expected 404 Not Found for host mismatch, got %d %q", res6.StatusCode, res6.Body.String())
+	}
+}
+
+// TC-134.9: Route Precedence (explicit host:port priority over domain-only fallback)
+func TestRouter_RoutePrecedence_HostPortOverDomain(t *testing.T) {
+	r := router.New()
+
+	// Exact Routes on path /config
+	r.GETHost("example.com", "/config", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("domain-fallback")
+	})
+	r.GETHost("example.com:8443", "/config", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("secure-port-8443")
+	})
+	r.GETHost("example.com:8080", "/config", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("admin-port-8080")
+	})
+
+	// Prefix Routes on prefix /v2
+	r.HandlePrefixWithMatcher("GET", "svc.corp", "/v2", nil, nil, func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("domain-prefix-fallback")
+	})
+	r.HandlePrefixWithMatcher("GET", "svc.corp:9090", "/v2", nil, nil, func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("port-prefix-9090")
+	})
+
+	// 1. Exact Route Precedence Checks
+	req1, _ := httpparser.NewRequest("GET", "/config", "HTTP/1.1")
+	req1.Header.Set("Host", "example.com:8443")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.Body.String() != "secure-port-8443" {
+		t.Fatalf("expected 'secure-port-8443', got %q", res1.Body.String())
+	}
+
+	req2, _ := httpparser.NewRequest("GET", "/config", "HTTP/1.1")
+	req2.Header.Set("Host", "example.com:8080")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.Body.String() != "admin-port-8080" {
+		t.Fatalf("expected 'admin-port-8080', got %q", res2.Body.String())
+	}
+
+	req3, _ := httpparser.NewRequest("GET", "/config", "HTTP/1.1")
+	req3.Header.Set("Host", "example.com:9999")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+	if res3.Body.String() != "domain-fallback" {
+		t.Fatalf("expected 'domain-fallback', got %q", res3.Body.String())
+	}
+
+	req4, _ := httpparser.NewRequest("GET", "/config", "HTTP/1.1")
+	req4.Header.Set("Host", "example.com")
+	res4 := httpparser.NewResponse()
+	r.ServeHTTP(req4, res4)
+	if res4.Body.String() != "domain-fallback" {
+		t.Fatalf("expected 'domain-fallback', got %q", res4.Body.String())
+	}
+
+	// 2. Prefix Route Specificity Sorting Checks
+	reqP1, _ := httpparser.NewRequest("GET", "/v2/users", "HTTP/1.1")
+	reqP1.Header.Set("Host", "svc.corp:9090")
+	resP1 := httpparser.NewResponse()
+	r.ServeHTTP(reqP1, resP1)
+	if resP1.Body.String() != "port-prefix-9090" {
+		t.Fatalf("expected 'port-prefix-9090', got %q", resP1.Body.String())
+	}
+
+	reqP2, _ := httpparser.NewRequest("GET", "/v2/users", "HTTP/1.1")
+	reqP2.Header.Set("Host", "svc.corp:7070")
+	resP2 := httpparser.NewResponse()
+	r.ServeHTTP(reqP2, resP2)
+	if resP2.Body.String() != "domain-prefix-fallback" {
+		t.Fatalf("expected 'domain-prefix-fallback', got %q", resP2.Body.String())
+	}
+
+	reqP3, _ := httpparser.NewRequest("GET", "/v2/users", "HTTP/1.1")
+	reqP3.Header.Set("Host", "svc.corp")
+	resP3 := httpparser.NewResponse()
+	r.ServeHTTP(reqP3, resP3)
+	if resP3.Body.String() != "domain-prefix-fallback" {
+		t.Fatalf("expected 'domain-prefix-fallback', got %q", resP3.Body.String())
+	}
+}
+
+func TestRouter_HostPortPrecedence(t *testing.T) {
+	TestRouter_RoutePrecedence_HostPortOverDomain(t)
+}
+
+// TC-134.10: IPv6 Router Matching and Host Port Stripping
+func TestRouter_IPv6HostMatchingAndPortStripping(t *testing.T) {
+	// 1. Unit checks on extractHost
+	vectors := []struct {
+		input    string
+		expected string
+	}{
+		{"[::1]:8080", "[::1]"},
+		{"[::1]", "[::1]"},
+		{"[2001:0db8::1]:8443", "[2001:0db8::1]"},
+		{"[2001:0db8::1]", "[2001:0db8::1]"},
+		{"localhost:8080", "localhost"},
+	}
+
+	for _, v := range vectors {
+		req, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+		req.Header.Set("Host", v.input)
+		actual := router.ExtractHost(req)
+		if actual != v.expected {
+			t.Fatalf("extractHost(%q): expected %q, got %q", v.input, v.expected, actual)
+		}
+	}
+
+	// Unit checks on hasExplicitPort
+	portVectors := []struct {
+		input   string
+		hasPort bool
+	}{
+		{"[::1]:8080", true},
+		{"[::1]", false},
+		{"example.com:8080", true},
+		{"example.com", false},
+	}
+	for _, pv := range portVectors {
+		if actual := router.HasExplicitPort(pv.input); actual != pv.hasPort {
+			t.Fatalf("hasExplicitPort(%q): expected %v, got %v", pv.input, pv.hasPort, actual)
+		}
+	}
+
+	// 2. Router Integration checks
+	r := router.New()
+
+	r.GETHost("[::1]:8080", "/status", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("ipv6-port-8080")
+	})
+
+	r.GETHost("[::1]", "/status", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("ipv6-domain-fallback")
+	})
+
+	// Request 1: [::1]:8080 -> port 8080 handler
+	req1, _ := httpparser.NewRequest("GET", "/status", "HTTP/1.1")
+	req1.Header.Set("Host", "[::1]:8080")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+	if res1.StatusCode != http.StatusOK || res1.Body.String() != "ipv6-port-8080" {
+		t.Fatalf("req1: expected 200 OK 'ipv6-port-8080', got %d %q", res1.StatusCode, res1.Body.String())
+	}
+
+	// Request 2: [::1]:8443 -> domain fallback
+	req2, _ := httpparser.NewRequest("GET", "/status", "HTTP/1.1")
+	req2.Header.Set("Host", "[::1]:8443")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+	if res2.StatusCode != http.StatusOK || res2.Body.String() != "ipv6-domain-fallback" {
+		t.Fatalf("req2: expected 200 OK 'ipv6-domain-fallback', got %d %q", res2.StatusCode, res2.Body.String())
+	}
+
+	// Request 3: [::1] -> domain fallback
+	req3, _ := httpparser.NewRequest("GET", "/status", "HTTP/1.1")
+	req3.Header.Set("Host", "[::1]")
+	res3 := httpparser.NewResponse()
+	r.ServeHTTP(req3, res3)
+	if res3.StatusCode != http.StatusOK || res3.Body.String() != "ipv6-domain-fallback" {
+		t.Fatalf("req3: expected 200 OK 'ipv6-domain-fallback', got %d %q", res3.StatusCode, res3.Body.String())
+	}
+
+	// Request 4: [2001:db8::2]:8080 -> 404 Not Found
+	req4, _ := httpparser.NewRequest("GET", "/status", "HTTP/1.1")
+	req4.Header.Set("Host", "[2001:db8::2]:8080")
+	res4 := httpparser.NewResponse()
+	r.ServeHTTP(req4, res4)
+	if res4.StatusCode != http.StatusNotFound {
+		t.Fatalf("req4: expected 404 Not Found, got %d", res4.StatusCode)
+	}
+}
+
+func TestRouter_IPv6HostMatching(t *testing.T) {
+	TestRouter_IPv6HostMatchingAndPortStripping(t)
+}
+
+// TC-134.11: Verification across all 9 routing methods
+func TestRouter_AllNineRoutingMethods_HostPortInvariants(t *testing.T) {
+	r := router.New()
+
+	// 1. Exact Path Routing (r.Handle, r.GET)
+	r.GETHost("exact.local:8080", "/exact", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("exact-port-8080")
+	})
+	r.GETHost("exact.local", "/exact", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("exact-domain-fallback")
+	})
+
+	// 2. Prefix Path Routing (r.prefixRoutes)
+	r.HandlePrefixWithMatcher("GET", "prefix.local:8080", "/v1", nil, nil, func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("prefix-port-8080")
+	})
+	r.HandlePrefixWithMatcher("GET", "prefix.local", "/v1", nil, nil, func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("prefix-domain-fallback")
+	})
+
+	// 3. Domain / Virtual Host Routing
+	r.GETHost("tenant-a.local:8080", "/profile", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("tenant-a")
+	})
+	r.GETHost("tenant-b.local:8080", "/profile", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("tenant-b")
+	})
+
+	// 4. Header-Based Routing
+	r.HandleHostHeader("GET", "canary.local:8080", "/canary", map[string]string{"X-Canary": "true"}, func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("canary-matched")
+	})
+
+	// 5. Method-Based Routing
+	r.GETHost("methods.local:8080", "/resource", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("get-matched")
+	})
+	r.POSTHost("methods.local:8080", "/resource", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("post-matched")
+	})
+
+	// 6. Reverse Proxy Upstream Routing
+	upstreamSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("upstream-response"))
+	}))
+	defer upstreamSrv.Close()
+
+	optsProxy := proxy.ProxyOptions{
+		Targets: []string{upstreamSrv.URL},
+	}
+	if err := r.RoutePrefix(router.RouteTypeUpstream, "proxy.local:8080", "/upstream", nil, "", optsProxy); err != nil {
+		t.Fatalf("failed to register upstream route: %v", err)
+	}
+
+	// 7. Static File Serving Routing
+	tmpDir := t.TempDir()
+	testFilePath := filepath.Join(tmpDir, "index.html")
+	if err := os.WriteFile(testFilePath, []byte("static-content-8080"), 0644); err != nil {
+		t.Fatalf("failed to write static file: %v", err)
+	}
+	if err := r.RoutePrefix(router.RouteTypeStatic, "static.local:8080", "/static", nil, tmpDir, proxy.ProxyOptions{}); err != nil {
+		t.Fatalf("failed to register static route: %v", err)
+	}
+
+	// 8. K8s Ingress & Container Discovery Routing
+	ingressSpecs := []router.PrefixRouteSpec{
+		{
+			TargetType: router.RouteTypeUpstream,
+			Host:       "ingress.local:8080",
+			Prefix:     "/ingress",
+			Opts:       proxy.ProxyOptions{Targets: []string{upstreamSrv.URL}},
+		},
+	}
+	if err := r.ReplacePrefixRoutesBySource("k8s-ingress", ingressSpecs); err != nil {
+		t.Fatalf("failed to replace prefix routes: %v", err)
+	}
+
+	// Verification of Method 1: Exact Path Routing
+	reqM1a, _ := httpparser.NewRequest("GET", "/exact", "HTTP/1.1")
+	reqM1a.Header.Set("Host", "exact.local:8080")
+	resM1a := httpparser.NewResponse()
+	r.ServeHTTP(reqM1a, resM1a)
+	if resM1a.Body.String() != "exact-port-8080" {
+		t.Errorf("Method 1: expected exact-port-8080, got %q", resM1a.Body.String())
+	}
+
+	reqM1b, _ := httpparser.NewRequest("GET", "/exact", "HTTP/1.1")
+	reqM1b.Header.Set("Host", "exact.local:9090")
+	resM1b := httpparser.NewResponse()
+	r.ServeHTTP(reqM1b, resM1b)
+	if resM1b.Body.String() != "exact-domain-fallback" {
+		t.Errorf("Method 1: expected exact-domain-fallback, got %q", resM1b.Body.String())
+	}
+
+	// Verification of Method 2: Prefix Path Routing
+	reqM2a, _ := httpparser.NewRequest("GET", "/v1/test", "HTTP/1.1")
+	reqM2a.Header.Set("Host", "prefix.local:8080")
+	resM2a := httpparser.NewResponse()
+	r.ServeHTTP(reqM2a, resM2a)
+	if resM2a.Body.String() != "prefix-port-8080" {
+		t.Errorf("Method 2: expected prefix-port-8080, got %q", resM2a.Body.String())
+	}
+
+	reqM2b, _ := httpparser.NewRequest("GET", "/v1/test", "HTTP/1.1")
+	reqM2b.Header.Set("Host", "prefix.local:9090")
+	resM2b := httpparser.NewResponse()
+	r.ServeHTTP(reqM2b, resM2b)
+	if resM2b.Body.String() != "prefix-domain-fallback" {
+		t.Errorf("Method 2: expected prefix-domain-fallback, got %q", resM2b.Body.String())
+	}
+
+	// Verification of Method 3: Domain / Virtual Host Routing
+	reqM3a, _ := httpparser.NewRequest("GET", "/profile", "HTTP/1.1")
+	reqM3a.Header.Set("Host", "tenant-a.local:8080")
+	resM3a := httpparser.NewResponse()
+	r.ServeHTTP(reqM3a, resM3a)
+	if resM3a.Body.String() != "tenant-a" {
+		t.Errorf("Method 3: expected tenant-a, got %q", resM3a.Body.String())
+	}
+
+	reqM3b, _ := httpparser.NewRequest("GET", "/profile", "HTTP/1.1")
+	reqM3b.Header.Set("Host", "tenant-b.local:8080")
+	resM3b := httpparser.NewResponse()
+	r.ServeHTTP(reqM3b, resM3b)
+	if resM3b.Body.String() != "tenant-b" {
+		t.Errorf("Method 3: expected tenant-b, got %q", resM3b.Body.String())
+	}
+
+	// Verification of Method 4: Header-Based Routing
+	reqM4a, _ := httpparser.NewRequest("GET", "/canary", "HTTP/1.1")
+	reqM4a.Header.Set("Host", "canary.local:8080")
+	reqM4a.Header.Set("X-Canary", "true")
+	resM4a := httpparser.NewResponse()
+	r.ServeHTTP(reqM4a, resM4a)
+	if resM4a.Body.String() != "canary-matched" {
+		t.Errorf("Method 4: expected canary-matched, got %q", resM4a.Body.String())
+	}
+
+	reqM4b, _ := httpparser.NewRequest("GET", "/canary", "HTTP/1.1")
+	reqM4b.Header.Set("Host", "canary.local:8080")
+	resM4b := httpparser.NewResponse()
+	r.ServeHTTP(reqM4b, resM4b)
+	if resM4b.StatusCode != http.StatusNotFound {
+		t.Errorf("Method 4: expected 404 when canary header missing, got %d", resM4b.StatusCode)
+	}
+
+	// Verification of Method 5: Method-Based Routing
+	reqM5a, _ := httpparser.NewRequest("GET", "/resource", "HTTP/1.1")
+	reqM5a.Header.Set("Host", "methods.local:8080")
+	resM5a := httpparser.NewResponse()
+	r.ServeHTTP(reqM5a, resM5a)
+	if resM5a.Body.String() != "get-matched" {
+		t.Errorf("Method 5: expected get-matched, got %q", resM5a.Body.String())
+	}
+
+	reqM5b, _ := httpparser.NewRequest("POST", "/resource", "HTTP/1.1")
+	reqM5b.Header.Set("Host", "methods.local:8080")
+	resM5b := httpparser.NewResponse()
+	r.ServeHTTP(reqM5b, resM5b)
+	if resM5b.Body.String() != "post-matched" {
+		t.Errorf("Method 5: expected post-matched, got %q", resM5b.Body.String())
+	}
+
+	reqM5c, _ := httpparser.NewRequest("DELETE", "/resource", "HTTP/1.1")
+	reqM5c.Header.Set("Host", "methods.local:8080")
+	resM5c := httpparser.NewResponse()
+	r.ServeHTTP(reqM5c, resM5c)
+	if resM5c.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("Method 5: expected 405 Method Not Allowed, got %d", resM5c.StatusCode)
+	}
+
+	// Verification of Method 6: Reverse Proxy Upstream Routing
+	reqM6, _ := httpparser.NewRequest("GET", "/upstream/data", "HTTP/1.1")
+	reqM6.Header.Set("Host", "proxy.local:8080")
+	resM6 := httpparser.NewResponse()
+	r.ServeHTTP(reqM6, resM6)
+	bodyM6 := resM6.Body.String()
+	if resM6.StreamBody != nil {
+		defer resM6.StreamBody.Close()
+		b, _ := io.ReadAll(resM6.StreamBody)
+		bodyM6 = string(b)
+	}
+	if resM6.StatusCode != http.StatusOK || bodyM6 != "upstream-response" {
+		t.Errorf("Method 6: expected 200 OK 'upstream-response', got %d %q", resM6.StatusCode, bodyM6)
+	}
+	// Verify cache key authority reflects downstream client Host:Port, not upstream IP
+	clientAuthority := router.ExtractCacheHostPort(reqM6)
+	if clientAuthority != "proxy.local:8080" {
+		t.Errorf("Method 6: expected cache authority 'proxy.local:8080', got %q", clientAuthority)
+	}
+
+	reqM6b, _ := httpparser.NewRequest("GET", "/upstream/data", "HTTP/1.1")
+	reqM6b.Header.Set("Host", "proxy.local:9090")
+	resM6b := httpparser.NewResponse()
+	r.ServeHTTP(reqM6b, resM6b)
+	if resM6b.StatusCode != http.StatusNotFound {
+		t.Errorf("Method 6: expected 404 for wrong port on upstream route, got %d", resM6b.StatusCode)
+	}
+
+	// Verification of Method 7: Static File Serving Routing
+	reqM7a, _ := httpparser.NewRequest("GET", "/static/index.html", "HTTP/1.1")
+	reqM7a.Header.Set("Host", "static.local:8080")
+	resM7a := httpparser.NewResponse()
+	r.ServeHTTP(reqM7a, resM7a)
+	if resM7a.StatusCode != http.StatusOK || resM7a.Body.String() != "static-content-8080" {
+		t.Errorf("Method 7: expected 200 OK 'static-content-8080', got %d %q", resM7a.StatusCode, resM7a.Body.String())
+	}
+
+	reqM7b, _ := httpparser.NewRequest("GET", "/static/index.html", "HTTP/1.1")
+	reqM7b.Header.Set("Host", "static.local:9090")
+	resM7b := httpparser.NewResponse()
+	r.ServeHTTP(reqM7b, resM7b)
+	if resM7b.StatusCode != http.StatusNotFound {
+		t.Errorf("Method 7: expected 404 for wrong port on port-isolated static route, got %d", resM7b.StatusCode)
+	}
+
+	// Verification of Method 8: K8s Ingress & Container Discovery Routing
+	reqM8, _ := httpparser.NewRequest("GET", "/ingress/resource", "HTTP/1.1")
+	reqM8.Header.Set("Host", "ingress.local:8080")
+	resM8 := httpparser.NewResponse()
+	r.ServeHTTP(reqM8, resM8)
+	bodyM8 := resM8.Body.String()
+	if resM8.StreamBody != nil {
+		defer resM8.StreamBody.Close()
+		b, _ := io.ReadAll(resM8.StreamBody)
+		bodyM8 = string(b)
+	}
+	if resM8.StatusCode != http.StatusOK || bodyM8 != "upstream-response" {
+		t.Errorf("Method 8: expected 200 OK 'upstream-response', got %d %q", resM8.StatusCode, bodyM8)
+	}
+
+	reqM8b, _ := httpparser.NewRequest("GET", "/ingress/resource", "HTTP/1.1")
+	reqM8b.Header.Set("Host", "ingress.local:9090")
+	resM8b := httpparser.NewResponse()
+	r.ServeHTTP(reqM8b, resM8b)
+	if resM8b.StatusCode != http.StatusNotFound {
+		t.Errorf("Method 8: expected 404 for wrong port on ingress route, got %d", resM8b.StatusCode)
+	}
+
+	// Verification of Method 9: Multi-Port Gateway Listeners
+	ports := []string{"80", "8080", "8443"}
+	for _, port := range ports {
+		reqM9, _ := httpparser.NewRequest("GET", "/gateway-probe", "HTTP/1.1")
+		reqM9.Header.Set("Host", "gateway.local:"+port)
+		auth := router.ExtractCacheHostPort(reqM9)
+		if auth != "gateway.local:"+port {
+			t.Errorf("Method 9: expected cache authority 'gateway.local:%s', got %q", port, auth)
+		}
+	}
+}
+
+func TestRouter_NineRoutingMethodsInvariants(t *testing.T) {
+	TestRouter_AllNineRoutingMethods_HostPortInvariants(t)
+}
+

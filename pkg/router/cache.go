@@ -196,7 +196,7 @@ func NewCacheMiddlewareWithStore(cfg CacheConfig, cache *ResponseCache) Middlewa
 			if uri == "" {
 				uri = req.Path
 			}
-			cacheKey := req.Method + ":" + extractHost(req) + ":" + uri
+			cacheKey := req.Method + ":" + extractCacheHostPort(req) + ":" + uri
 			if ae := req.Header.Get("Accept-Encoding"); ae != "" {
 				cacheKey += ":ae=" + ae
 			}
@@ -320,3 +320,52 @@ func NewCacheMiddlewareWithStore(cfg CacheConfig, cache *ResponseCache) Middlewa
 		}
 	}
 }
+
+// extractCacheHostPort extracts the normalized host and explicit port from the incoming request.
+// It trims whitespace, normalizes hostnames to lowercase, safely handles bracketed IPv6 literals,
+// and preserves explicit ports to ensure RFC 9111 origin isolation and prevent cross-port cache collisions.
+func extractCacheHostPort(req *httpparser.Request) string {
+	if req == nil {
+		return ""
+	}
+	h := req.Header.Get("Host")
+	if h == "" {
+		return ""
+	}
+	h = strings.TrimSpace(h)
+	if h == "" {
+		return ""
+	}
+
+	// Handle bracketed IPv6 literals: [fe80::1] or [::1]:8080
+	if strings.HasPrefix(h, "[") {
+		closeBracket := strings.Index(h, "]")
+		if closeBracket != -1 {
+			ipv6 := strings.ToLower(strings.TrimSpace(h[1:closeBracket]))
+			normalizedHost := "[" + ipv6 + "]"
+			rest := strings.TrimSpace(h[closeBracket+1:])
+			if strings.HasPrefix(rest, ":") {
+				port := strings.TrimSpace(rest[1:])
+				if port != "" {
+					return normalizedHost + ":" + port
+				}
+			}
+			return normalizedHost
+		}
+		return strings.ToLower(h)
+	}
+
+	// Handle IPv4 addresses and standard hostnames
+	colonIdx := strings.LastIndex(h, ":")
+	if colonIdx != -1 {
+		host := strings.ToLower(strings.TrimSpace(h[:colonIdx]))
+		port := strings.TrimSpace(h[colonIdx+1:])
+		if port != "" {
+			return host + ":" + port
+		}
+		return host
+	}
+
+	return strings.ToLower(h)
+}
+

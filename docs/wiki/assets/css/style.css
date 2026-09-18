@@ -491,3 +491,104 @@ body {
     padding: .65rem .75rem;
   }
 }
+
+/* Responsive documentation navigation */
+.mobile-nav-control {
+  display: none;
+}
+
+.nav-toggle {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+@media (max-width: 900px) {
+  .mobile-nav-control {
+    display: block;
+    position: sticky;
+    top: 64px;
+    z-index: 9;
+    background: #fff;
+    border-bottom: 1px solid #eaeef2;
+  }
+
+  .nav-toggle-label {
+    min-height: 46px;
+    padding: 0 22px;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    cursor: pointer;
+    color: #24292f;
+    font-size: .88rem;
+    font-weight: 650;
+    user-select: none;
+  }
+
+  .nav-toggle-icon {
+    font-size: 1.05rem;
+    line-height: 1;
+  }
+
+  .nav-toggle-chevron {
+    margin-left: auto;
+    font-size: 1rem;
+    transition: transform .2s ease;
+  }
+
+  .nav-toggle:checked + .nav-toggle-label .nav-toggle-chevron {
+    transform: rotate(180deg);
+  }
+
+  .site-shell {
+    display: block;
+  }
+
+  .sidebar {
+    display: none;
+    position: static;
+    height: auto;
+    max-height: 65vh;
+    overflow-y: auto;
+    padding: 16px 22px 24px;
+    border-right: 0;
+    border-bottom: 1px solid #eaeef2;
+    background: #fafbfc;
+  }
+
+  .nav-toggle:checked ~ .site-shell .sidebar {
+    display: block;
+  }
+
+  .sidebar-title {
+    margin-bottom: 14px;
+  }
+
+  .nav-group {
+    margin-bottom: 18px;
+  }
+
+  .nav-group a {
+    padding: 8px 10px;
+    font-size: .9rem;
+  }
+
+  .content {
+    padding: 28px 22px 60px;
+  }
+
+  .top-nav {
+    display: none;
+  }
+
+  .hero {
+    padding: 28px;
+  }
+
+  .markdown-body pre {
+    padding: 14px 16px;
+    font-size: .82rem;
+    border-radius: 8px;
+  }
+}

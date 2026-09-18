@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% if page.title %}{{ page.title }} · {% endif %}Toron</title>
+  <meta name="description" content="{{ page.description | default: site.description | escape }}">
+  <link rel="stylesheet" href="{{ '/assets/css/style.css' | relative_url }}">
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="{{ '/' | relative_url }}">
+        <span class="brand-mark">তোরণ</span>
+        <span class="brand-name">Toron</span>
+      </a>
+      <nav class="top-nav" aria-label="Project links">
+        <a href="https://github.com/SayantanSaha/toron_v3">GitHub</a>
+        <a href="https://github.com/SayantanSaha/toron_v3/tree/master/benchmarks">Benchmarks</a>
+        <a href="mailto:sayantan.somu@gmail.com">Contact</a>
+      </nav>
+    </div>
+  </header>
+
+  <div class="site-shell">
+    <aside class="sidebar">
+      <div class="sidebar-title">Documentation</div>
+      {% for group in site.data.navigation %}
+        <section class="nav-group">
+          <h2>{{ group.title }}</h2>
+          <ul>
+            {% for item in group.items %}
+              <li><a href="{{ item.url | relative_url }}">{{ item.title }}</a></li>
+            {% endfor %}
+          </ul>
+        </section>
+      {% endfor %}
+    </aside>
+
+    <main class="content">
+      {% if page.path == "index.md" %}
+        <div class="hero">
+          <div class="hero-bengali">তোরণ</div>
+          <div class="pronunciation">Pronounced <strong>to-ron</strong> · Bengali for <strong>gateway</strong></div>
+          <p>Event-driven web server, reverse proxy, API gateway and edge security engine written in Go.</p>
+        </div>
+      {% endif %}
+
+      <article class="markdown-body">
+        {{ content }}
+      </article>
+
+      <footer class="site-footer">
+        <span>Toron · তোরণ</span>
+        <span><a href="https://github.com/SayantanSaha/toron_v3">GitHub</a></span>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

@@ -6,6 +6,28 @@
   <title>{% if page.title %}{{ page.title }} · {% endif %}Toron</title>
   <meta name="description" content="{{ page.description | default: site.description | escape }}">
   <link rel="stylesheet" href="{{ site.baseurl }}/assets/css/style.css">
+  <script type="module">
+    import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+
+    mermaid.initialize({
+      startOnLoad: false,
+      securityLevel: 'strict',
+      theme: 'neutral'
+    });
+
+    document.addEventListener('DOMContentLoaded', async () => {
+      document.querySelectorAll('pre code.language-mermaid').forEach((code) => {
+        const diagram = document.createElement('div');
+        diagram.className = 'mermaid';
+        diagram.textContent = code.textContent;
+        code.parentElement.replaceWith(diagram);
+      });
+
+      await mermaid.run({
+        querySelector: '.mermaid'
+      });
+    });
+  </script>
 </head>
 <body>
   <header class="site-header">

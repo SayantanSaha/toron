@@ -138,6 +138,11 @@
         <span><a href="https://github.com/SayantanSaha/toron">GitHub</a></span>
       </footer>
     </main>
+
+    <aside class="page-toc" aria-label="On this page">
+      <div class="page-toc-title">On this page</div>
+      <nav id="page-toc-nav"></nav>
+    </aside>
   </div>
 
   <script>
@@ -169,7 +174,61 @@
         });
       });
 
+      const buildPageToc = () => {
+        const article = document.querySelector('.markdown-body');
+        const nav = document.getElementById('page-toc-nav');
+        if (!article || !nav) return;
+
+        const headings = [...article.querySelectorAll('h2, h3')];
+        if (!headings.length) {
+          document.querySelector('.page-toc')?.remove();
+          return;
+        }
+
+        const usedIds = new Set();
+        const slugify = (text) => text
+          .toLowerCase()
+          .trim()
+          .replace(/[^a-z0-9\\s-]/g, '')
+          .replace(/\\s+/g, '-')
+          .replace(/-+/g, '-');
+
+        headings.forEach((heading) => {
+          let id = heading.id || slugify(heading.textContent);
+          let base = id || 'section';
+          let index = 2;
+          while (usedIds.has(id)) {
+            id = base + '-' + index++;
+          }
+          heading.id = id;
+          usedIds.add(id);
+
+          const link = document.createElement('a');
+          link.href = '#' + id;
+          link.textContent = heading.textContent.trim();
+          link.className = heading.tagName === 'H3' ? 'toc-h3' : 'toc-h2';
+          nav.appendChild(link);
+        });
+
+        const links = [...nav.querySelectorAll('a')];
+        const observer = new IntersectionObserver((entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              links.forEach((link) => link.classList.remove('active'));
+              const active = nav.querySelector('a[href="#' + entry.target.id + '"]');
+              active?.classList.add('active');
+            }
+          });
+        }, {
+          rootMargin: '-80px 0px -70% 0px',
+          threshold: 0
+        });
+
+        headings.forEach((heading) => observer.observe(heading));
+      };
+
       updateButtons();
+      buildPageToc();
     })();
   </script>
 </body>

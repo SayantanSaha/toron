@@ -3,98 +3,98 @@
     - title: Documentation Home
       url: /
     - title: Getting Started
-      url: /getting-started/.html
+      url: /getting-started.html
     - title: Installation & Services
-      url: /features/installation-guide/.html
+      url: /features/installation-guide.html
     - title: Docker
-      url: /features/docker-container/.html
+      url: /features/docker-container.html
     - title: Configuration
-      url: /configuration/.html
+      url: /configuration.html
 
 - title: ⚙️ Core Architecture & Protocols
   items:
     - title: Event Reactor
-      url: /features/event-reactor/.html
+      url: /features/event-reactor.html
     - title: HTTP/2
-      url: /features/http2/.html
+      url: /features/http2.html
     - title: HTTP/3 / QUIC
-      url: /features/http3/.html
+      url: /features/http3.html
     - title: TLS / HTTPS
-      url: /features/tls-https/.html
+      url: /features/tls-https.html
     - title: ACME
-      url: /features/acme/.html
+      url: /features/acme.html
     - title: WebSocket
-      url: /features/websocket/.html
+      url: /features/websocket.html
     - title: Static File Serving
-      url: /features/static-file-serving/.html
+      url: /features/static-file-serving.html
     - title: Chunked Ingestion
-      url: /features/inbound-chunked-ingestion/.html
+      url: /features/inbound-chunked-ingestion.html
 
 - title: 🌐 Routing & Resilience
   items:
     - title: Reverse Proxy
-      url: /features/reverse-proxy/.html
+      url: /features/reverse-proxy.html
     - title: Layer 4 TCP / UDP
-      url: /features/layer4-proxy/.html
+      url: /features/layer4-proxy.html
     - title: Load Balancing
-      url: /features/advanced-load-balancing/.html
+      url: /features/advanced-load-balancing.html
     - title: Circuit Breaker
-      url: /features/circuit-breaker/.html
+      url: /features/circuit-breaker.html
     - title: Header Routing
-      url: /features/header-routing/.html
+      url: /features/header-routing.html
     - title: Domain Routing
-      url: /features/domain-routing/.html
+      url: /features/domain-routing.html
     - title: gRPC Gateway
-      url: /features/grpc-gateway/.html
+      url: /features/grpc-gateway.html
     - title: REST-to-gRPC
-      url: /features/grpc-transcoding/.html
+      url: /features/grpc-transcoding.html
 
 - title: 🛡️ Security & Performance
   items:
     - title: WAF
-      url: /features/waf/.html
+      url: /features/waf.html
     - title: Path Traversal Defense
-      url: /features/path-traversal-defense/.html
+      url: /features/path-traversal-defense.html
     - title: Authentication
-      url: /features/authentication/.html
+      url: /features/authentication.html
     - title: CORS & Security Headers
-      url: /features/cors-security-headers/.html
+      url: /features/cors-security-headers.html
     - title: Response Compression
-      url: /features/compression/.html
+      url: /features/compression.html
     - title: Response Caching
-      url: /features/response-caching/.html
+      url: /features/response-caching.html
     - title: Benchmarking
-      url: /features/benchmarking/.html
+      url: /features/benchmarking.html
     - title: Multi-Proxy Comparison
-      url: /features/docker-compare-benchmark/.html
+      url: /features/docker-compare-benchmark.html
     - title: Saturation Stress
-      url: /features/saturation-stress-benchmark/.html
+      url: /features/saturation-stress-benchmark.html
     - title: Differential Fuzzing
-      url: /features/differential-fuzzer-metrics/.html
+      url: /features/differential-fuzzer-metrics.html
 
 - title: ☸️ Platform Integration
   items:
     - title: Kubernetes Ingress
-      url: /features/kubernetes-ingress/.html
+      url: /features/kubernetes-ingress.html
     - title: Service Mesh Sidecar
-      url: /features/service-mesh-sidecar/.html
+      url: /features/service-mesh-sidecar.html
     - title: OCI Auto-Discovery
-      url: /features/oci-container-auto-discovery/.html
+      url: /features/oci-container-auto-discovery.html
 
 - title: 📖 Reference
   items:
     - title: CLI
-      url: /reference/cli/.html
+      url: /reference/cli.html
     - title: Configuration Options
-      url: /reference/config-options/.html
+      url: /reference/config-options.html
     - title: HTTP API
-      url: /reference/api/.html
+      url: /reference/api.html
 
 - title: 💡 Help
   items:
     - title: Troubleshooting
-      url: /troubleshooting/.html
+      url: /troubleshooting.html
     - title: FAQ
-      url: /faq/.html
+      url: /faq.html
     - title: Release Notes
-      url: /release-notes/.html
+      url: /release-notes.html

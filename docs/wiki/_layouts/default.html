@@ -3,8 +3,18 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>{% if page.title %}{{ page.title }} · {% endif %}Toron</title>
   <meta name="description" content="{{ page.description | default: site.description | escape }}">
+  <script>
+    (() => {
+      const saved = localStorage.getItem('toron-theme');
+      const theme = saved === 'light' || saved === 'dark'
+        ? saved
+        : (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.dataset.theme = theme;
+    })();
+  </script>
   <link rel="stylesheet" href="{{ site.baseurl }}/assets/css/style.css">
   <script>
     window.MathJax = {
@@ -22,23 +32,42 @@
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
 
-    mermaid.initialize({
-      startOnLoad: false,
-      securityLevel: 'strict',
-      theme: 'neutral'
-    });
+    const getMermaidTheme = () =>
+      document.documentElement.dataset.theme === 'dark' ? 'dark' : 'neutral';
+
+    const renderMermaid = async () => {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'strict',
+        theme: getMermaidTheme()
+      });
+
+      document.querySelectorAll('.mermaid').forEach((diagram) => {
+        if (!diagram.dataset.source) {
+          diagram.dataset.source = diagram.textContent;
+        }
+        diagram.removeAttribute('data-processed');
+        diagram.innerHTML = diagram.dataset.source;
+      });
+
+      const diagrams = document.querySelectorAll('.mermaid');
+      if (diagrams.length) {
+        await mermaid.run({ querySelector: '.mermaid' });
+      }
+    };
+
+    window.toronRenderMermaid = renderMermaid;
 
     document.addEventListener('DOMContentLoaded', async () => {
       document.querySelectorAll('pre code.language-mermaid').forEach((code) => {
         const diagram = document.createElement('div');
         diagram.className = 'mermaid';
+        diagram.dataset.source = code.textContent;
         diagram.textContent = code.textContent;
         code.parentElement.replaceWith(diagram);
       });
 
-      await mermaid.run({
-        querySelector: '.mermaid'
-      });
+      await renderMermaid();
     });
   </script>
 </head>
@@ -53,17 +82,27 @@
         <a href="https://github.com/SayantanSaha/toron">GitHub</a>
         <a href="https://github.com/SayantanSaha/toron/tree/master/benchmarks">Benchmarks</a>
         <a href="mailto:sayantan.somu@gmail.com">Contact</a>
+        <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch to dark mode">
+          <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+          <span class="theme-toggle-label">Dark</span>
+        </button>
       </nav>
     </div>
   </header>
 
   <div class="mobile-nav-control">
-    <input type="checkbox" id="nav-toggle" class="nav-toggle">
-    <label for="nav-toggle" class="nav-toggle-label">
-      <span class="nav-toggle-icon" aria-hidden="true">☰</span>
-      <span>Documentation Menu</span>
-      <span class="nav-toggle-chevron" aria-hidden="true">⌄</span>
-    </label>
+    <div class="mobile-nav-row">
+      <input type="checkbox" id="nav-toggle" class="nav-toggle">
+      <label for="nav-toggle" class="nav-toggle-label">
+        <span class="nav-toggle-icon" aria-hidden="true">☰</span>
+        <span>Documentation Menu</span>
+        <span class="nav-toggle-chevron" aria-hidden="true">⌄</span>
+      </label>
+      <button class="theme-toggle mobile-theme-toggle" id="mobile-theme-toggle" type="button" aria-label="Switch to dark mode">
+        <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+        <span class="theme-toggle-label">Dark</span>
+      </button>
+    </div>
   </div>
 
   <div class="site-shell">
@@ -100,5 +139,38 @@
       </footer>
     </main>
   </div>
+
+  <script>
+    (() => {
+      const root = document.documentElement;
+      const buttons = document.querySelectorAll('.theme-toggle');
+
+      const updateButtons = () => {
+        const dark = root.dataset.theme === 'dark';
+        buttons.forEach((button) => {
+          button.setAttribute('aria-label', dark ? 'Switch to light mode' : 'Switch to dark mode');
+          button.querySelector('.theme-toggle-icon').textContent = dark ? '☀' : '☾';
+          button.querySelector('.theme-toggle-label').textContent = dark ? 'Light' : 'Dark';
+        });
+      };
+
+      const setTheme = (theme) => {
+        root.dataset.theme = theme;
+        localStorage.setItem('toron-theme', theme);
+        updateButtons();
+        if (window.toronRenderMermaid) {
+          window.toronRenderMermaid();
+        }
+      };
+
+      buttons.forEach((button) => {
+        button.addEventListener('click', () => {
+          setTheme(root.dataset.theme === 'dark' ? 'light' : 'dark');
+        });
+      });
+
+      updateButtons();
+    })();
+  </script>
 </body>
 </html>

@@ -1,0 +1,737 @@
+openapi: 3.1.0
+info:
+  title: Toron HTTP API
+  description: |
+    HTTP API exposed by Toron. This contract describes the built-in health,
+    status, Prometheus metrics, and internal management endpoints implemented
+    in the current Go server.
+
+    Configured reverse-proxy and static routes are intentionally not enumerated
+    here because their paths are supplied dynamically through routing
+    configuration.
+  version: 1.5.29
+  license:
+    name: Proprietary / Project License
+servers:
+  - url: http://localhost:8080
+    description: Default local HTTP listener
+
+tags:
+  - name: Health
+    description: Public liveness and server status endpoints.
+  - name: Metrics
+    description: Prometheus and structured runtime telemetry.
+  - name: Management
+    description: Protected internal management/control-plane endpoints.
+  - name: Validation
+    description: Built-in cache invariant validation endpoints.
+
+paths:
+  /health:
+    get:
+      tags: [Health]
+      summary: Health check
+      operationId: getHealth
+      responses:
+        '200':
+          description: Server is healthy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: ok
+
+  /api/status:
+    get:
+      tags: [Health]
+      summary: Server status
+      operationId: getStatus
+      responses:
+        '200':
+          description: Current Toron server status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+              example:
+                server: Toron
+                version: 1.5.29
+                uptime: healthy
+                engine: event-driven
+
+  /metrics:
+    get:
+      tags: [Metrics]
+      summary: Prometheus metrics
+      operationId: getPrometheusMetrics
+      responses:
+        '200':
+          description: Prometheus exposition format metrics.
+          content:
+            text/plain:
+              schema:
+                type: string
+          headers:
+            Content-Type:
+              schema:
+                type: string
+                example: text/plain; version=0.0.4; charset=utf-8
+
+  /internal/api/status:
+    get:
+      tags: [Management]
+      summary: Management server status
+      operationId: getInternalStatus
+      security:
+        - toronAdminKey: []
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        '200':
+          description: Detailed runtime, discovery, and security status.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InternalStatusResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /internal/api/metrics:
+    get:
+      tags: [Management, Metrics]
+      summary: Structured runtime metrics
+      operationId: getInternalMetrics
+      security:
+        - toronAdminKey: []
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        '200':
+          description: Structured runtime telemetry.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MetricsSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /internal/api/routes:
+    get:
+      tags: [Management]
+      summary: Active route configuration
+      operationId: getInternalRoutes
+      security:
+        - toronAdminKey: []
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        '200':
+          description: Configured and dynamically discovered routes.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RoutesResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /internal/api/upstreams/health:
+    get:
+      tags: [Management]
+      summary: Probe configured upstreams
+      operationId: getUpstreamsHealth
+      security:
+        - toronAdminKey: []
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        '200':
+          description: Health probe results for configured upstream targets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UpstreamsHealthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /internal/api/security/incidents:
+    get:
+      tags: [Management]
+      summary: Recent WAF security incidents
+      operationId: getSecurityIncidents
+      security:
+        - toronAdminKey: []
+        - bearerAuth: []
+        - basicAuth: []
+      responses:
+        '200':
+          description: Most recent WAF audit events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SecurityIncidentsResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+
+  /internal/api/proxy-test:
+    post:
+      tags: [Management]
+      summary: Execute a local diagnostic proxy probe
+      description: |
+        Executes a diagnostic request against the local Toron listener.
+
+        The implementation limits the JSON request body to 64 KiB, permits only
+        GET, HEAD, and POST probe methods, rejects absolute/authority-bearing
+        target paths, blocks /internal paths, applies an allow-list to target
+        paths, and strips sensitive or hop-by-hop identity headers.
+
+        The response body is limited by the server-side
+        max_proxy_test_response_bytes configuration (1 MiB default).
+      operationId: postProxyTest
+      security:
+        - toronAdminKey: []
+        - bearerAuth: []
+        - basicAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProxyTestRequest'
+            example:
+              path: /health
+              method: GET
+              headers:
+                Accept: application/json
+      responses:
+        '200':
+          description: Diagnostic probe completed, including upstream/local HTTP errors represented in status_code.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProxyTestResponse'
+        '400':
+          description: Missing/invalid JSON, oversized request body, disallowed method/path/header, or target outside the diagnostic allow-list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '500':
+          description: Internal error while constructing the diagnostic request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /cache/private-profile:
+    get:
+      tags: [Validation]
+      summary: Cache private-profile invariant endpoint
+      description: Internal validation endpoint used to verify private cache behavior.
+      operationId: getCachePrivateProfile
+      responses:
+        '200':
+          description: Authenticated profile response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user:
+                    type: string
+                required: [user]
+        '401':
+          description: Authorization header was not supplied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /cache/cookie-resource:
+    get:
+      tags: [Validation]
+      summary: Cache cookie-resource invariant endpoint
+      description: Internal validation endpoint used to verify Set-Cookie cache behavior.
+      operationId: getCacheCookieResource
+      responses:
+        '200':
+          description: Cookie resource response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                required: [data]
+
+  /cache/protected-resource:
+    get:
+      tags: [Validation]
+      summary: Cache protected-resource invariant endpoint
+      description: Internal validation endpoint used to verify authenticated cache behavior.
+      operationId: getCacheProtectedResource
+      responses:
+        '200':
+          description: Authenticated protected resource response.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: string
+                required: [data]
+        '401':
+          description: Authorization header was not supplied.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    toronAdminKey:
+      type: apiKey
+      in: header
+      name: X-Toron-Admin-Key
+      description: Administrative token or configured management API key.
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: Bearer token matching the configured administrative token/API key.
+    basicAuth:
+      type: http
+      scheme: basic
+      description: Configured administrative username and password.
+
+  responses:
+    Unauthorized:
+      description: Administrative authentication failed or is required.
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            example: Bearer realm="Toron Management", Basic realm="Toron Management"
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: 401 Unauthorized
+            message: Authentication required for internal management API
+    Forbidden:
+      description: Client address is outside the configured administrative subnet policy.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+          example:
+            error: 403 Forbidden
+            message: Access denied by administrative subnet policy
+
+  schemas:
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          const: ok
+      required: [status]
+      additionalProperties: false
+
+    StatusResponse:
+      type: object
+      properties:
+        server:
+          type: string
+          const: Toron
+        version:
+          type: string
+        uptime:
+          type: string
+          const: healthy
+        engine:
+          type: string
+          const: event-driven
+      required: [server, version, uptime, engine]
+      additionalProperties: false
+
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required: [error, message]
+      additionalProperties: false
+
+    MetricsSummary:
+      type: object
+      properties:
+        total_requests:
+          type: integer
+          format: int64
+          minimum: 0
+        active_quic_streams:
+          type: integer
+          format: int64
+        active_tcp_connections:
+          type: integer
+          format: int64
+        circuit_breaker_trips:
+          $ref: '#/components/schemas/CircuitBreakerTrips'
+        waf:
+          $ref: '#/components/schemas/WAFMetrics'
+        requests_by_status:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+            minimum: 0
+        requests_by_method:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+            minimum: 0
+        requests_by_route:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+            minimum: 0
+      required:
+        - total_requests
+        - active_quic_streams
+        - active_tcp_connections
+        - circuit_breaker_trips
+        - waf
+        - requests_by_status
+        - requests_by_method
+        - requests_by_route
+
+    CircuitBreakerTrips:
+      type: object
+      properties:
+        total:
+          type: integer
+          format: int64
+          minimum: 0
+        targets:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+            minimum: 0
+      required: [total, targets]
+
+    WAFMetrics:
+      type: object
+      properties:
+        blocked_total:
+          type: integer
+          format: int64
+          minimum: 0
+        blocked_by_category:
+          type: object
+          additionalProperties:
+            type: integer
+            format: int64
+            minimum: 0
+        anomalies_total:
+          type: integer
+          format: int64
+          minimum: 0
+      required: [blocked_total, blocked_by_category, anomalies_total]
+
+    InternalStatusResponse:
+      type: object
+      properties:
+        server:
+          type: string
+        version:
+          type: string
+        uptime:
+          type: string
+        engine:
+          type: string
+        port:
+          type: integer
+          format: int32
+        worker_pool_size:
+          type: integer
+          format: int32
+        metrics:
+          $ref: '#/components/schemas/MetricsSummary'
+        discovery:
+          $ref: '#/components/schemas/DiscoveryStatus'
+        security:
+          $ref: '#/components/schemas/SecurityStatus'
+      required:
+        - server
+        - version
+        - uptime
+        - engine
+        - port
+        - worker_pool_size
+        - metrics
+        - discovery
+        - security
+
+    DiscoveryStatus:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        containers_count:
+          type: integer
+          format: int32
+          minimum: 0
+      required: [enabled, containers_count]
+
+    SecurityStatus:
+      type: object
+      properties:
+        waf_enabled:
+          type: boolean
+        waf_mode:
+          type: string
+        waf_anomaly_threshold:
+          type: integer
+          format: int32
+        waf_rules_count:
+          type: integer
+          format: int32
+          minimum: 0
+        waf_custom_rules_count:
+          type: integer
+          format: int32
+          minimum: 0
+        waf_allowed_ips:
+          type: array
+          items:
+            type: string
+        waf_denied_ips:
+          type: array
+          items:
+            type: string
+        cors_enabled:
+          type: boolean
+        cors_allowed_origins:
+          type: array
+          items:
+            type: string
+        security_headers:
+          type: boolean
+        mtls_enabled:
+          type: boolean
+      required:
+        - waf_enabled
+        - waf_mode
+        - waf_anomaly_threshold
+        - waf_rules_count
+        - waf_custom_rules_count
+        - waf_allowed_ips
+        - waf_denied_ips
+        - cors_enabled
+        - cors_allowed_origins
+        - security_headers
+        - mtls_enabled
+
+    RouteInfo:
+      type: object
+      properties:
+        type:
+          type: string
+        host:
+          type: string
+        prefix:
+          type: string
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        dir:
+          type: string
+        algorithm:
+          type: string
+        targets:
+          type: array
+          items:
+            type: string
+        source:
+          type: string
+        container_name:
+          type: string
+      required: [type, prefix]
+
+    RoutesResponse:
+      type: object
+      properties:
+        proxy_enabled:
+          type: boolean
+        routes:
+          type: array
+          items:
+            $ref: '#/components/schemas/RouteInfo'
+        static:
+          $ref: '#/components/schemas/StaticRoute'
+      required: [proxy_enabled, routes, static]
+
+    StaticRoute:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+        prefix:
+          type: string
+        dir:
+          type: string
+      required: [enabled, prefix, dir]
+
+    UpstreamsHealthResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        total_nodes:
+          type: integer
+          format: int32
+          minimum: 0
+        healthy_nodes:
+          type: integer
+          format: int32
+          minimum: 0
+        upstreams:
+          type: array
+          items:
+            $ref: '#/components/schemas/UpstreamNodeHealth'
+      required: [timestamp, total_nodes, healthy_nodes, upstreams]
+
+    UpstreamNodeHealth:
+      type: object
+      properties:
+        id:
+          type: integer
+          format: int32
+        port:
+          type: integer
+          format: int32
+        name:
+          type: string
+        route:
+          type: string
+        algo:
+          type: string
+        status:
+          type: string
+        latency_ms:
+          type: number
+          format: double
+        http_code:
+          type: integer
+          format: int32
+      required: [id, port, name, route, algo, status, latency_ms, http_code]
+
+    ProxyTestRequest:
+      type: object
+      properties:
+        path:
+          type: string
+          description: Relative/root-relative diagnostic target path.
+          default: /health
+        method:
+          type: string
+          description: Diagnostic HTTP method. Only GET, HEAD, and POST are accepted.
+          enum: [GET, HEAD, POST]
+          default: GET
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+          description: Additional diagnostic request headers. Sensitive identity and hop-by-hop headers are rejected or stripped by the implementation.
+      required: []
+      additionalProperties: false
+
+    ProxyTestResponse:
+      type: object
+      properties:
+        status_code:
+          type: integer
+          format: int32
+        status_text:
+          type: string
+        latency_ms:
+          type: number
+          format: double
+        headers:
+          type: object
+          additionalProperties:
+            type: string
+        body:
+          type: string
+        truncated:
+          type: boolean
+      required: [status_code, status_text, latency_ms, headers, body]
+      additionalProperties: false
+
+    SecurityEvent:
+      type: object
+      properties:
+        timestamp:
+          type: string
+        event:
+          type: string
+        client_ip:
+          type: string
+        method:
+          type: string
+        path:
+          type: string
+        category:
+          type: string
+        rule_id:
+          type: string
+        anomaly_score:
+          type: integer
+          format: int32
+        action:
+          type: string
+        location:
+          type: string
+        payload_snippet:
+          type: string
+      required: [timestamp, event, client_ip, method, path, category, anomaly_score, action]
+
+    SecurityIncidentsResponse:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        total:
+          type: integer
+          format: int32
+          minimum: 0
+        incidents:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecurityEvent'
+      required: [timestamp, total, incidents]

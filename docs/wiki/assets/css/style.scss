@@ -150,11 +150,18 @@ body {
   box-shadow: 0 12px 35px rgba(13, 17, 23, .15);
 }
 
-.hero-bengali {
+.hero-name {
   color: #fff;
   font-size: 3.2rem;
   line-height: 1;
   font-weight: 800;
+}
+
+.hero-subtext {
+  margin-top: 12px;
+  color: #b8c2cc;
+  font-size: 1rem;
+  line-height: 1.4;
 }
 
 .pronunciation {
@@ -183,13 +190,108 @@ body {
   color: var(--toron-accent-dark);
 }
 
+/* Code blocks */
 .markdown-body pre {
+  margin: 20px 0;
+  padding: 18px 20px;
+  overflow-x: auto;
+  border: 1px solid #30363d;
   border-radius: 10px;
-  border: 1px solid var(--toron-border);
+  background: #0d1117;
+  color: #c9d1d9;
+  box-shadow: 0 2px 8px rgba(13, 17, 23, .08);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: .88rem;
+  line-height: 1.65;
+  tab-size: 2;
+  -webkit-overflow-scrolling: touch;
+}
+
+.markdown-body pre code {
+  display: block;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  white-space: pre;
 }
 
 .markdown-body code {
+  padding: .15em .38em;
+  border: 1px solid #d8dee4;
   border-radius: 5px;
+  background: #f6f8fa;
+  color: #24292f;
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: .86em;
+}
+
+/* Rouge syntax highlighting */
+.markdown-body .highlight {
+  margin: 20px 0;
+}
+
+.markdown-body .highlight pre {
+  margin: 0;
+}
+
+.markdown-body .highlight .c,
+.markdown-body .highlight .c1,
+.markdown-body .highlight .cm {
+  color: #8b949e;
+}
+
+.markdown-body .highlight .k,
+.markdown-body .highlight .kd,
+.markdown-body .highlight .kn,
+.markdown-body .highlight .kp,
+.markdown-body .highlight .kr {
+  color: #ff7b72;
+}
+
+.markdown-body .highlight .kt {
+  color: #ffa657;
+}
+
+.markdown-body .highlight .s,
+.markdown-body .highlight .s1,
+.markdown-body .highlight .s2,
+.markdown-body .highlight .sb {
+  color: #a5d6ff;
+}
+
+.markdown-body .highlight .na,
+.markdown-body .highlight .nc,
+.markdown-body .highlight .nf,
+.markdown-body .highlight .nn {
+  color: #d2a8ff;
+}
+
+.markdown-body .highlight .m,
+.markdown-body .highlight .mi,
+.markdown-body .highlight .mf {
+  color: #79c0ff;
+}
+
+.markdown-body .highlight .o,
+.markdown-body .highlight .p {
+  color: #c9d1d9;
+}
+
+.markdown-body .highlight .nt {
+  color: #7ee787;
+}
+
+.markdown-body .highlight .nv {
+  color: #ffa657;
+}
+
+.markdown-body .highlight .err {
+  color: #f85149;
 }
 
 .markdown-body table {
@@ -229,5 +331,11 @@ body {
 
   .hero {
     padding: 28px;
+  }
+
+  .markdown-body pre {
+    padding: 14px 16px;
+    font-size: .82rem;
+    border-radius: 8px;
   }
 }

@@ -70,6 +70,17 @@ related_to:
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
+## Toron at a Glance
+
+**তোরণ** (*to-ron*) means **gateway** in Bengali.
+
+Toron is an event-driven, high-performance web server, reverse proxy, API gateway, and edge security engine written in Go.
+
+- **Project:** [GitHub repository](https://github.com/SayantanSaha/toron_v3)
+- **Benchmarks:** [Comparative benchmark suite](https://github.com/SayantanSaha/toron_v3/tree/master/benchmarks)
+- **Comparisons:** [Toron vs NGINX, HAProxy, Traefik and Caddy](./features/docker-compare-benchmark.md)
+- **Contact:** [sayantan.somu@gmail.com](mailto:sayantan.somu@gmail.com)
+
 ## Wiki Navigation
 
 ### 🚀 Getting Started & Operations

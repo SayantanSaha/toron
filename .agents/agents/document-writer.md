@@ -372,6 +372,7 @@ related_to:
 - Never use LaTeX merely to display protocol literals, code, paths, identifiers, HTTP framing, or escape sequences. This prevents raw expressions such as `\\text{...}`, `\\langle`, `\\rangle`, or `\\backslash` from appearing in rendered documentation.
 - Before publishing a page, review rendered output for escaped characters, raw LaTeX, malformed equations, and incorrectly typeset technical syntax.
 - Keep notation semantically faithful: use code formatting when the reader is expected to copy or interpret the value literally; use mathematical notation when the expression represents a mathematical relationship or calculation.
+
 ## Release Notes Rule
 
 Release notes must be generated from completed task documents under `docs/tasks`.

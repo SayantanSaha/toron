@@ -145,11 +145,18 @@ body {
   box-shadow: 0 12px 35px rgba(13, 17, 23, .15);
 }
 
-.hero-bengali {
+.hero-name {
   color: #fff;
   font-size: 3.2rem;
   line-height: 1;
   font-weight: 800;
+}
+
+.hero-subtext {
+  margin-top: 12px;
+  color: #b8c2cc;
+  font-size: 1rem;
+  line-height: 1.4;
 }
 
 .pronunciation {

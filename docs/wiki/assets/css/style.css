@@ -73,7 +73,6 @@ body {
 
 .site-shell {
   width: 99%;
-  max-width: 1500px;
   margin: 0 auto;
   display: grid;
   grid-template-columns: 290px minmax(0, 1fr);

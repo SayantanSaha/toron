@@ -790,3 +790,76 @@ body {
     transition: none;
   }
 }
+
+/* Current-page topic navigation */
+.page-toc {
+  display: none;
+}
+
+@media (min-width: 1300px) {
+  .site-shell {
+    grid-template-columns: 290px minmax(0, 1fr) 230px;
+  }
+
+  .content {
+    min-width: 0;
+  }
+
+  .page-toc {
+    display: block;
+    position: sticky;
+    top: 65px;
+    align-self: start;
+    height: calc(100vh - 65px);
+    overflow-y: auto;
+    padding: 34px 22px 40px 18px;
+    border-left: 1px solid var(--border-subtle);
+  }
+
+  .page-toc-title {
+    margin-bottom: 12px;
+    color: var(--text-heading);
+    font-size: .78rem;
+    font-weight: 700;
+    letter-spacing: .08em;
+    text-transform: uppercase;
+  }
+
+  .page-toc nav {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border-left: 1px solid var(--border);
+  }
+
+  .page-toc a {
+    display: block;
+    padding: 4px 10px;
+    border-left: 2px solid transparent;
+    margin-left: -1px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    font-size: .78rem;
+    line-height: 1.45;
+  }
+
+  .page-toc a:hover {
+    color: var(--toron-accent);
+  }
+
+  .page-toc a.active {
+    border-left-color: var(--toron-accent);
+    color: var(--toron-accent);
+    font-weight: 650;
+  }
+
+  .page-toc a.toc-h3 {
+    padding-left: 22px;
+    font-size: .74rem;
+  }
+
+  .markdown-body h2,
+  .markdown-body h3 {
+    scroll-margin-top: 84px;
+  }
+}

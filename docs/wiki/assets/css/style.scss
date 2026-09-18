@@ -562,7 +562,7 @@ body {
     background: #fafbfc;
   }
 
-  .nav-toggle:checked ~ .site-shell .sidebar {
+  .mobile-nav-control:has(.nav-toggle:checked) + .site-shell .sidebar {
     display: block;
   }
 

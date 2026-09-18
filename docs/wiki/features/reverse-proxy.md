@@ -333,7 +333,7 @@ Under [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requir
 
 For HTTP/1.1 streaming responses (`res.StreamBody != nil`), Toron sets `Transfer-Encoding: chunked`, strictly deletes any conflicting `Content-Length` header (RFC 7230 §3.3.3), and formats chunks:
 
-$$\text{chunk} = \langle\text{hex-len}\rangle\backslash\text{r}\backslash\text{n}\langle\text{data}\rangle\backslash\text{r}\backslash\text{n}$$
+`chunk = <hex-len>\\r\\n<data>\\r\\n`
 
 ```go
 var hexBuf [32]byte

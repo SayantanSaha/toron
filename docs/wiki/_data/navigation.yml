@@ -1,0 +1,100 @@
+- title: 🚀 Getting Started
+  items:
+    - title: Documentation Home
+      url: /
+    - title: Getting Started
+      url: /getting-started/
+    - title: Installation & Services
+      url: /features/installation-guide/
+    - title: Docker
+      url: /features/docker-container/
+    - title: Configuration
+      url: /configuration/
+
+- title: ⚙️ Core Architecture & Protocols
+  items:
+    - title: Event Reactor
+      url: /features/event-reactor/
+    - title: HTTP/2
+      url: /features/http2/
+    - title: HTTP/3 / QUIC
+      url: /features/http3/
+    - title: TLS / HTTPS
+      url: /features/tls-https/
+    - title: ACME
+      url: /features/acme/
+    - title: WebSocket
+      url: /features/websocket/
+    - title: Static File Serving
+      url: /features/static-file-serving/
+    - title: Chunked Ingestion
+      url: /features/inbound-chunked-ingestion/
+
+- title: 🌐 Routing & Resilience
+  items:
+    - title: Reverse Proxy
+      url: /features/reverse-proxy/
+    - title: Layer 4 TCP / UDP
+      url: /features/layer4-proxy/
+    - title: Load Balancing
+      url: /features/advanced-load-balancing/
+    - title: Circuit Breaker
+      url: /features/circuit-breaker/
+    - title: Header Routing
+      url: /features/header-routing/
+    - title: Domain Routing
+      url: /features/domain-routing/
+    - title: gRPC Gateway
+      url: /features/grpc-gateway/
+    - title: REST-to-gRPC
+      url: /features/grpc-transcoding/
+
+- title: 🛡️ Security & Performance
+  items:
+    - title: WAF
+      url: /features/waf/
+    - title: Path Traversal Defense
+      url: /features/path-traversal-defense/
+    - title: Authentication
+      url: /features/authentication/
+    - title: CORS & Security Headers
+      url: /features/cors-security-headers/
+    - title: Response Compression
+      url: /features/compression/
+    - title: Response Caching
+      url: /features/response-caching/
+    - title: Benchmarking
+      url: /features/benchmarking/
+    - title: Multi-Proxy Comparison
+      url: /features/docker-compare-benchmark/
+    - title: Saturation Stress
+      url: /features/saturation-stress-benchmark/
+    - title: Differential Fuzzing
+      url: /features/differential-fuzzer-metrics/
+
+- title: ☸️ Platform Integration
+  items:
+    - title: Kubernetes Ingress
+      url: /features/kubernetes-ingress/
+    - title: Service Mesh Sidecar
+      url: /features/service-mesh-sidecar/
+    - title: OCI Auto-Discovery
+      url: /features/oci-container-auto-discovery/
+
+- title: 📖 Reference
+  items:
+    - title: CLI
+      url: /reference/cli/
+    - title: Configuration Options
+      url: /reference/config-options/
+    - title: HTTP API
+      url: /reference/api/
+
+- title: 💡 Help
+  items:
+    - title: Troubleshooting
+      url: /troubleshooting/
+    - title: FAQ
+      url: /faq/
+    - title: Release Notes
+      url: /release-notes/

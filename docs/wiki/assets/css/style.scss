@@ -39,22 +39,26 @@ body {
 
 .brand {
   display: flex;
-  align-items: baseline;
-  gap: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
   color: #fff !important;
   text-decoration: none;
 }
 
-.brand-mark {
-  color: #fff;
-  font-size: 1.5rem;
-  font-weight: 700;
-}
-
 .brand-name {
   color: var(--toron-accent);
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: 1.25rem;
+  line-height: 1.1;
+  font-weight: 800;
+  letter-spacing: .01em;
+}
+
+.brand-subtext {
+  color: #aeb8c2;
+  font-size: .72rem;
+  line-height: 1.2;
+  font-weight: 400;
 }
 
 .top-nav {

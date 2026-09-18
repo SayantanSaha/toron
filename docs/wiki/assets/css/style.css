@@ -24,6 +24,7 @@ body {
 
 .header-inner {
   width: 99%;
+  max-width: 100%;
   margin: 0 auto;
   min-height: 64px;
   padding: 0 24px;
@@ -73,6 +74,7 @@ body {
 
 .site-shell {
   width: 99%;
+  max-width: 100%;
   margin: 0 auto;
   display: grid;
   grid-template-columns: 290px minmax(0, 1fr);

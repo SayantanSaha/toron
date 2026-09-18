@@ -1,7 +1,7 @@
 title: Toron Documentation
 description: Event-driven web server, reverse proxy, API gateway and edge security engine written in Go.
 url: "https://sayantansaha.github.io"
-baseurl: "/toron_v3"
+baseurl: "/toron"
 
 theme: minima
 markdown: kramdown

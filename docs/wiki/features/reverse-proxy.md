@@ -159,7 +159,7 @@ routes:
       use_env_proxy: false               # Direct dialing (or true for HTTP_PROXY)
       propagate_upstream_close: false    # Isolate downstream client keep-alives
       tracing: false                     # false = raw speed; true = W3C traceparent context generation (REQ-124)
-
+```
 ## Upstream Transport Configuration (`ProxyTransportConfig`)
 
 Beginning with [`REQ-123`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-123.md), [`REQ-124`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-124.md), and [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md), Toron allows granular configuration of reverse proxy transport settings.

@@ -72,6 +72,7 @@ body {
 }
 
 .site-shell {
+  width: 90%;
   max-width: 1500px;
   margin: 0 auto;
   display: grid;
@@ -834,13 +835,13 @@ body {
 
   .page-toc a {
     display: block;
-    padding: 4px 10px;
+    padding: 5px 10px;
     border-left: 2px solid transparent;
     margin-left: -1px;
     color: var(--text-secondary);
     text-decoration: none;
-    font-size: .78rem;
-    line-height: 1.45;
+    font-size: .87rem;
+    line-height: 1.5;
   }
 
   .page-toc a:hover {
@@ -855,11 +856,17 @@ body {
 
   .page-toc a.toc-h3 {
     padding-left: 22px;
-    font-size: .74rem;
+    font-size: .84rem;
   }
 
   .markdown-body h2,
   .markdown-body h3 {
     scroll-margin-top: 84px;
+  }
+}
+
+@media (max-width: 900px) {
+  .site-shell {
+    width: 100%;
   }
 }

@@ -334,3 +334,160 @@ body {
     border-radius: 8px;
   }
 }
+
+
+/* Documentation typography */
+.markdown-body {
+  max-width: 1000px;
+  font-size: 1rem;
+  line-height: 1.78;
+  letter-spacing: .005em;
+}
+
+.markdown-body p {
+  margin: 0 0 1.15rem;
+  line-height: 1.78;
+}
+
+.markdown-body strong {
+  font-weight: 650;
+  color: #1f2328;
+}
+
+.markdown-body h1 {
+  margin: 0 0 1.35rem;
+  padding-bottom: .55rem;
+  border-bottom: 1px solid #d8dee4;
+  font-size: 2rem;
+  line-height: 1.25;
+  letter-spacing: -.02em;
+}
+
+.markdown-body h2 {
+  margin: 2.5rem 0 1rem;
+  padding-bottom: .35rem;
+  border-bottom: 1px solid #eaeef2;
+  font-size: 1.45rem;
+  line-height: 1.35;
+  letter-spacing: -.015em;
+}
+
+.markdown-body h3 {
+  margin: 2rem 0 .75rem;
+  font-size: 1.15rem;
+  line-height: 1.4;
+}
+
+.markdown-body h4 {
+  margin: 1.6rem 0 .6rem;
+  font-size: 1rem;
+  line-height: 1.45;
+}
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: .35rem 0 1.35rem;
+  padding-left: 1.8rem;
+}
+
+.markdown-body li {
+  margin: .45rem 0;
+  padding-left: .15rem;
+  line-height: 1.72;
+}
+
+.markdown-body li > ul,
+.markdown-body li > ol {
+  margin-top: .4rem;
+  margin-bottom: .55rem;
+}
+
+.markdown-body blockquote {
+  margin: 1.35rem 0;
+  padding: .75rem 1.1rem;
+  border-left: 4px solid var(--toron-accent);
+  background: #f6f8fa;
+  color: #57606a;
+  border-radius: 0 6px 6px 0;
+}
+
+.markdown-body hr {
+  margin: 2.5rem 0;
+  border: 0;
+  border-top: 1px solid #d8dee4;
+}
+
+.markdown-body table {
+  width: 100%;
+  margin: 1.5rem 0 1.8rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: .94rem;
+  line-height: 1.65;
+}
+
+.markdown-body th,
+.markdown-body td {
+  padding: .75rem .9rem;
+  border-right: 1px solid #eaeef2;
+  border-bottom: 1px solid #eaeef2;
+  text-align: left;
+  vertical-align: top;
+}
+
+.markdown-body th {
+  background: #f6f8fa;
+  color: #24292f;
+  font-weight: 650;
+  line-height: 1.5;
+}
+
+.markdown-body tr:last-child td {
+  border-bottom: 0;
+}
+
+.markdown-body th:last-child,
+.markdown-body td:last-child {
+  border-right: 0;
+}
+
+.markdown-body tr:nth-child(even) td {
+  background: #fbfcfd;
+}
+
+.markdown-body a {
+  text-underline-offset: 2px;
+  text-decoration-thickness: 1px;
+}
+
+@media (max-width: 900px) {
+  .markdown-body {
+    font-size: .98rem;
+    line-height: 1.72;
+  }
+
+  .markdown-body h1 {
+    font-size: 1.7rem;
+  }
+
+  .markdown-body h2 {
+    font-size: 1.3rem;
+  }
+
+  .markdown-body ul,
+  .markdown-body ol {
+    padding-left: 1.5rem;
+  }
+
+  .markdown-body li {
+    margin: .4rem 0;
+  }
+
+  .markdown-body th,
+  .markdown-body td {
+    padding: .65rem .75rem;
+  }
+}

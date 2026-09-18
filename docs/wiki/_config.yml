@@ -19,7 +19,6 @@ defaults:
       path: ""
     values:
       layout: default
-      permalink: /:path/
 
 header_pages:
   - getting-started.md

@@ -1,4 +1,4 @@
-# Toron Web Server (`toron_v3`)
+# Toron [তোরণ · pronounced toh-ron · Bengali for gateway] - A next generation all in one gateway
 
 **Toron** is an event-driven, high-performance, zero-dependency web server, reverse proxy API gateway, and edge security engine written in pure Go. Engineered with performance, enterprise security, and developer ergonomics as primary design goals, Toron features a non-blocking TCP reactor event loop, zero-copy HTTP/1.1 parsing, HTTP/2 stream multiplexing (`h2c`), HTTP/3 QUIC (UDP), zero-touch ACME production SSL issuance (Let's Encrypt / ZeroSSL), per-host mTLS, dynamic SNI, a Layer 7 Web Application Firewall (WAF), a 3-state Circuit Breaker, and background zero-downtime hot reloading via `fsnotify`.
 

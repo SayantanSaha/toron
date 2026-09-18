@@ -1,0 +1,39 @@
+name: Validate OpenAPI
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'openapi/**'
+      - '.github/workflows/openapi.yml'
+  pull_request:
+    paths:
+      - 'openapi/**'
+      - '.github/workflows/openapi.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint OpenAPI contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install OpenAPI linter
+        run: npm install --no-save --no-package-lock @redocly/cli@latest
+
+      - name: Lint OpenAPI document
+        run: npx redocly lint openapi/openapi.yaml --format github-actions

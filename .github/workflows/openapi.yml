@@ -37,3 +37,27 @@ jobs:
 
       - name: Lint OpenAPI document
         run: npx redocly lint openapi/openapi.yaml --format github-actions
+
+  breaking-changes:
+    name: Detect OpenAPI breaking changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Fetch base branch
+        run: git fetch --depth=1 origin "${{ github.base_ref }}"
+
+      - name: Detect breaking changes
+        uses: oasdiff/oasdiff-action/breaking@v0
+        with:
+          base: 'origin/${{ github.base_ref }}:openapi/openapi.yaml'
+          revision: 'HEAD:openapi/openapi.yaml'
+          fail-on: ERR
+          github-token: ${{ github.token }}

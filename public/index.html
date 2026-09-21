@@ -1,560 +1,116 @@
 <!DOCTYPE html>
 <html lang="en" class="dark h-full">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Toron — Edge Gateway & Control Center</title>
-  
-  <link rel="stylesheet" href="/internal/dashboard/style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  
-  <script>
-    // Theme Initializer to prevent light/dark flicker
-    (function() {
-      const saved = localStorage.getItem('toron-theme') || 'system';
-      const isDark = saved === 'dark' || (saved === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-      if (isDark) {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-      }
-    })();
-  </script>
-
-  <style>
-    :root {
-      --bg-canvas: #f8fafc;
-      --bg-card: #ffffff;
-      --bg-card-subtle: #f1f5f9;
-      --border-color: #e2e8f0;
-      --text-heading: #0f172a;
-      --text-muted: #64748b;
-      --traefik-cyan: #00bdd6;
-      --traefik-cyan-dark: #0099ad;
-      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      --font-mono: 'JetBrains Mono', monospace;
-    }
-    
-    html.dark {
-      --bg-canvas: #090e17;
-      --bg-card: #101827;
-      --bg-card-subtle: #172338;
-      --border-color: #1e2c42;
-      --text-heading: #f8fafc;
-      --text-muted: #94a3b8;
-      --traefik-cyan: #24c1e0;
-      --traefik-cyan-dark: #00bdd6;
-    }
-
-    body {
-      font-family: var(--font-sans);
-      background-color: var(--bg-canvas);
-      color: var(--text-heading);
-      transition: background-color 0.2s ease, color 0.2s ease;
-    }
-
-    code, pre, .font-mono {
-      font-family: var(--font-mono);
-    }
-
-    /* Traefik Styled Cards */
-    .traefik-panel {
-      background-color: var(--bg-card);
-      border: 1px solid var(--border-color);
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .traefik-panel:hover {
-      border-color: rgba(36, 193, 224, 0.4);
-      box-shadow: 0 4px 20px -2px rgba(36, 193, 224, 0.08);
-    }
-
-    /* Traefik Rule Chip (Rule Matcher Box) */
-    .traefik-rule-box {
-      background-color: var(--bg-card-subtle);
-      border: 1px solid var(--border-color);
-      font-family: var(--font-mono);
-    }
-
-    /* Traefik Pill Badges */
-    .tr-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.375rem;
-      padding: 0.2rem 0.6rem;
-      border-radius: 9999px;
-      font-size: 0.72rem;
-      font-weight: 600;
-    }
-
-    .tr-badge-cyan {
-      background: rgba(36, 193, 224, 0.12);
-      color: #00bdd6;
-      border: 1px solid rgba(36, 193, 224, 0.25);
-    }
-    html.dark .tr-badge-cyan {
-      color: #24c1e0;
-    }
-
-    .tr-badge-emerald {
-      background: rgba(16, 185, 129, 0.12);
-      color: #10b981;
-      border: 1px solid rgba(16, 185, 129, 0.25);
-    }
-    .tr-badge-indigo {
-      background: rgba(99, 102, 241, 0.12);
-      color: #6366f1;
-      border: 1px solid rgba(99, 102, 241, 0.25);
-    }
-    .tr-badge-amber {
-      background: rgba(245, 158, 11, 0.12);
-      color: #f59e0b;
-      border: 1px solid rgba(245, 158, 11, 0.25);
-    }
-    .tr-badge-rose {
-      background: rgba(239, 68, 68, 0.12);
-      color: #ef4444;
-      border: 1px solid rgba(239, 68, 68, 0.25);
-    }
-
-    /* Tab Pill Navigation (Traefik Style) */
-    .traefik-tab {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 1rem;
-      border-radius: 0.5rem;
-      font-size: 0.8125rem;
-      font-weight: 600;
-      white-space: nowrap;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      color: var(--text-muted);
-    }
-    .traefik-tab:hover {
-      color: var(--text-heading);
-      background-color: var(--bg-card-subtle);
-    }
-    .traefik-tab.active {
-      color: #ffffff;
-      background-color: #00bdd6;
-    }
-    html.dark .traefik-tab.active {
-      background-color: #00bdd6;
-      color: #090e17;
-    }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Toron — Observability Control Center</title>
+<link rel="stylesheet" href="/internal/dashboard/style.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script>
+(function(){const s=localStorage.getItem('toron-theme')||'system';const d=s==='dark'||(s==='system'&&matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.classList.toggle('dark',d)})();
+</script>
+<style>
+:root{--canvas:#f6f8fb;--panel:#fff;--panel2:#f1f5f9;--line:#e2e8f0;--ink:#0f172a;--muted:#64748b;--cyan:#06b6d4;--green:#10b981;--amber:#f59e0b;--red:#ef4444;--violet:#8b5cf6;--blue:#3b82f6}
+html.dark{--canvas:#080d16;--panel:#0d1522;--panel2:#111d2d;--line:#1d2b3f;--ink:#f8fafc;--muted:#94a3b8;--cyan:#22d3ee}
+body{font-family:'Plus Jakarta Sans',sans-serif;background:var(--canvas);color:var(--ink)}
+code,pre,.font-mono{font-family:'JetBrains Mono',monospace}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;box-shadow:0 1px 2px rgba(15,23,42,.04)}
+.panel:hover{border-color:rgba(34,211,238,.28)}
+.metric{font-variant-numeric:tabular-nums}
+.spark{height:52px;width:100%}
+.navitem{display:inline-flex;align-items:center;gap:.45rem;padding:.55rem .8rem;border-radius:10px;font-size:.75rem;font-weight:700;color:var(--muted);white-space:nowrap}
+.navitem:hover{background:var(--panel2);color:var(--ink)}
+.navitem.active{background:rgba(34,211,238,.13);color:var(--cyan)}
+.status-dot{width:8px;height:8px;border-radius:999px;display:inline-block}
+.kpi{min-height:124px}
+.scrollbar::-webkit-scrollbar{height:6px;width:6px}.scrollbar::-webkit-scrollbar-thumb{background:#334155;border-radius:99px}
+@media(max-width:640px){.kpi{min-height:108px}.hide-mobile{display:none!important}}
+</style>
 </head>
-<body class="min-h-full flex flex-col antialiased selection:bg-cyan-500 selection:text-white">
+<body class="min-h-full antialiased">
+<header class="sticky top-0 z-50 border-b border-slate-200/80 dark:border-slate-800/80 bg-white/90 dark:bg-[#080d16]/90 backdrop-blur-xl">
+<div class="max-w-[1500px] mx-auto px-4 sm:px-6 h-[68px] flex items-center justify-between gap-3">
+<div class="flex items-center gap-3 min-w-0">
+<div class="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-400 to-violet-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/15">⌁</div>
+<div class="min-w-0"><div class="flex items-center gap-2"><span class="font-extrabold tracking-tight text-lg">TORON</span><span id="header-version" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">v1.5</span></div>
+<div class="hidden sm:flex items-center gap-2 text-[11px] text-slate-500 dark:text-slate-400"><span class="status-dot bg-emerald-500 animate-pulse"></span><span>Gateway Online</span><span>·</span><span id="last-updated">updating telemetry…</span></div></div>
+</div>
+<div class="flex items-center gap-2">
+<button id="btn-refresh" class="px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-900">↻ <span class="hide-mobile">Refresh</span></button>
+<div class="hidden sm:flex p-1 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900">
+<button id="theme-btn-light" class="px-2 py-1 rounded text-xs">☀</button><button id="theme-btn-dark" class="px-2 py-1 rounded text-xs">◐</button><button id="theme-btn-system" class="px-2 py-1 rounded text-xs">⌘</button>
+</div>
+</div>
+</div>
+</header>
 
-  <!-- ===================================================================== -->
-  <!-- TOP TRAEFIK-STYLE HEADER -->
-  <!-- ===================================================================== -->
-  <header class="sticky top-0 z-50 bg-white/90 dark:bg-[#090e17]/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800/80">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-      
-      <!-- Brand & Version -->
-      <div class="flex items-center space-x-3.5 min-w-0">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/20 flex-shrink-0">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        </div>
-        <div class="flex items-center space-x-2 truncate">
-          <span class="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white">TORON</span>
-          <span id="header-version" class="text-[10px] font-bold px-2 py-0.5 rounded-full tr-badge-cyan">v1.5.29</span>
-          
-          <div class="hidden lg:flex items-center space-x-3 text-xs text-slate-500 dark:text-slate-400 pl-3 border-l border-slate-200 dark:border-slate-800">
-            <span class="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
-              <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Gateway Online
-            </span>
-            <span>•</span>
-            <span class="font-mono text-cyan-600 dark:text-cyan-400 font-semibold">EntryPoints: :8080 / :8443</span>
-          </div>
-        </div>
-      </div>
+<main class="max-w-[1500px] mx-auto px-4 sm:px-6 py-5 sm:py-7 space-y-5">
+<section class="flex flex-col lg:flex-row lg:items-end justify-between gap-4">
+<div><div class="text-[11px] uppercase tracking-[.18em] text-cyan-500 font-extrabold">EDGE OBSERVABILITY</div><h1 class="text-2xl sm:text-3xl font-extrabold tracking-tight mt-1">Gateway Control Center</h1><p class="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">Traffic, latency, security, topology and runtime health in one operational view.</p></div>
+<div class="flex items-center gap-2 text-[11px] font-mono text-slate-500"><span class="status-dot bg-emerald-500"></span><span>LIVE</span><span>•</span><span>5s refresh</span></div>
+</section>
 
-      <!-- Controls: Refresh + Theme Switcher -->
-      <div class="flex items-center space-x-2 sm:space-x-3">
-        
-        <!-- Refresh Button -->
-        <button id="btn-refresh" class="p-2 sm:px-3 sm:py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition active:scale-95">
-          <svg class="w-3.5 h-3.5 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-          <span class="hidden sm:inline">Refresh</span>
-        </button>
+<section class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
+<div class="panel kpi p-4"><div class="text-[10px] uppercase tracking-wider font-bold text-slate-500">Requests</div><div id="obs-total-requests" class="metric text-2xl font-extrabold mt-2">—</div><div id="obs-rps" class="text-[11px] text-cyan-500 mt-1 font-mono">— req/s</div><svg id="spark-requests" class="spark mt-3" viewBox="0 0 220 52" preserveAspectRatio="none"></svg></div>
+<div class="panel kpi p-4"><div class="text-[10px] uppercase tracking-wider font-bold text-slate-500">Error Rate</div><div id="obs-error-rate" class="metric text-2xl font-extrabold mt-2">—</div><div id="obs-error-detail" class="text-[11px] text-slate-500 mt-1">5xx / total</div><svg id="spark-errors" class="spark mt-3" viewBox="0 0 220 52" preserveAspectRatio="none"></svg></div>
+<div class="panel kpi p-4"><div class="text-[10px] uppercase tracking-wider font-bold text-slate-500">Latency p95</div><div id="obs-p95" class="metric text-2xl font-extrabold mt-2">—</div><div class="text-[11px] text-slate-500 mt-1">request duration</div><svg id="spark-latency" class="spark mt-3" viewBox="0 0 220 52" preserveAspectRatio="none"></svg></div>
+<div class="panel kpi p-4"><div class="text-[10px] uppercase tracking-wider font-bold text-slate-500">Active Connections</div><div id="obs-connections" class="metric text-2xl font-extrabold mt-2">—</div><div id="obs-quic" class="text-[11px] text-slate-500 mt-1">QUIC —</div><svg id="spark-connections" class="spark mt-3" viewBox="0 0 220 52" preserveAspectRatio="none"></svg></div>
+<div class="panel kpi p-4"><div class="text-[10px] uppercase tracking-wider font-bold text-slate-500">WAF Blocks</div><div id="obs-waf" class="metric text-2xl font-extrabold text-rose-500 mt-2">—</div><div id="obs-waf-anomaly" class="text-[11px] text-slate-500 mt-1">anomalies —</div><svg id="spark-waf" class="spark mt-3" viewBox="0 0 220 52" preserveAspectRatio="none"></svg></div>
+<div class="panel kpi p-4"><div class="text-[10px] uppercase tracking-wider font-bold text-slate-500">Upstream Health</div><div id="obs-health" class="metric text-2xl font-extrabold text-emerald-500 mt-2">—</div><div id="obs-health-detail" class="text-[11px] text-slate-500 mt-1">checking targets…</div><svg id="spark-health" class="spark mt-3" viewBox="0 0 220 52" preserveAspectRatio="none"></svg></div>
+</section>
 
-        <!-- 3-Way Theme Switcher (Light / Dark / System) -->
-        <div class="inline-flex p-0.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-xs">
-          <button id="theme-btn-light" class="p-1.5 sm:px-2.5 sm:py-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-1" title="Light Mode">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-            <span class="hidden md:inline font-medium">Light</span>
-          </button>
-          <button id="theme-btn-dark" class="p-1.5 sm:px-2.5 sm:py-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-1" title="Dark Mode">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
-            <span class="hidden md:inline font-medium">Dark</span>
-          </button>
-          <button id="theme-btn-system" class="p-1.5 sm:px-2.5 sm:py-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-1" title="Sync with System OS">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-            <span class="hidden md:inline font-medium">Auto</span>
-          </button>
-        </div>
+<section class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+<div class="panel xl:col-span-2 p-4 sm:p-5">
+<div class="flex items-center justify-between mb-4"><div><h2 class="font-bold text-sm">Traffic & latency</h2><p class="text-[11px] text-slate-500 mt-0.5">Live request volume sampled from the gateway telemetry.</p></div><span class="px-2 py-1 rounded-md bg-slate-100 dark:bg-slate-900 text-[10px] font-mono text-slate-500">rolling 60s</span></div>
+<div id="traffic-chart" class="h-52 sm:h-60 rounded-xl bg-slate-50 dark:bg-slate-950/50 border border-slate-200 dark:border-slate-800 flex items-center justify-center overflow-hidden"><svg viewBox="0 0 900 230" class="w-full h-full" preserveAspectRatio="none"><g id="traffic-grid"></g><polyline id="traffic-line" fill="none" stroke="currentColor" stroke-width="3" vector-effect="non-scaling-stroke" class="text-cyan-500" points=""></polyline><polyline id="latency-line" fill="none" stroke="currentColor" stroke-width="2" vector-effect="non-scaling-stroke" class="text-violet-500 opacity-70" points=""></polyline></svg></div>
+<div class="flex justify-between mt-2 text-[10px] text-slate-500 font-mono"><span>Requests</span><span class="text-violet-500">Latency</span></div>
+</div>
+<div class="panel p-4 sm:p-5">
+<div class="flex items-center justify-between mb-4"><div><h2 class="font-bold text-sm">Gateway health</h2><p class="text-[11px] text-slate-500 mt-0.5">Runtime and control-plane state.</p></div><span class="status-dot bg-emerald-500"></span></div>
+<div class="space-y-3 text-xs">
+<div class="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800"><span class="text-slate-500">Worker pool</span><strong id="obs-workers" class="font-mono">—</strong></div>
+<div class="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800"><span class="text-slate-500">HTTP routers</span><strong id="obs-routers" class="font-mono">—</strong></div>
+<div class="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800"><span class="text-slate-500">Services</span><strong id="obs-services" class="font-mono">—</strong></div>
+<div class="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800"><span class="text-slate-500">OCI containers</span><strong id="obs-containers" class="font-mono">—</strong></div>
+<div class="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800"><span class="text-slate-500">mTLS</span><strong id="obs-mtls" class="text-violet-500">—</strong></div>
+<div class="flex justify-between py-2"><span class="text-slate-500">Telemetry</span><strong class="text-emerald-500">Prometheus</strong></div>
+</div>
+</div>
+</section>
 
-      </div>
-    </div>
-  </header>
+<section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+<div class="panel p-4 sm:p-5 lg:col-span-2"><div class="flex items-center justify-between mb-4"><div><h2 class="font-bold text-sm">HTTP response distribution</h2><p class="text-[11px] text-slate-500 mt-0.5">Current status-code mix from Prometheus counters.</p></div></div><div id="status-bars" class="space-y-3"></div></div>
+<div class="panel p-4 sm:p-5"><div class="flex items-center justify-between mb-4"><div><h2 class="font-bold text-sm">Top routes</h2><p class="text-[11px] text-slate-500 mt-0.5">Most-requested route prefixes.</p></div></div><div id="top-routes" class="space-y-2"></div></div>
+</section>
 
-  <!-- ===================================================================== -->
-  <!-- MAIN APP CONTAINER -->
-  <!-- ===================================================================== -->
-  <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-6">
+<section class="panel p-4 sm:p-5">
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4"><div><h2 class="font-bold text-sm">Edge topology</h2><p class="text-[11px] text-slate-500 mt-0.5">Routes → middleware → upstream targets. Select a domain below to inspect its path.</p></div><div class="relative w-full sm:w-72"><input id="route-search-input" class="w-full px-3 py-2 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 text-xs font-mono" placeholder="Filter host, path, provider…"></div></div>
+<div id="routes-container" class="grid grid-cols-1 lg:grid-cols-2 gap-3"></div>
+</section>
 
-    <!-- TRAEFIK-STYLE PROTOCOL & PROVIDER SUMMARY CARDS -->
-    <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-      
-      <!-- HTTP Routers -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">HTTP Routers</span>
-          <span class="p-1 rounded bg-cyan-500/10 text-cyan-500">🌐</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-routers-count" class="text-xl font-extrabold font-mono text-slate-900 dark:text-white">0 Routes</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Rules & Host Matchers</p>
-        </div>
-      </div>
+<nav id="desktop-tabs" class="sticky top-[68px] z-30 -mx-4 px-4 sm:-mx-6 sm:px-6 py-2 bg-[var(--canvas)]/95 backdrop-blur overflow-x-auto scrollbar border-y border-slate-200 dark:border-slate-800 flex gap-1">
+<button data-tab="tab-overview" class="navitem active">◉ Overview</button>
+<button data-tab="tab-routers" class="navitem">◎ Routers <span id="tab-badge-routers">0</span></button>
+<button data-tab="tab-services" class="navitem">⚡ Services <span id="tab-badge-services">0</span></button>
+<button data-tab="tab-security" class="navitem">🛡 Security</button>
+<button data-tab="tab-tester" class="navitem">⌁ API Console</button>
+<button data-tab="tab-providers" class="navitem">◌ Providers</button>
+</nav>
 
-      <!-- HTTP Services / Upstream Nodes -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">HTTP Services</span>
-          <span class="p-1 rounded bg-emerald-500/10 text-emerald-500">⚡</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-upstreams-count" class="text-xl font-extrabold font-mono text-emerald-600 dark:text-emerald-400">0 Nodes</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Load Balanced Targets</p>
-        </div>
-      </div>
+<section id="tab-overview" class="tab-content"></section>
+<section id="tab-routers" class="tab-content hidden"><div class="space-y-4"><div class="flex justify-between items-center"><div><h2 class="font-bold text-sm">HTTP Routers</h2><p class="text-xs text-slate-500">Declarative L7 route definitions and middleware chains.</p></div><span class="px-2 py-1 rounded bg-cyan-500/10 text-cyan-500 text-[10px] font-mono">L7 Prefix Trie</span></div><div id="routes-container-secondary" class="hidden"></div></div></section>
 
-      <!-- OCI Container Discovery -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">OCI Discovery</span>
-          <span class="p-1 rounded bg-cyan-500/10 text-cyan-500">🐋</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-oci-count" class="text-xl font-extrabold font-mono text-cyan-600 dark:text-cyan-400">0 Containers</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Docker / Podman Engine</p>
-        </div>
-      </div>
+<section id="tab-services" class="tab-content hidden space-y-4"><div class="flex justify-between items-center"><div><h2 class="font-bold text-sm">Upstream Services</h2><p class="text-xs text-slate-500">Health, latency and circuit-breaker state for backend targets.</p></div><button id="btn-probe-all" class="px-3 py-2 rounded-lg bg-emerald-600 text-white text-xs font-bold">Probe All</button></div><div id="upstream-services-grid" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3"></div></section>
 
-      <!-- Middlewares & WAF Guard -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">Middlewares & WAF</span>
-          <span class="p-1 rounded bg-rose-500/10 text-rose-500">🛡️</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-waf-status" class="text-xl font-extrabold font-mono text-rose-600 dark:text-rose-400">ENFORCE</div>
-          <p id="stat-waf-rules" class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">10 Active OWASP Rules</p>
-        </div>
-      </div>
+<section id="tab-security" class="tab-content hidden space-y-4"><div class="flex justify-between items-center"><div><h2 class="font-bold text-sm">Security Operations</h2><p class="text-xs text-slate-500">WAF enforcement, anomalies and the live security audit stream.</p></div><span class="px-2 py-1 rounded-full bg-rose-500/10 text-rose-500 text-[10px] font-mono">ENFORCE</span></div><div class="grid grid-cols-2 sm:grid-cols-4 gap-3"><div class="panel p-4"><span class="text-[10px] text-slate-500">OWASP rules</span><strong id="stat-sec-rules" class="block text-xl mt-1">—</strong></div><div class="panel p-4"><span class="text-[10px] text-slate-500">Blocked</span><strong id="sec-blocked-count" class="block text-xl mt-1 text-rose-500">—</strong></div><div class="panel p-4"><span class="text-[10px] text-slate-500">Threshold</span><strong id="stat-sec-threshold" class="block text-xl mt-1">—</strong></div><div class="panel p-4"><span class="text-[10px] text-slate-500">Smuggling guard</span><strong class="block text-xl mt-1 text-emerald-500">Active</strong></div></div><div class="panel p-4 overflow-x-auto"><h3 class="font-bold text-xs mb-3">Live security violations</h3><table class="w-full text-left text-xs"><thead><tr class="border-b border-slate-200 dark:border-slate-800 text-slate-500"><th class="py-2 px-2">Time</th><th class="py-2 px-2">Client</th><th class="py-2 px-2">Path</th><th class="py-2 px-2">Rule</th><th class="py-2 px-2 text-right">Action</th></tr></thead><tbody id="incidents-table-body"></tbody></table></div></section>
 
-      <!-- Service Mesh & Ingress -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">Mesh & Ingress</span>
-          <span class="p-1 rounded bg-violet-500/10 text-violet-500">🕸️</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-mesh-status" class="text-xl font-extrabold font-mono text-violet-600 dark:text-violet-400">mTLS Ready</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">K8s v1 & Sidecars</p>
-        </div>
-      </div>
+<section id="tab-tester" class="tab-content hidden space-y-4"><div><h2 class="font-bold text-sm">API Console</h2><p class="text-xs text-slate-500">Execute a request through Toron and inspect the response.</p></div><div class="panel p-4 space-y-4"><form id="tester-form" class="grid grid-cols-1 md:grid-cols-12 gap-3"><select id="tester-method" class="md:col-span-2 px-3 py-2 rounded-lg border bg-slate-50 dark:bg-slate-950 text-xs font-mono"><option>GET</option><option>POST</option><option>PUT</option><option>DELETE</option></select><select id="tester-url" class="md:col-span-6 px-3 py-2 rounded-lg border bg-slate-50 dark:bg-slate-950 text-xs font-mono"><option value="/health">GET /health</option><option value="/internal/api/status">GET /internal/api/status</option></select><input id="tester-host-header" class="md:col-span-4 px-3 py-2 rounded-lg border bg-slate-50 dark:bg-slate-950 text-xs font-mono" placeholder="Host header (optional)"><button class="md:col-span-12 px-4 py-2 rounded-lg bg-cyan-600 text-white text-xs font-bold">Execute Request</button></form><div class="border-t pt-4"><div class="flex justify-between text-xs"><strong>Response <span id="res-status" class="font-mono text-slate-500">Ready</span></strong><button id="btn-copy-response" class="text-cyan-500">Copy JSON</button></div><pre id="res-body" class="mt-2 p-4 rounded-xl bg-slate-950 text-cyan-300 text-xs overflow-auto max-h-80">Press Execute Request to test endpoint…</pre></div></div></section>
 
-      <!-- Worker Pool & Event Loop -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">Worker Pool</span>
-          <span class="p-1 rounded bg-indigo-500/10 text-indigo-500">⚙️</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-workers-count" class="text-xl font-extrabold font-mono text-indigo-600 dark:text-indigo-400">128 Workers</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Non-blocking Epoll/Kqueue</p>
-        </div>
-      </div>
-
-    </section>
-
-    <!-- TRAEFIK-STYLE TAB NAVIGATION -->
-    <nav class="flex items-center space-x-2 overflow-x-auto pb-1 no-scrollbar border-b border-slate-200 dark:border-slate-800" id="desktop-tabs">
-      <button data-tab="tab-routers" class="traefik-tab active">
-        <span>🌐 HTTP Routers</span>
-        <span class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-cyan-100 text-cyan-800 dark:bg-slate-900 dark:text-cyan-400 font-bold" id="tab-badge-routers">0</span>
-      </button>
-      <button data-tab="tab-services" class="traefik-tab">
-        <span>⚡ HTTP Services</span>
-        <span class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-emerald-100 text-emerald-800 dark:bg-slate-900 dark:text-emerald-400 font-bold" id="tab-badge-services">0</span>
-      </button>
-      <button data-tab="tab-security" class="traefik-tab">
-        <span>🛡️ Middlewares & WAF</span>
-      </button>
-      <button data-tab="tab-tester" class="traefik-tab">
-        <span>🧪 API Console</span>
-      </button>
-      <button data-tab="tab-providers" class="traefik-tab">
-        <span>🐋 Providers & Telemetry</span>
-      </button>
-    </nav>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 1: HTTP ROUTERS (TRAEFIK RULE MATCHER CARDS) -->
-    <!-- ===================================================================== -->
-    <section id="tab-routers" class="tab-content space-y-4">
-      
-      <!-- Filter and Search Header -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div class="relative flex-grow max-w-md">
-          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          </div>
-          <input type="text" id="route-search-input" placeholder="Filter by rule, host, prefix, or provider..." class="w-full pl-9 pr-4 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500 transition font-mono">
-        </div>
-        <div class="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-          <span>Active Table:</span>
-          <span class="tr-badge tr-badge-cyan font-mono">L7 Prefix Trie Engine</span>
-        </div>
-      </div>
-
-      <!-- DYNAMIC ROUTE CARDS GRID -->
-      <div id="routes-container" class="grid grid-cols-1 gap-4">
-        <!-- Rendered dynamically by app.js -->
-      </div>
-    </section>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 2: HTTP SERVICES / UPSTREAM HEALTH MATRIX -->
-    <!-- ===================================================================== -->
-    <section id="tab-services" class="tab-content hidden space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h2 class="text-sm font-bold text-slate-900 dark:text-white">Upstream Services & Load Balancers</h2>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Server health probes, response latency, and weighted round-robin distribution.</p>
-        </div>
-        <div>
-          <button id="btn-probe-all" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition active:scale-95 shadow-sm">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            <span>Probe All Targets</span>
-          </button>
-        </div>
-      </div>
-
-      <div id="upstream-services-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <!-- Rendered dynamically by app.js -->
-      </div>
-    </section>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 3: MIDDLEWARES & WAF SECURITY -->
-    <!-- ===================================================================== -->
-    <section id="tab-security" class="tab-content hidden space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h2 class="text-sm font-bold text-slate-900 dark:text-white">Security Middlewares & OWASP Threat Engine</h2>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Deep packet protocol verification, SQLi / XSS anomaly scoring, and live incident stream.</p>
-        </div>
-        <span class="tr-badge tr-badge-rose font-mono">WAF Mode: ENFORCE</span>
-      </div>
-
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div class="p-3.5 rounded-xl traefik-panel">
-          <span class="text-xs text-slate-500 dark:text-slate-400 block">OWASP Rules</span>
-          <span id="stat-sec-rules" class="text-lg font-bold text-slate-900 dark:text-white font-mono">10 Rules</span>
-        </div>
-        <div class="p-3.5 rounded-xl traefik-panel">
-          <span class="text-xs text-slate-500 dark:text-slate-400 block">Threats Blocked</span>
-          <span id="sec-blocked-count" class="text-lg font-bold text-rose-600 dark:text-rose-400 font-mono">0</span>
-        </div>
-        <div class="p-3.5 rounded-xl traefik-panel">
-          <span class="text-xs text-slate-500 dark:text-slate-400 block">Anomaly Threshold</span>
-          <span id="stat-sec-threshold" class="text-lg font-bold text-amber-600 dark:text-amber-400 font-mono">5 Score</span>
-        </div>
-        <div class="p-3.5 rounded-xl traefik-panel">
-          <span class="text-xs text-slate-500 dark:text-slate-400 block">Smuggling Guard</span>
-          <span class="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono">Active</span>
-        </div>
-      </div>
-
-      <!-- INCIDENT AUDIT TABLE -->
-      <div class="rounded-xl traefik-panel p-4 sm:p-5 space-y-3">
-        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Live Security Violation Stream</h3>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs">
-            <thead>
-              <tr class="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold">
-                <th class="py-2 px-3">Timestamp</th>
-                <th class="py-2 px-3">Client IP</th>
-                <th class="py-2 px-3">Path</th>
-                <th class="py-2 px-3">Rule ID</th>
-                <th class="py-2 px-3 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody id="incidents-table-body" class="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-slate-700 dark:text-slate-300">
-              <tr>
-                <td colspan="5" class="py-6 text-center text-slate-400 italic">No security violations detected. Server operating normally.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 4: INTERACTIVE API CONSOLE -->
-    <!-- ===================================================================== -->
-    <section id="tab-tester" class="tab-content hidden space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h2 class="text-sm font-bold text-slate-900 dark:text-white">Edge Gateway API Console & Debugger</h2>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Execute real-time requests directly against Toron proxy routes and inspect live headers & payloads.</p>
-        </div>
-      </div>
-
-      <div class="rounded-xl traefik-panel p-4 sm:p-6 space-y-4">
-        <form id="tester-form" class="space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
-            
-            <!-- HTTP Method -->
-            <div class="sm:col-span-2">
-              <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Method</label>
-              <select id="tester-method" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500">
-                <option value="GET">GET</option>
-                <option value="POST">POST</option>
-                <option value="PUT">PUT</option>
-                <option value="DELETE">DELETE</option>
-              </select>
-            </div>
-
-            <!-- Target URL / Prefix -->
-            <div class="sm:col-span-6">
-              <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Target Endpoint</label>
-              <select id="tester-url" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500">
-                <option value="/health" data-host="">GET /health</option>
-                <option value="/internal/api/status" data-host="">GET /internal/api/status</option>
-              </select>
-            </div>
-
-            <!-- Host Header Override -->
-            <div class="sm:col-span-4">
-              <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Host Header (Optional)</label>
-              <input type="text" id="tester-host-header" placeholder="e.g. api.example.com" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500">
-            </div>
-
-          </div>
-
-          <!-- Submit Button -->
-          <div class="flex justify-end">
-            <button type="submit" class="w-full sm:w-auto px-6 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition active:scale-95 shadow-sm flex items-center justify-center gap-2">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
-              <span>Execute Request</span>
-            </button>
-          </div>
-        </form>
-
-        <!-- Response Inspector -->
-        <div class="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-2">
-          <div class="flex items-center justify-between text-xs">
-            <div class="flex items-center gap-2">
-              <span class="font-bold text-slate-700 dark:text-slate-300">Response Status</span>
-              <span id="res-status" class="font-mono text-xs font-bold text-slate-400">Ready</span>
-            </div>
-            <button id="btn-copy-response" class="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[11px] text-slate-600 dark:text-slate-400 transition font-medium">
-              Copy JSON
-            </button>
-          </div>
-          <pre id="res-body" class="p-3.5 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 text-xs font-mono text-slate-800 dark:text-cyan-300 overflow-x-auto max-h-72">Press "Execute Request" to test endpoint...</pre>
-        </div>
-
-      </div>
-    </section>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 5: PROVIDERS & TELEMETRY -->
-    <!-- ===================================================================== -->
-    <section id="tab-providers" class="tab-content hidden space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h2 class="text-sm font-bold text-slate-900 dark:text-white">Active Configuration Providers & Telemetry</h2>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Integrated OCI container engines, file watchers, and Prometheus metric exporters.</p>
-        </div>
-        <span class="tr-badge tr-badge-cyan font-mono">Control Plane</span>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        
-        <!-- Provider 1: Docker / OCI Engine -->
-        <div class="rounded-xl traefik-panel p-4 sm:p-5 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <span class="text-lg">🐋</span>
-              <span class="font-bold text-xs text-slate-900 dark:text-white">Docker / OCI Provider</span>
-            </div>
-            <span class="tr-badge tr-badge-emerald text-[10px]">ENABLED</span>
-          </div>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Watches <code>/var/run/docker.sock</code> for <code>toron.*</code> container labels.</p>
-          <div class="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-400 flex justify-between">
-            <span>Discovered Containers:</span>
-            <span id="provider-oci-count" class="font-bold text-cyan-600 dark:text-cyan-400">0</span>
-          </div>
-        </div>
-
-        <!-- Provider 2: Static File Watcher -->
-        <div class="rounded-xl traefik-panel p-4 sm:p-5 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <span class="text-lg">📄</span>
-              <span class="font-bold text-xs text-slate-900 dark:text-white">File Config Provider</span>
-            </div>
-            <span class="tr-badge tr-badge-emerald text-[10px]">ACTIVE</span>
-          </div>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Dynamic YAML hot-reloader monitoring <code>routes.yaml</code> and <code>config.yaml</code>.</p>
-          <div class="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-400 flex justify-between">
-            <span>Reload Strategy:</span>
-            <span class="font-bold text-emerald-600 dark:text-emerald-400">Zero-Downtime</span>
-          </div>
-        </div>
-
-        <!-- Provider 3: Prometheus Telemetry -->
-        <div class="rounded-xl traefik-panel p-4 sm:p-5 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <span class="text-lg">📊</span>
-              <span class="font-bold text-xs text-slate-900 dark:text-white">Prometheus Exporter</span>
-            </div>
-            <span class="tr-badge tr-badge-cyan text-[10px]">STREAMING</span>
-          </div>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Real-time atomic request latency buckets, status code counters, and memory tracking.</p>
-          <div class="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono flex justify-between">
-            <span>Raw Endpoint:</span>
-            <a href="/metrics" target="_blank" class="font-bold text-cyan-600 dark:text-cyan-400 hover:underline">/metrics ↗</a>
-          </div>
-        </div>
-
-      </div>
-    </section>
-
-  </main>
-
-  <!-- FOOTER -->
-  <footer class="mt-auto border-t border-slate-200 dark:border-slate-800 py-4 text-center text-xs text-slate-500 dark:text-slate-400">
-    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-      <div class="flex items-center space-x-2">
-        <span class="w-2 h-2 rounded-full bg-cyan-500"></span>
-        <span>Toron Edge Gateway & Web Server — Cloud Native Proxy</span>
-      </div>
-      <div class="font-mono text-[11px]">HTTP/2 • HTTP/3 QUIC • Layer 4 TCP/UDP</div>
-    </div>
-  </footer>
-
-  <script src="/internal/dashboard/app.js"></script>
+<section id="tab-providers" class="tab-content hidden space-y-4"><div><h2 class="font-bold text-sm">Providers & Telemetry</h2><p class="text-xs text-slate-500">Control-plane sources and observability endpoints.</p></div><div class="grid grid-cols-1 md:grid-cols-3 gap-3"><div class="panel p-4"><div class="flex justify-between"><strong class="text-xs">🐋 Docker / OCI</strong><span class="text-[10px] text-emerald-500">ENABLED</span></div><p class="text-xs text-slate-500 mt-2">Container discovery via OCI labels.</p><div class="mt-4 flex justify-between text-[11px] font-mono"><span>Containers</span><strong id="provider-oci-count">0</strong></div></div><div class="panel p-4"><div class="flex justify-between"><strong class="text-xs">📄 File Provider</strong><span class="text-[10px] text-emerald-500">ACTIVE</span></div><p class="text-xs text-slate-500 mt-2">Dynamic YAML hot reload.</p><div class="mt-4 text-[11px] font-mono text-emerald-500">Zero downtime</div></div><div class="panel p-4"><div class="flex justify-between"><strong class="text-xs">📊 Prometheus</strong><span class="text-[10px] text-cyan-500">STREAMING</span></div><p class="text-xs text-slate-500 mt-2">Counters, histograms and runtime gauges.</p><div class="mt-4"><a href="/metrics" target="_blank" class="text-[11px] font-mono text-cyan-500">/metrics ↗</a></div></div></div></section>
+</main>
+<footer class="border-t border-slate-200 dark:border-slate-800 py-4 text-center text-[10px] text-slate-500">Toron Edge Gateway · HTTP/1.1 · HTTP/2 · HTTP/3 QUIC · TCP/UDP · WAF · mTLS</footer>
+<script src="/internal/dashboard/app.js"></script>
 </body>
 </html>

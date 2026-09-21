@@ -507,61 +507,237 @@ function chart(host, cfg, force) {
 /* ---------- Traffic Flow (Sankey Diagram) ---------- */
 function flow(host, D) {
   if (!host || (!FORCE && host.matches(':hover'))) return;
-  const W = 960, top = 28, bw = 10, X = [172, 452, 790], gap = 9, minH = 16;
-  const col = [
-    [{ id: 'l443', label: ':443 HTTPS', v: D.total || 100, rids: D.routes.map(r => r.id), tone: 'ok' }, { id: 'l80', label: ':80 HTTP', v: D.redir || 6, rids: ['redir'], tone: 'ok' }],
-    [...D.routes.map(r => ({ id: r.id, label: r.short, v: r.cur.rps, rids: [r.id], tone: toneErr(r.cur.err5), meta: `${fmt.n(r.cur.rps)}/s · ${(r.cur.err5 * 100).toFixed(1)}% 5xx`, go: `routes:${r.id}` })), { id: 'redir', label: '301 to HTTPS', v: D.redir || 6, rids: ['redir'], tone: 'ok', meta: `${fmt.n(D.redir || 6)}/s` }],
-    D.pools.map(p => ({ id: p.id, label: p.id, v: p.rps, rids: p.routes.map(r => r.id), tone: p.tone, meta: `${fmt.n(p.rps)}/s`, go: `upstreams:${p.id}` }))
-  ];
+  if (!D || !D.routes || D.routes.length === 0) {
+    host.innerHTML = `<div class="empty" style="padding:40px;text-align:center;color:var(--ink-3)">No active traffic routes configured.</div>`;
+    return;
+  }
 
-  const maxNodesInCol = Math.max(...col.map(ns => ns.length));
-  const Hh = Math.max(360, top + maxNodesInCol * (minH + gap) + 40);
-  const totalCol1 = sum(col[1].map(n => n.v)) || 1;
-  const k = Math.max(0.1, (Hh - top - gap * (col[1].length - 1) - minH * col[1].length - 6) / totalCol1);
-  const colH = col.map(ns => sum(ns.map(n => minH + n.v * k)) + gap * (ns.length - 1)), maxH = Math.max(...colH);
-  col.forEach((ns, ci) => {
-    let y = top + (maxH - colH[ci]) / 2;
-    ns.forEach(n => { n.h = Math.max(minH, minH + n.v * k); n.y = y; n.oy = 0; n.iy = 0; y += n.h + gap; });
-  });
+  const W = 1160, top = 34, bw = 8, gap = 12, minH = 22;
+  const X = [170, 530, 910];
 
-  const by = ci => Object.fromEntries(col[ci].map(n => [n.id, n])), c0 = by(0), c1 = by(1), c2 = by(2);
-  const links = [];
-  D.routes.forEach(r => {
-    if (c1[r.id] && c0.l443) links.push({ s: c0.l443, t: c1[r.id], v: r.cur.rps, c: 0, rid: r.id, tone: toneErr(r.cur.err5), lab: r.short });
-    const targetPool = c2[r.pool] || Object.values(c2).find(p => r.pool.includes(p.id) || p.id.includes(r.pool));
-    if (c1[r.id] && targetPool) links.push({ s: c1[r.id], t: targetPool, v: r.cur.rps, c: 1, rid: r.id, tone: toneErr(r.cur.err5), lab: r.short });
-  });
-  if (c0.l80 && c1.redir) links.push({ s: c0.l80, t: c1.redir, v: D.redir || 6, c: 0, rid: 'redir', tone: 'ok', lab: '301 to HTTPS' });
-
-  let paths = '', nodes = '', labels = '';
-  links.forEach(l => {
-    const ts = (l.s && l.s.v) ? (l.s.h * l.v / l.s.v) : 1;
-    const tt = (l.t && l.t.v) ? (l.t.h * l.v / l.t.v) : 1;
-    const y0 = l.s.y + l.s.oy, y1 = l.t.y + l.t.iy;
-    l.s.oy += ts; l.t.iy += tt;
-    const x0 = X[l.c] + bw, x1 = X[l.c + 1], mx = (x0 + x1) / 2;
-    paths += `<path class="rb" data-r="${l.rid}" fill="${TONE[l.tone] || 'var(--flow-ok)'}" d="M${x0},${y0.toFixed(1)} C${mx},${y0.toFixed(1)} ${mx},${y1.toFixed(1)} ${x1},${y1.toFixed(1)} L${x1},${(y1 + Math.max(1, tt)).toFixed(1)} C${mx},${(y1 + Math.max(1, tt)).toFixed(1)} ${mx},${(y0 + Math.max(1, ts)).toFixed(1)} ${x0},${(y0 + Math.max(1, ts)).toFixed(1)}Z"><title>${esc(l.lab)}: ${fmt.n(l.v)} req/s</title></path>`;
-  });
-
-  col.forEach((ns, ci) => ns.forEach(n => {
-    const go = n.go ? ` data-go="${n.go}" tabindex="0" role="link" aria-label="${esc(n.label)}, ${esc(n.meta || '')}"` : '';
-    nodes += `<rect class="nd" data-r="${n.rids.join(' ')}"${go} x="${X[ci]}" y="${n.y.toFixed(1)}" width="${bw}" height="${n.h.toFixed(1)}" rx="2" fill="${ci === 0 ? 'var(--ink-2)' : TONE[n.tone]}"><title>${esc(n.label)}${n.meta ? ': ' + esc(n.meta) : ''}</title></rect>`;
-    const ly = (n.y + n.h / 2 + 4).toFixed(1);
-    if (ci === 0) labels += `<text class="lb" x="${X[0] - 8}" y="${ly}" text-anchor="end"><tspan class="t">${esc(n.label)}</tspan><tspan class="m" dx="6">${fmt.n(n.v)}/s</tspan></text>`;
-    else labels += `<text class="lb" x="${X[ci] + bw + 8}" y="${ly}"><tspan class="t">${esc(n.label)}</tspan><tspan class="m ${n.tone !== 'ok' && ci === 1 ? n.tone : ''}" dx="6">${esc(n.meta)}</tspan></text>`;
+  const routeNodes = D.routes.map(r => ({
+    id: r.id,
+    label: r.short,
+    pool: r.pool,
+    v: (r.cur && r.cur.rps) || 0,
+    err5: (r.cur && r.cur.err5) || 0,
+    rids: [r.id],
+    tone: toneErr((r.cur && r.cur.err5) || 0),
+    meta: `${fmt.n((r.cur && r.cur.rps) || 0)}/s · ${(((r.cur && r.cur.err5) || 0) * 100).toFixed(1)}% 5xx`,
+    go: `routes:${r.id}`
   }));
 
-  const heads = `<text class="ch" x="${X[0] - 8}" y="14" text-anchor="end">Listeners</text><text class="ch" x="${X[1] + bw + 8}" y="14">Routes</text><text class="ch" x="${X[2] + bw + 8}" y="14">Upstream pools</text>`;
-  host.innerHTML = `<svg class="flow" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Traffic flow from listeners through routes to upstream pools.">${heads}<g>${paths}</g><g>${nodes}</g><g>${labels}</g></svg>`;
+  const redirVal = D.redir || 0;
+  const redirNode = {
+    id: 'redir',
+    label: '301 to HTTPS',
+    pool: 'in-process',
+    v: redirVal,
+    err5: 0,
+    rids: ['redir'],
+    tone: 'ok',
+    meta: `${fmt.n(redirVal)}/s · Redirect`,
+    go: ''
+  };
 
-  const svg = host.firstChild;
+  const col1Nodes = [...routeNodes, redirNode];
+  const totalCol1Val = sum(col1Nodes.map(n => n.v)) || 0;
+
+  // Compute Col 1 Node Heights
+  col1Nodes.forEach(n => {
+    const extra = totalCol1Val > 0 ? (n.v / totalCol1Val) * 90 : 0;
+    n.h = Math.max(minH, Math.min(64, minH + extra));
+  });
+  const col1H = sum(col1Nodes.map(n => n.h)) + (col1Nodes.length - 1) * gap;
+  const Hh = Math.max(380, top + col1H + 34);
+
+  // Position Col 1
+  let y1 = top + Math.max(0, (Hh - top - 34 - col1H) / 2);
+  col1Nodes.forEach(n => { n.y = y1; n.oy = 0; n.iy = 0; y1 += n.h + gap; });
+
+  // Col 0: Listeners (:443 HTTPS and :80 HTTP)
+  const l443_v = Math.max(0, sum(routeNodes.map(r => r.v)));
+  const l443_h = Math.max(minH * 2, Math.min(col1H - redirNode.h - gap, sum(routeNodes.map(r => r.h))));
+  const l80_h = Math.max(minH, redirNode.h);
+  const col0H = l443_h + gap + l80_h;
+  let y0 = top + Math.max(0, (Hh - top - 34 - col0H) / 2);
+
+  const l443 = {
+    id: 'l443',
+    label: ':443 HTTPS',
+    v: l443_v,
+    h: l443_h,
+    y: y0,
+    oy: 0,
+    iy: 0,
+    rids: D.routes.map(r => r.id),
+    tone: 'ok',
+    meta: `${fmt.n(l443_v)}/s`
+  };
+  const l80 = {
+    id: 'l80',
+    label: ':80 HTTP',
+    v: redirVal,
+    h: l80_h,
+    y: y0 + l443_h + gap,
+    oy: 0,
+    iy: 0,
+    rids: ['redir'],
+    tone: 'warn',
+    meta: `${fmt.n(redirVal)}/s`
+  };
+  const col0Nodes = [l443, l80];
+
+  // Col 2: Upstream Pools
+  const poolMap = new Map();
+  const rawPools = (D.pools && D.pools.length > 0) ? D.pools : [{ id: 'in-process', rps: 0, tone: 'ok', routes: [] }];
+  const poolNodes = rawPools.map(p => {
+    const matchingRoutes = routeNodes.filter(r => r.pool && (r.pool.includes(p.id) || p.id.includes(r.pool) || (r.pool === p.id)));
+    const rps = sum(matchingRoutes.map(r => r.v)) || p.rps || 0;
+    const tone = matchingRoutes.some(r => r.tone === 'err') ? 'err' : (p.tone || 'ok');
+    const rids = matchingRoutes.map(r => r.id);
+    return {
+      id: p.id,
+      label: p.id,
+      v: rps,
+      routes: matchingRoutes,
+      rids: rids.length > 0 ? rids : [p.id],
+      tone,
+      meta: `${fmt.n(rps)}/s`,
+      go: `upstreams:${p.id}`
+    };
+  });
+
+  poolNodes.forEach(p => {
+    poolMap.set(p.id, p);
+    const routeHSum = sum(p.routes.map(r => r.h * 0.85));
+    p.h = Math.max(minH, Math.min(80, routeHSum || minH));
+  });
+  const col2H = sum(poolNodes.map(p => p.h)) + (poolNodes.length - 1) * gap;
+  let y2 = top + Math.max(0, (Hh - top - 34 - col2H) / 2);
+  poolNodes.forEach(p => { p.y = y2; p.oy = 0; p.iy = 0; y2 += p.h + gap; });
+
+  // Build Links
+  const links = [];
+  const routeSumV = sum(routeNodes.map(r => r.v)) || 0;
+
+  // 1. Listeners -> Routes
+  routeNodes.forEach(r => {
+    const fraction = routeSumV > 0 ? (r.v / routeSumV) : (1 / routeNodes.length);
+    const ts = Math.max(3, l443.h * fraction);
+    const tt = r.h;
+    const sy = l443.y + l443.oy;
+    const ty = r.y;
+    l443.oy += ts;
+    links.push({
+      sX: X[0] + bw,
+      tX: X[1],
+      sY: sy,
+      tY: ty,
+      sH: ts,
+      tH: tt,
+      rid: r.id,
+      tone: r.tone,
+      lab: `${r.label} (Listener → Route)`,
+      v: r.v
+    });
+  });
+
+  // Redirect Link (:80 -> 301 to HTTPS)
+  links.push({
+    sX: X[0] + bw,
+    tX: X[1],
+    sY: l80.y,
+    tY: redirNode.y,
+    sH: l80.h,
+    tH: redirNode.h,
+    rid: 'redir',
+    tone: 'warn',
+    lab: '301 to HTTPS',
+    v: redirVal
+  });
+
+  // 2. Routes -> Upstream Pools
+  routeNodes.forEach(r => {
+    let targetPool = poolMap.get(r.pool) || poolNodes.find(p => r.pool && (r.pool.includes(p.id) || p.id.includes(r.pool))) || poolNodes[0];
+    if (!targetPool && poolNodes.length > 0) targetPool = poolNodes[0];
+    if (targetPool) {
+      const poolRoutes = targetPool.routes || [];
+      const poolRoutesV = sum(poolRoutes.map(x => x.v)) || 0;
+      const fraction = poolRoutesV > 0 ? (r.v / poolRoutesV) : (1 / Math.max(1, poolRoutes.length));
+      const ts = r.h;
+      const tt = Math.max(3, targetPool.h * fraction);
+      const sy = r.y;
+      const ty = targetPool.y + targetPool.iy;
+      targetPool.iy += tt;
+      links.push({
+        sX: X[1] + bw,
+        tX: X[2],
+        sY: sy,
+        tY: ty,
+        sH: ts,
+        tH: tt,
+        rid: r.id,
+        tone: r.tone,
+        lab: `${r.label} → ${targetPool.label}`,
+        v: r.v
+      });
+    }
+  });
+
+  // Render SVG Elements
+  let paths = '', nodes = '', labels = '';
+
+  links.forEach(l => {
+    const mx = (l.sX + l.tX) / 2;
+    const y0 = l.sY, y0b = l.sY + l.sH;
+    const y1 = l.tY, y1b = l.tY + l.tH;
+    const color = TONE[l.tone] || 'var(--flow-ok)';
+    paths += `<path class="rb ${l.tone}" data-r="${l.rid}" fill="${color}" d="M${l.sX},${y0.toFixed(1)} C${mx},${y0.toFixed(1)} ${mx},${y1.toFixed(1)} ${l.tX},${y1.toFixed(1)} L${l.tX},${y1b.toFixed(1)} C${mx},${y1b.toFixed(1)} ${mx},${y0b.toFixed(1)} ${l.sX},${y0b.toFixed(1)} Z"><title>${esc(l.lab)}: ${fmt.n(l.v)} req/s</title></path>`;
+  });
+
+  const allColumns = [
+    { nodes: col0Nodes, x: X[0], align: 'end', labelX: X[0] - 12 },
+    { nodes: col1Nodes, x: X[1], align: 'start', labelX: X[1] + bw + 12 },
+    { nodes: poolNodes, x: X[2], align: 'start', labelX: X[2] + bw + 12 }
+  ];
+
+  allColumns.forEach((c, ci) => {
+    c.nodes.forEach(n => {
+      const go = n.go ? ` data-go="${n.go}" tabindex="0" role="link" aria-label="${esc(n.label)}, ${esc(n.meta || '')}"` : '';
+      const nodeFill = ci === 0 ? (n.id === 'l80' ? 'var(--warn)' : 'var(--brand)') : (TONE[n.tone] || 'var(--flow-ok)');
+      nodes += `<rect class="nd ${n.tone || 'ok'}" data-r="${n.rids.join(' ')}"${go} x="${c.x}" y="${n.y.toFixed(1)}" width="${bw}" height="${n.h.toFixed(1)}" rx="3" fill="${nodeFill}"><title>${esc(n.label)}${n.meta ? ': ' + esc(n.meta) : ''}</title></rect>`;
+
+      const ly = (n.y + n.h / 2).toFixed(1);
+      if (c.align === 'end') {
+        labels += `<text class="lb" data-r="${n.rids.join(' ')}" x="${c.labelX}" y="${ly}" text-anchor="end" dominant-baseline="central"><tspan class="t">${esc(n.label)}</tspan><tspan class="m" dx="8">${esc(n.meta)}</tspan></text>`;
+      } else {
+        const metaToneClass = (n.tone && n.tone !== 'ok') ? ` ${n.tone}` : '';
+        labels += `<text class="lb" data-r="${n.rids.join(' ')}" x="${c.labelX}" y="${ly}" dominant-baseline="central"><tspan class="t">${esc(n.label)}</tspan><tspan class="m${metaToneClass}" dx="8">${esc(n.meta)}</tspan></text>`;
+      }
+    });
+  });
+
+  const heads = `
+    <text class="ch" x="${X[0] - 12}" y="16" text-anchor="end">LISTENERS</text>
+    <text class="ch" x="${X[1]}" y="16">ROUTES</text>
+    <text class="ch" x="${X[2]}" y="16">UPSTREAM POOLS</text>
+  `;
+
+  host.innerHTML = `<svg class="flow" viewBox="0 0 ${W} ${Hh}" role="img" aria-label="Traffic flow from listeners through routes to upstream pools.">${heads}<g class="links-g">${paths}</g><g class="nodes-g">${nodes}</g><g class="labels-g">${labels}</g></svg>`;
+
+  const svg = host.querySelector('svg.flow');
+  if (!svg) return;
   svg.onpointerover = e => {
     const t = e.target.closest('[data-r]'); if (!t) return;
     const ids = t.dataset.r.split(' ');
     svg.classList.add('hl');
     svg.querySelectorAll('[data-r]').forEach(el => el.classList.toggle('on', el.dataset.r.split(' ').some(id => ids.includes(id))));
   };
-  svg.onpointerleave = () => svg.classList.remove('hl');
+  svg.onpointerleave = () => {
+    svg.classList.remove('hl');
+    svg.querySelectorAll('[data-r].on').forEach(el => el.classList.remove('on'));
+  };
 }
 
 /* ---------- View 1: Overview ---------- */

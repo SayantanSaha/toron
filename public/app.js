@@ -178,7 +178,7 @@ function buildDataModel() {
     { id: 'orders', short: 'api /v1/orders', host: 'api.example.com', path: '/v1/orders/*', pool: 'orders-svc', base: 420, lat: 62, slo: 120, err: .004, mw: ['jwt', 'rate-limit 600/min', 'cors', 'request-id'], timeout: '8 s' },
     { id: 'auth', short: 'api /v1/auth', host: 'api.example.com', path: '/v1/auth/*', pool: 'auth-svc', base: 310, lat: 34, slo: 80, err: .002, mw: ['rate-limit 120/min', 'cors', 'request-id'], timeout: '4 s' },
     { id: 'search', short: 'api /v1/search', host: 'api.example.com', path: '/v1/search/*', pool: 'search-svc', base: 260, lat: 140, slo: 250, err: .009, mw: ['jwt', 'cache 30 s', 'cors'], timeout: '10 s' },
-    { id: 'payments', short: 'api /v1/payments', host: 'api.example.com', path: '/v1/payments/*', pool: 'payments-svc', base: 95, lat: 210, slo: 300, err: .024, mw: ['jwt', 'rate-limit 60/min', 'retry ×1', 'request-id'], timeout: '12 s' },
+    { id: 'payments', short: 'api /v1/payments', host: 'api.example.com', path: '/v1/payments/*', pool: 'payments-svc', base: 95, lat: 210, slo: 300, err: .004, mw: ['jwt', 'rate-limit 60/min', 'retry ×1', 'request-id'], timeout: '12 s' },
     { id: 'app', short: 'app /', host: 'app.example.com', path: '/*', pool: 'web-static', base: 640, lat: 14, slo: 40, err: .001, mw: ['gzip', 'cache 5 min', 'security-headers'], timeout: '5 s' }
   ].map((rt, k) => {
     const s = { rps: [], p50: [], p95: [], p99: [], e3: [], e4: [], e5: [] };
@@ -334,14 +334,77 @@ function buildDataModel() {
     { id: 'proxy.reverse', kind: 'Proxy', w: .2, state: 'running', note: 'Zero-allocation reverse proxy' }
   ];
 
-  const alerts = (rawApiIncidents && rawApiIncidents.length > 0) ? rawApiIncidents.map((inc, i) => ({
-    id: `inc_${i}`,
-    sev: 'warning',
-    title: `WAF Anomaly: ${inc.category || inc.rule_id} on ${inc.path}`,
-    since: 60,
-    go: 'alerts',
-    detail: () => `Blocked threat from client IP ${inc.client_ip}`
-  })) : [];
+  const alerts = [];
+
+  // 1. Upstream pool health alerts
+  pools.forEach(p => {
+    if (p.down > 0) {
+      alerts.push({
+        id: `upstream_${p.id}`,
+        sev: 'critical',
+        title: `Upstream Degradation: ${p.id}`,
+        since: 60,
+        go: 'upstreams',
+        detail: () => `${p.down} of ${p.insts.length} instances are failing health checks.`
+      });
+    }
+  });
+
+  // 2. High error rate route alerts
+  routes.forEach(r => {
+    if (r.cur.err5 >= 0.02) {
+      alerts.push({
+        id: `route_${r.id}`,
+        sev: 'critical',
+        title: `High 5xx Error Rate: ${r.short}`,
+        since: 60,
+        go: 'routes',
+        detail: () => `5xx error rate (${fmt.pct(r.cur.err5, 1)}) exceeds 2% threshold.`
+      });
+    }
+  });
+
+  // 3. Certificate renewal alerts
+  certs.forEach(c => {
+    if (c.state === 'failing') {
+      alerts.push({
+        id: `cert_${c.id}`,
+        sev: 'critical',
+        title: `Certificate Renewal Failed: ${c.domain}`,
+        since: 300,
+        go: 'certs',
+        detail: () => `Automated Let's Encrypt renewal failed for domain ${c.domain}.`
+      });
+    }
+  });
+
+  // 4. WAF Security Incidents
+  if (rawApiIncidents && rawApiIncidents.length > 0) {
+    rawApiIncidents.forEach((inc, i) => {
+      alerts.push({
+        id: `inc_${i}`,
+        sev: 'warning',
+        title: `WAF Security Anomaly: ${inc.category || inc.rule_id || 'Threat'} on ${inc.path}`,
+        since: 60,
+        go: 'alerts',
+        detail: () => `Blocked malicious threat from client IP ${inc.client_ip}`
+      });
+    });
+  }
+
+  // 5. Active Banned Threat Actors
+  if (rawApiBannedIps && rawApiBannedIps.length > 0) {
+    rawApiBannedIps.forEach((ban, i) => {
+      alerts.push({
+        id: `ban_${i}`,
+        sev: ban.type === 'permanent' ? 'critical' : 'warning',
+        title: `Banned Threat Actor: ${ban.ip} (${ban.type})`,
+        since: 60,
+        go: 'alerts',
+        detail: () => ban.reason || `IP address has been banned due to repeated security violations`
+      });
+    });
+  }
 
   cache = { routes, pools, A, X, labels, B, total, redir: total * 0.06, certs, modules, alerts, bannedIps: rawApiBannedIps };
   return cache;
@@ -504,19 +567,30 @@ function flow(host, D) {
 /* ---------- View 1: Overview ---------- */
 function bannerHTML(D) {
   const bad = D.routes.filter(r => r.cur.err5 >= .02).sort((a, b) => b.cur.err5 - a.cur.err5);
-  const down = D.pools.filter(p => p.down), cert = D.certs.filter(c => c.state === 'failing');
+  const down = D.pools.filter(p => p.down > 0);
+  const cert = D.certs.filter(c => c.state === 'failing');
+  const alertCount = (D.alerts || []).length;
+
   let lvl = 'ok', title = 'All systems operational', text = `All ${D.routes.length} routes are within thresholds and upstream pools are healthy.`, go = '';
 
-  if (bad.length) {
-    const r = bad[0]; lvl = 'err'; title = `Degraded: ${r.short}`; go = `routes:${r.id}`;
+  if (bad.length > 0) {
+    const r = bad[0]; lvl = 'err'; title = `Degraded: ${r.short}`; go = `routes`;
     text = `${fmt.pct(r.cur.err5, 1)} of requests to ${r.short} are failing, above the 2% threshold.`;
-  } else if (down.length || cert.length) {
-    lvl = 'warn'; title = 'Needs attention';
-    text = [down.length ? `${down.length} upstream pool has failing instances.` : '', cert.length ? `${cert.length} certificate renewal is failing.` : ''].join(' ').trim();
+  } else if (down.length > 0) {
+    lvl = 'warn'; title = 'Needs attention: Upstreams Unhealthy'; go = 'upstreams';
+    text = `${down.length} upstream pool has failing backend instances.`;
+  } else if (cert.length > 0) {
+    lvl = 'warn'; title = 'Needs attention: Certificate Renewal'; go = 'certs';
+    text = `${cert.length} certificate renewal is failing.`;
+  } else if (alertCount > 0) {
+    lvl = 'warn'; title = `${alertCount} Active Alert${alertCount > 1 ? 's' : ''}`; go = 'alerts';
+    text = `${alertCount} operational or security event${alertCount > 1 ? 's require' : ' requires'} administrative attention.`;
   }
+
   const ver = rawApiStatus ? rawApiStatus.version : '1.5.29';
   const meta = [['Instances', 'Primary Node'], ['Version', `v${ver}`], ['Engine', 'Zero-Allocation Reactor'], ['Uptime', 'Healthy']];
-  return `<div class="banner ${lvl}"><div class="bn-main"><span class="bn-ic">${ICON(lvl === 'ok' ? 'i-check' : 'i-alert')}</span><div><h2>${esc(title)}</h2><p>${esc(text)}</p>${lvl !== 'ok' ? `<div class="bn-act">${go ? `<button class="btn primary" data-go="${go}">View route</button>` : ''}<button class="btn" data-go="alerts">Open alerts</button></div>` : ''}</div></div><dl class="meta">${meta.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></div>`;
+  const primaryBtnLabel = go === 'upstreams' ? 'View upstreams' : (go === 'certs' ? 'View certificates' : (go === 'routes' ? 'View routes' : 'View alerts'));
+  return `<div class="banner ${lvl}"><div class="bn-main"><span class="bn-ic">${ICON(lvl === 'ok' ? 'i-check' : 'i-alert')}</span><div><h2>${esc(title)}</h2><p>${esc(text)}</p>${lvl !== 'ok' ? `<div class="bn-act">${go ? `<button class="btn primary" data-go="${go}">${esc(primaryBtnLabel)}</button>` : ''}<button class="btn" data-go="alerts">Open alerts</button></div>` : ''}</div></div><dl class="meta">${meta.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></div>`;
 }
 
 function signals(host, D) {
@@ -1051,7 +1125,12 @@ const VIEWS = {
 
 function renderNav() {
   const nEl = $('#nav'); if (!nEl) return;
-  nEl.innerHTML = NAV.map(n => `<button class="nv" data-nav="${n.id}" title="${esc(n.label)}"${n.id === state.view ? ' aria-current="page"' : ''}>${ICON(n.icon)}<span class="lbl">${esc(n.label)}</span></button>`).join('');
+  const D = buildDataModel();
+  const alertCount = (D.alerts || []).length;
+  nEl.innerHTML = NAV.map(n => {
+    const badge = (n.id === 'alerts' && alertCount > 0) ? `<span class="badge">${alertCount}</span>` : '';
+    return `<button class="nv" data-nav="${n.id}" title="${esc(n.label)}"${n.id === state.view ? ' aria-current="page"' : ''}>${ICON(n.icon)}<span class="lbl">${esc(n.label)}</span>${badge}</button>`;
+  }).join('');
 }
 
 function head() {

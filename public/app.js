@@ -98,7 +98,7 @@ function initThemeEngine() {
 // 2. TAB NAVIGATION
 // ============================================================================
 function initTabNavigation() {
-  const tabs = document.querySelectorAll('#desktop-tabs .traefik-tab');
+  const tabs = document.querySelectorAll('#desktop-tabs .navitem');
   const sections = document.querySelectorAll('.tab-content');
 
   tabs.forEach(tab => {
@@ -191,6 +191,7 @@ async function pollStatus() {
 
     fetchAndRenderRoutes();
     fetchSecurityIncidents();
+    fetchObservability();
   } catch (e) {
     console.error('Failed to poll engine status:', e);
   }
@@ -322,6 +323,8 @@ async function fetchAndRenderRoutes() {
         </div>
       `;
     }).join('');
+    const secondary = document.getElementById('routes-container-secondary');
+    if (secondary) secondary.innerHTML = container.innerHTML;
 
   } catch (e) {
     console.error('Failed to fetch routes:', e);
@@ -582,4 +585,68 @@ function initRefreshButton() {
       fetchUpstreamHealth();
     });
   }
+}
+
+
+// ============================================================================
+// 10. OBSERVABILITY DASHBOARD
+// ============================================================================
+const obsHistory = { requests: [], errors: [], latency: [], connections: [], waf: [], health: [] };
+let obsLastRequests = null;
+let obsLastAt = null;
+
+function fmtNumber(n) {
+  if (!Number.isFinite(n)) return '—';
+  return Intl.NumberFormat(undefined, { notation: n >= 100000 ? 'compact' : 'standard', maximumFractionDigits: 1 }).format(n);
+}
+function setObsText(id, value) { const el=document.getElementById(id); if(el) el.textContent=value; }
+function pushObs(key, value) { if(!Number.isFinite(value)) return; obsHistory[key].push(value); if(obsHistory[key].length>24) obsHistory[key].shift(); drawSpark('spark-'+key, obsHistory[key]); }
+function drawSpark(id, values) {
+  const svg=document.getElementById(id); if(!svg || !values.length) return;
+  const w=220,h=52,p=3,min=Math.min(...values),max=Math.max(...values),span=max-min||1;
+  const pts=values.map((v,i)=>`${p+(i/(Math.max(values.length-1,1)))*(w-p*2)},${h-p-((v-min)/span)*(h-p*2)}`).join(' ');
+  svg.innerHTML=`<polyline points="${pts}" fill="none" stroke="currentColor" stroke-width="2.5" vector-effect="non-scaling-stroke" class="text-cyan-500"/>`;
+}
+function percentileFromHistogram(metrics, prefix, p=0.95) {
+  const buckets=metrics.filter(x=>x.name===prefix+'_bucket').map(x=>({le:Number(x.labels.le),v:Number(x.value)})).filter(x=>Number.isFinite(x.le)).sort((a,b)=>a.le-b.le);
+  const total=Number(metrics.find(x=>x.name===prefix+'_count')?.value||0); if(!total||!buckets.length) return NaN;
+  const target=total*p; const hit=buckets.find(b=>b.v>=target); return hit?hit.le*1000:NaN;
+}
+function parsePrometheus(text) {
+  const out=[]; for(const line of text.split(/\\r?\\n/)){ if(!line||line[0]==='#') continue; const m=line.match(/^([a-zA-Z_:][a-zA-Z0-9_:]*)(\\{([^}]*)\\})?\\s+([-+0-9.eE]+)$/); if(!m) continue; const labels={}; if(m[3]) for(const pair of m[3].matchAll(/([a-zA-Z_][a-zA-Z0-9_]*)="((?:\\\\.|[^"])*)"/g)) labels[pair[1]]=pair[2]; out.push({name:m[1],labels,value:Number(m[4])}); } return out;
+}
+function drawTraffic() {
+  const req=obsHistory.requests, lat=obsHistory.latency; if(!req.length) return;
+  const draw=(values)=>values.map((v,i)=>{const x=20+(i/(Math.max(values.length-1,1)))*860;const max=Math.max(...values)||1;const min=Math.min(...values);const y=205-((v-min)/(max-min||1))*175;return `${x.toFixed(1)},${y.toFixed(1)}`}).join(' ');
+  const t=document.getElementById('traffic-line'), l=document.getElementById('latency-line'); if(t)t.setAttribute('points',draw(req)); if(l&&lat.length)l.setAttribute('points',draw(lat));
+  const grid=document.getElementById('traffic-grid'); if(grid)grid.innerHTML=[35,80,125,170,205].map(y=>`<line x1="20" x2="880" y1="${y}" y2="${y}" stroke="currentColor" class="text-slate-200 dark:text-slate-800" stroke-width="1"/>`).join('');
+}
+function renderStatusBars(byStatus,total) {
+  const el=document.getElementById('status-bars'); if(!el) return;
+  const groups=[['2xx',Object.entries(byStatus).filter(([k])=>/^2/.test(k)).reduce((a,[,v])=>a+v,0),'bg-emerald-500'],['3xx',Object.entries(byStatus).filter(([k])=>/^3/.test(k)).reduce((a,[,v])=>a+v,0),'bg-sky-500'],['4xx',Object.entries(byStatus).filter(([k])=>/^4/.test(k)).reduce((a,[,v])=>a+v,0),'bg-amber-500'],['5xx',Object.entries(byStatus).filter(([k])=>/^5/.test(k)).reduce((a,[,v])=>a+v,0),'bg-rose-500']];
+  el.innerHTML=groups.map(([name,val,cls])=>{const pct=total?val/total*100:0;return `<div><div class="flex justify-between text-xs mb-1"><span class="font-mono font-bold">${name}</span><span class="text-slate-500">${fmtNumber(val)} · ${pct.toFixed(1)}%</span></div><div class="h-2 rounded-full bg-slate-100 dark:bg-slate-900 overflow-hidden"><div class="h-full rounded-full ${cls}" style="width:${Math.min(pct,100)}%"></div></div></div>`}).join('');
+}
+function renderTopRoutes(byRoute) {
+  const el=document.getElementById('top-routes'); if(!el)return; const rows=Object.entries(byRoute||{}).sort((a,b)=>b[1]-a[1]).slice(0,6); if(!rows.length){el.innerHTML='<div class="text-xs text-slate-500 py-6 text-center">No route telemetry yet.</div>';return;}
+  const max=rows[0][1]||1; el.innerHTML=rows.map(([route,count])=>`<div class="space-y-1"><div class="flex justify-between gap-3 text-[11px]"><span class="font-mono truncate">${escapeHTML(route)}</span><strong class="font-mono">${fmtNumber(count)}</strong></div><div class="h-1.5 rounded bg-slate-100 dark:bg-slate-900"><div class="h-full rounded bg-cyan-500" style="width:${Math.max(3,count/max*100)}%"></div></div></div>`).join('');
+}
+async function fetchObservability() {
+  try {
+    const [metricsRes,statusRes,healthRes]=await Promise.all([fetch('/metrics'),fetch('/internal/api/status'),fetch('/internal/api/upstreams/health')]);
+    if(!metricsRes.ok) return; const raw=await metricsRes.text(); const metrics=parsePrometheus(raw); const status= statusRes.ok ? await statusRes.json() : {};
+    const total=metrics.filter(x=>x.name==='toron_http_requests_total').reduce((a,x)=>a+x.value,0);
+    const errors=metrics.filter(x=>x.name==='toron_http_requests_total' && /^5/.test(x.labels.status||'')).reduce((a,x)=>a+x.value,0);
+    const connections=Number(metrics.find(x=>x.name==='toron_tcp_connections_active')?.value||0);
+    const quic=Number(metrics.find(x=>x.name==='toron_active_quic_streams')?.value||0);
+    const waf=metrics.filter(x=>x.name==='toron_waf_blocked_requests_total').reduce((a,x)=>a+x.value,0);
+    const anomalies=metrics.filter(x=>x.name==='toron_waf_anomalies_detected_total').reduce((a,x)=>a+x.value,0);
+    const p95=percentileFromHistogram(metrics,'toron_http_request_duration_seconds',.95);
+    const now=Date.now(); const rps=obsLastRequests===null||!obsLastAt?NaN:Math.max(0,(total-obsLastRequests)/((now-obsLastAt)/1000)); obsLastRequests=total;obsLastAt=now;
+    setObsText('obs-total-requests',fmtNumber(total)); setObsText('obs-rps',Number.isFinite(rps)?fmtNumber(rps)+' req/s':'warming up…'); setObsText('obs-error-rate',total?((errors/total)*100).toFixed(2)+'%':'0.00%'); setObsText('obs-error-detail',fmtNumber(errors)+' 5xx / '+fmtNumber(total)); setObsText('obs-p95',Number.isFinite(p95)?p95.toFixed(2)+' ms':'—'); setObsText('obs-connections',fmtNumber(connections)); setObsText('obs-quic','QUIC '+fmtNumber(quic)); setObsText('obs-waf',fmtNumber(waf));setObsText('obs-waf-anomaly','anomalies '+fmtNumber(anomalies));
+    setObsText('obs-workers',status.worker_pool_size||'—'); setObsText('obs-containers',status.discovery?.containers_count??'0'); setObsText('obs-mtls',status.security?.mtls_enabled?'Active':'Ready');
+    pushObs('requests',Number.isFinite(rps)?rps:total); pushObs('errors',errors); pushObs('latency',Number.isFinite(p95)?p95:0); pushObs('connections',connections); pushObs('waf',waf);
+    if(healthRes.ok){const h=await healthRes.json();const healthy=h.healthy_nodes||0,totalNodes=h.total_nodes||0;setObsText('obs-health',totalNodes?`${healthy}/${totalNodes}`:'0/0');setObsText('obs-health-detail',totalNodes?`${healthy} healthy · ${totalNodes-healthy} degraded`:'no targets');pushObs('health',totalNodes?healthy/totalNodes*100:100);}
+    setObsText('obs-routers',cachedRoutes.length); setObsText('obs-services',document.getElementById('tab-badge-services')?.textContent||'0'); setObsText('last-updated','updated '+new Date().toLocaleTimeString());
+    renderStatusBars(status.metrics?.requests_by_status||{},total); renderTopRoutes(status.metrics?.requests_by_route||{}); drawTraffic();
+  } catch(e) { console.debug('Observability refresh failed',e); }
 }

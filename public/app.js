@@ -165,6 +165,11 @@ function buildDataModel() {
       host: r.host || '*',
       path: r.prefix,
       pool,
+      type: r.type || 'proxy',
+      algorithm: r.algorithm || 'Round-Robin',
+      headers: r.headers || {},
+      targets: r.targets || [],
+      dir: r.dir || '',
       base: curRPS,
       lat,
       slo,
@@ -269,40 +274,105 @@ function buildDataModel() {
     }
   }
 
-  // 3. Build upstream pools
+  // 3. Build upstream pools with rich routing combinations
   const poolMap = new Map();
   if (rawApiUpstreams && rawApiUpstreams.length > 0) {
     rawApiUpstreams.forEach(u => {
-      const poolKey = u.name || `target:${u.port}`;
+      let targetAddr = u.name || `target:${u.port || 80}`;
+      if (!targetAddr.includes(':') && u.port) {
+        targetAddr = `${targetAddr}:${u.port}`;
+      }
+      targetAddr = targetAddr.replace(/:(\d+):\1$/, ':$1');
+
+      // Find matching routes for this upstream node
+      const matchingRoutes = routes.filter(r => {
+        if (u.route && (r.short.includes(u.route) || (r.host + r.path).includes(u.route) || u.route.includes(r.path) || u.route.includes(r.short))) return true;
+        if (r.pool && (r.pool.includes(targetAddr) || targetAddr.includes(r.pool) || r.pool.includes(u.name))) return true;
+        if (r.targets && r.targets.some(t => t.includes(targetAddr) || targetAddr.includes(t) || t.includes(u.name))) return true;
+        return false;
+      });
+
+      const primaryRoute = matchingRoutes[0];
+      const host = primaryRoute ? (primaryRoute.host || '*') : '*';
+      const path = primaryRoute ? primaryRoute.path : (u.route ? (u.route.includes('/') ? '/' + u.route.split('/').slice(1).join('/') : u.route) : '/');
+      const displayName = primaryRoute ? primaryRoute.short : (u.route || targetAddr);
+      const poolKey = primaryRoute ? primaryRoute.id : (u.route || targetAddr);
+
       if (!poolMap.has(poolKey)) {
+        const headersList = (primaryRoute && primaryRoute.headers) ? Object.entries(primaryRoute.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
         poolMap.set(poolKey, {
           id: poolKey,
-          algo: u.algo || 'Round-Robin',
-          hc: `Health check on port ${u.port}`,
+          displayName,
+          host,
+          path,
+          type: primaryRoute ? primaryRoute.type : 'proxy',
+          algo: u.algo || (primaryRoute ? primaryRoute.algorithm : 'Round-Robin') || 'Round-Robin',
+          hc: `HTTP probe on port ${u.port || 80}`,
+          headersSummary: headersList,
           insts: [],
-          routes: []
+          routes: matchingRoutes.length > 0 ? matchingRoutes : (primaryRoute ? [primaryRoute] : [])
         });
       }
-      poolMap.get(poolKey).insts.push({
-        a: `${u.name}:${u.port}`,
-        state: (u.status === 'HEALTHY' || u.status === 'UP') ? 'up' : 'down',
-        history: u.history && u.history.length ? u.history : Array(48).fill(u.status === 'HEALTHY' || u.status === 'UP')
+
+      const pool = poolMap.get(poolKey);
+      matchingRoutes.forEach(mr => {
+        if (!pool.routes.some(r => r.id === mr.id)) pool.routes.push(mr);
       });
+
+      if (!pool.insts.some(i => i.a === targetAddr)) {
+        pool.insts.push({
+          a: targetAddr,
+          route: u.route || (primaryRoute ? primaryRoute.short : ''),
+          state: (u.status === 'HEALTHY' || u.status === 'UP') ? 'up' : 'down',
+          httpCode: u.http_code,
+          latency: u.latency_ms,
+          history: u.history && u.history.length ? u.history : Array(48).fill(u.status === 'HEALTHY' || u.status === 'UP')
+        });
+      }
     });
-    // Associate routes with pools
+
+    // Also register any configured routes not directly mapped
     routes.forEach(r => {
+      let found = false;
       for (const p of poolMap.values()) {
-        if (p.insts.some(i => r.pool.includes(i.a) || i.a.includes(r.pool)) || r.path.includes(p.id)) {
-          p.routes.push(r);
+        if (p.routes.some(pr => pr.id === r.id) || p.insts.some(i => r.pool.includes(i.a) || i.a.includes(r.pool))) {
+          if (!p.routes.some(pr => pr.id === r.id)) p.routes.push(r);
+          found = true;
         }
+      }
+      if (!found) {
+        const poolKey = r.id || r.short;
+        const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
+        poolMap.set(poolKey, {
+          id: poolKey,
+          displayName: r.short || poolKey,
+          host: r.host || '*',
+          path: r.path || '/',
+          type: r.type || 'proxy',
+          algo: r.algorithm || 'Round-Robin',
+          hc: 'Passive health check',
+          headersSummary: headersList,
+          insts: [{ a: r.pool, route: r.short, state: 'up', history: Array(48).fill(true) }],
+          routes: [r]
+        });
       }
     });
   } else {
     routes.forEach(r => {
-      if (!poolMap.has(r.pool)) {
-        poolMap.set(r.pool, { id: r.pool, algo: 'Least connections', hc: 'GET /healthz every 5 s', insts: [], routes: [] });
-      }
-      poolMap.get(r.pool).routes.push(r);
+      const poolKey = r.id || r.short;
+      const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
+      poolMap.set(poolKey, {
+        id: poolKey,
+        displayName: r.short || poolKey,
+        host: r.host || '*',
+        path: r.path || '/',
+        type: r.type || 'proxy',
+        algo: r.algorithm || 'Least connections',
+        hc: 'GET /healthz every 5 s',
+        headersSummary: headersList,
+        insts: [{ a: r.pool, route: r.short, state: 'up', history: Array(48).fill(true) }],
+        routes: [r]
+      });
     });
   }
 
@@ -820,7 +890,7 @@ function ovUpdate(D) {
   });
   const prEl = $('#poolRows');
   if (prEl) {
-    prEl.innerHTML = `<li class="hd"><span>Healthy</span><span>Pool</span><span class="r">p95</span><span class="r">5xx</span></li>` + D.pools.map(p => `<li data-go="upstreams:${p.id}" tabindex="0" role="link"><span>${pill(p.tone, `${p.up}/${p.insts.length}`)}</span><b>${esc(p.id)}</b><span class="mut num r">${fmt.ms(p.p95)}</span><span class="num r ${p.err5 >= .02 ? 't-err' : ''}">${fmt.pct(p.err5, 1)}</span></li>`).join('');
+    prEl.innerHTML = `<li class="hd"><span>Healthy</span><span>Pool / Route</span><span class="r">p95</span><span class="r">5xx</span></li>` + D.pools.map(p => `<li data-go="upstreams:${p.id}" tabindex="0" role="link"><span>${pill(p.tone, `${p.up}/${p.insts.length}`)}</span><b>${esc(p.displayName || p.id)}</b><span class="mut num r">${fmt.ms(p.p95)}</span><span class="num r ${p.err5 >= .02 ? 't-err' : ''}">${fmt.pct(p.err5, 1)}</span></li>`).join('');
   }
   const alEl = $('#alertRows');
   if (alEl) {
@@ -879,20 +949,45 @@ function rtUpdate(D) {
 function poolCard(p) {
   const rows = p.insts.map(i => {
     const st = i.state || 'up', tone = st === 'down' ? 'err' : st === 'draining' ? 'mute' : 'ok';
-    const label = st === 'down' ? 'Down' : st === 'draining' ? 'Draining' : 'Healthy';
+    const label = st === 'down' ? 'Down' : st === 'draining' ? 'Draining' : (i.httpCode ? `Healthy (HTTP ${i.httpCode})` : 'Healthy');
     const history = i.history && i.history.length ? i.history : Array(48).fill(st !== 'down');
     const fails = history.filter(v => !v).length;
     const strip = `<svg class="hc" viewBox="0 0 96 12" preserveAspectRatio="none" role="img" aria-label="Last 48 health checks, ${fails} failed">${history.map((ok, k) => `<rect class="${ok ? 'g' : 'b'}" x="${k * 2}" y="0" width="1.4" height="12" rx=".5"/>`).join('')}</svg>`;
 
-    return `<div class="inst"><div class="inst-top"><code>${esc(i.a)}</code>${pill(tone, label)}</div>
-      <div class="inst-m"><span>p95 ${fmt.ms(p.p95)}</span><span>Last check OK</span></div>${strip}
+    return `<div class="inst"><div class="inst-top">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <code style="font-weight:600;font-size:12.5px">${esc(i.a)}</code>
+        ${i.route && i.route !== p.displayName ? `<span class="mut" style="font-size:11px">(${esc(i.route)})</span>` : ''}
+      </div>
+      ${pill(tone, label)}</div>
+      <div class="inst-m">
+        <span>Latency: <b>${i.latency ? i.latency.toFixed(1) + ' ms' : fmt.ms(p.p95)}</b></span>
+        <span>Probe Status: ${st === 'down' ? '<b style="color:var(--err)">Unreachable</b>' : '<b style="color:var(--ok)">HTTP 200 OK</b>'}</span>
+      </div>${strip}
       ${st === 'down' ? `<p class="note err">Circuit breaker open. Connections routed away from failing node.</p>` : ''}
       ${st === 'draining' ? `<p class="note mute">Node is draining connections for deployment.</p>` : ''}</div>`;
   }).join('');
 
-  return `<section class="card" id="pool-${esc(p.id)}"><div class="card-h"><div><h2>${esc(p.id)}</h2><p class="sub">${esc(p.algo)} · ${esc(p.hc)}</p></div>${pill(p.tone, `${p.up} of ${p.insts.length} up`)}</div>
-    <dl class="pool-sum"><div><dt>Requests</dt><dd>${fmt.n(p.rps)}/s</dd></div><div><dt>p95</dt><dd>${fmt.ms(p.p95)}</dd></div><div><dt>5xx rate</dt><dd class="${p.err5 >= .02 ? 't-err' : ''}">${fmt.pct(p.err5, 1)}</dd></div></dl>
-    <div style="margin-top:8px">${rows}</div></section>`;
+  const hostLabel = (p.host && p.host !== '*') ? p.host : 'Any Host (*)';
+  const prefixLabel = p.path || '/';
+  const mwList = (p.routes && p.routes.length > 0 && p.routes[0].mw) ? p.routes[0].mw : [];
+
+  return `<section class="card" id="pool-${esc(p.id)}"><div class="card-h">
+    <div>
+      <h2>${esc(p.displayName || p.id)}</h2>
+      <p class="sub"><span><b>Match:</b> <code>${esc(hostLabel)}</code> <code>${esc(prefixLabel)}</code></span> · <span><b>LB Algorithm:</b> ${esc(p.algo)}</span></p>
+    </div>
+    ${pill(p.tone, `${p.up} of ${p.insts.length} up`)}</div>
+    <div style="padding:10px 16px;background:var(--surface-2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;font-size:12px">
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div><span class="mut">Host: </span><b>${esc(hostLabel)}</b></div>
+        <div><span class="mut">Prefix: </span><b>${esc(prefixLabel)}</b></div>
+        ${p.headersSummary ? `<div><span class="mut">Headers: </span><code>${esc(p.headersSummary)}</code></div>` : ''}
+      </div>
+      ${mwList.length > 0 ? `<div class="chips">${mwList.slice(0, 3).map(m => `<span class="chipx">${esc(m)}</span>`).join('')}</div>` : ''}
+    </div>
+    <dl class="pool-sum"><div><dt>Requests</dt><dd>${fmt.n(p.rps)}/s</dd></div><div><dt>p95 Latency</dt><dd>${fmt.ms(p.p95)}</dd></div><div><dt>5xx Error Rate</dt><dd class="${p.err5 >= .02 ? 't-err' : ''}">${fmt.pct(p.err5, 1)}</dd></div></dl>
+    <div style="margin-top:4px">${rows}</div></section>`;
 }
 
 function upShell() { return `<div class="pools" id="poolGrid"></div><p class="hc-legend">Each tick is a health check probe (oldest left, newest right). Red ticks failed.</p>`; }

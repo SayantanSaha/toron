@@ -1,0 +1,186 @@
+discovery:
+  default_weight: 1
+  enabled: false
+  engine: auto
+  poll_interval: 10s
+  socket_path: auto
+
+ingress:
+  enabled: false
+  ingress_class: toron
+  kube_apiserver: https://kubernetes.default.svc
+  resync_period: 30s
+  service_account_dir: /var/run/secrets/kubernetes.io/serviceaccount
+
+logging:
+  format: json
+  level: info
+  server_log: /var/log/toron/server.log
+  access_log: /var/log/toron/access.log
+  security_log: /var/log/toron/security.log
+
+server:
+  admin_subnets:
+    - "0.0.0.0/0"
+    - "::/0"
+  host: 0.0.0.0
+  port: 443
+  worker_pool_size: 128
+  read_timeout: 5s
+  write_timeout: 5s
+  idle_timeout: 30s
+  upgrade_idle_timeout: 60s
+  max_header_bytes: 8192
+  max_body_bytes: 4194304
+  inbound_chunked_mode: normalize
+
+  http_redirect:
+    enabled: true
+    port: 80
+    allowed_hosts:
+      - sayantansaha.in
+      - www.sayantansaha.in
+      - toron.in
+      - www.toron.in
+    default_host: sayantansaha.in
+
+  tls:
+    enabled: true
+    cert_file: /etc/toron/certs/sayantansaha.in.crt
+    key_file: /etc/toron/certs/sayantansaha.in.key
+    auto_dev_cert: false
+
+  acme:
+    enabled: true
+    directory_url: https://acme-v02.api.letsencrypt.org/directory
+    email: admin@sayantansaha.in
+    domains:
+      - sayantansaha.in
+      - toron.in
+    cache_dir: /etc/toron/certs
+    challenge_type: http-01
+
+  http2:
+    enabled: true
+    allow_h2c: true
+    max_concurrent_streams: 250
+    max_frame_size: 16384
+
+  http3:
+    enabled: true
+    port: 443
+    alt_svc_header: true
+
+  cache:
+    default_ttl: 60s
+    enabled: true
+    max_entries: 1000
+    max_payload_size: 1048576
+
+  compression:
+    enabled: true
+    encodings:
+      - zstd
+      - br
+      - gzip
+      - deflate
+    level: -1
+    min_length: 512
+
+  cors:
+    allow_credentials: false
+    allow_headers:
+      - Origin
+      - Content-Type
+      - Accept
+      - Authorization
+      - X-Requested-With
+    allow_methods:
+      - GET
+      - POST
+    allow_origins:
+      - https://sayantansaha.in
+      - https://www.sayantansaha.in
+      - http://sayantansaha.in
+      - sayantansaha.in
+      - https://toron.in
+      - http://toron.in
+      - toron.in
+    enabled: true
+    expose_headers:
+      - X-Cache
+      - Content-Length
+    max_age: 86400
+
+  security_headers:
+    content_type_options: nosniff
+    frame_options: DENY
+    hsts: max-age=31536000; includeSubDomains; preload
+    referrer_policy: strict-origin-when-cross-origin
+    permissions_policy: camera=(), microphone=(), geolocation=()
+    csp: ""
+    enabled: true
+
+  waf:
+    enabled: true
+    mode: enforce
+    anomaly_threshold: 5
+    denied_ips:
+      - "136.67.240.107"
+      - "51.255.42.160"
+    max_inspect_body_size: 65536
+    audit_log:
+      enabled: true
+      format: json
+      output: stdout
+    auto_ban:
+      enabled: true
+      max_violations: 3
+      window: 60s
+      ban_duration: 1h
+      max_temporary_bans: 3
+      persistence_file: /etc/toron/banned_ips.json
+      whitelist:
+        - "127.0.0.1/32"
+        - "::1/128"
+    custom_rules:
+      - id: CUSTOM-001
+        category: bot
+        description: Block malicious scrapers and security scanners
+        locations:
+          - headers
+        pattern: (?i)(sqlmap|nikto|nmap|acunetix|gobuster|dirbuster|wfuzz|masscan)
+        score: 10
+      - id: CUSTOM-002
+        category: traversal
+        description: Block path traversal and sensitive file probes
+        locations:
+          - url
+          - query
+        pattern: (?i)(\.env|\.git|\.aws|\.ssh|wp-config\.php|id_rsa|/etc/passwd)
+        score: 10
+
+sidecar:
+  app_port: 8443
+  egress_port: 15001
+  enabled: false
+  ingress_port: 15006
+  mode: dual
+  strict_mtls: false
+  traffic_splits:
+    - backends:
+        - target: http://service-v1:8080
+          weight: 80
+        - target: http://service-v2:8080
+          weight: 20
+      prefix: /api
+
+transcoder:
+  enabled: true
+  routes:
+    - field_mappings:
+        id: userId
+      grpc_method: /user.UserService/GetUser
+      http_method: GET
+      http_path: /v1/users/:id
+      upstream_url: http://localhost:9005

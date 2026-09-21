@@ -63,11 +63,15 @@ Built-in endpoint reference for Toron.
 
 ## 4. Internal Control Plane API Endpoints
 
-- **`/internal/api/status`** (`GET`): Returns server runtime stats, port, worker pool size, embedded JSON telemetry metrics, and security metadata (`waf_enabled`, `waf_mode`, `waf_rules_count`, `waf_allowed_ips`, `cors_enabled`, `security_headers`, `mtls_enabled`).
+- **`/internal/api/status`** (`GET`): Returns server runtime stats, version, port, worker pool size, embedded JSON telemetry metrics, rolling 60-bucket time-series summary (`timeseries`), certificate statuses (`certs`), compiled module statistics (`modules`), recent request traces (`recent_logs`), and security metadata (`waf_enabled`, `waf_mode`, `waf_rules_count`, `waf_allowed_ips`, `cors_enabled`, `security_headers`, `mtls_enabled`).
 - **`/internal/api/security/incidents`** (`GET`): Returns JSON payload containing total incident count and recent security audit events recorded by the WAF audit logger (`timestamp`, `client_ip`, `method`, `path`, `category`, `rule_id`, `anomaly_score`, `action`, `payload_snippet`).
-- **`/internal/api/metrics`** (`GET`): Returns structured JSON metrics summary (`total_requests`, `active_quic_streams`, `active_tcp_connections`, `circuit_breaker_trips`, `waf` stats, status/method breakdowns).
+- **`/internal/api/security/banned-ips`** (`GET`): Returns all active Stage 1 temporary and Stage 2 permanent IP bans, remaining TTL (`remaining_seconds`), escalation count (`temp_ban_count`), and trigger reasons.
+- **`/internal/api/security/unban`** (`POST`): Unbans an IP address on demand (`{"ip":"1.2.3.4"}`), clearing strikes and updating persistent disk state.
+- **`/internal/api/security/ban`** (`POST`): Manually applies a temporary or permanent ban to an IP address (`{"ip":"1.2.3.4", "type":"temporary|permanent", "duration":"1h", "reason":"..."}`).
+- **`/internal/api/metrics`** (`GET`): Returns structured JSON metrics summary (`summary`) and 60-bucket rolling time series (`timeseries`).
+- **`/internal/api/logs`** (`GET`): Returns buffered live request traces (up to 100 recent entries) with lifecycle timing span breakdowns (`spans`).
 - **`/internal/api/routes`** (`GET`): Returns active proxy route configurations, headers, and load balancing target nodes.
-- **`/internal/api/upstreams/health`** (`GET`): Executes backend HTTP health probes against all upstream targets (`9001-9010`) and returns node statuses (`CLOSED`, `OPEN`, `UNREACHABLE`).
+- **`/internal/api/upstreams/health`** (`GET`): Executes backend HTTP health probes against all upstream targets, records 48-tick probe histories, and returns node statuses (`CLOSED`, `OPEN`, `UNREACHABLE`).
 - **`/internal/api/proxy-test`** (`POST`): Accepts a diagnostic JSON request body (`path`, `method`, `headers`), dispatches an internal HTTP test probe against configured local reverse proxy routes, and returns structured execution metrics (`status_code`, `status_text`, `latency_ms`, `headers`, `body`, `truncated`).
   - **Inbound Request Ingestion Limit (64 KB)**: Inbound JSON payloads are strictly bounded to a 64 KB (`65,536` bytes) ceiling via `io.LimitReader`. Requests exceeding 64 KB are rejected immediately with `HTTP 400 Bad Request` (`{"error":"400 Bad Request","message":"Request body exceeds maximum allowed size of 64KB"}`), preventing memory exhaustion attacks (CWE-400).
   - **Configurable Response Buffering Limit (`max_proxy_test_response_bytes`)**: Upstream response body buffering is constrained by `InternalAPIConfig.MaxProxyTestResponseBytes` (defaulting to 1 MB / `1,048,576` bytes if omitted, zero, or negative). Responses exceeding this limit are deterministically clamped to `maxResponseBytes` with `"truncated": true` signaled in the JSON response payload.

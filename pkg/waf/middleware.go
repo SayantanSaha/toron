@@ -61,7 +61,47 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 				clientIP = clientNetIP.String()
 			}
 
-			// 0. Fast-Path CIDR IP Access Control Check
+			// 0. Fast-Path Auto-Ban Check
+			if autoBan := engine.AutoBanManager(); autoBan != nil && autoBan.IsEnabled() && clientIP != "" {
+				if banned, banEntry := autoBan.IsBanned(clientIP); banned {
+					metrics.DefaultRegistry.RecordWAFBlocked("auto_ban", req.Path)
+					if logger := engine.AuditLogger(); logger != nil {
+						banType := "temporary"
+						reason := ""
+						if banEntry != nil {
+							banType = string(banEntry.Type)
+							reason = banEntry.Reason
+						}
+						logger.LogEvent(SecurityEvent{
+							Event:          "auto_ban_drop",
+							ClientIP:       clientIP,
+							Method:         req.Method,
+							Path:           req.Path,
+							Category:       "auto_ban",
+							AnomalyScore:   0,
+							Action:         "blocked",
+							Location:       "remote_addr",
+							PayloadSnippet: "Client IP banned (" + banType + "): " + reason,
+						})
+					}
+
+					if res.Body == nil {
+						res.Body = bytes.NewBuffer(nil)
+					}
+					res.Body.Reset()
+					res.Header.Set("Content-Type", "application/json")
+					res.Header.Set("Connection", "close")
+					res.SetStatus(403)
+					banType := "temporary"
+					if banEntry != nil {
+						banType = string(banEntry.Type)
+					}
+					_, _ = res.WriteString(`{"error":"Forbidden","message":"Client IP address has been banned due to repeated security violations","ban_type":"` + banType + `"}`)
+					return
+				}
+			}
+
+			// 0b. Fast-Path CIDR IP Access Control Check
 			if acl := engine.IPAccessList(); acl != nil && acl.HasRules() {
 				allowed, reason := acl.CheckIP(clientNetIP)
 				if !allowed {
@@ -77,6 +117,10 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 							Action:       "blocked",
 							Location:     "remote_addr",
 						})
+					}
+
+					if autoBan := engine.AutoBanManager(); autoBan != nil && autoBan.IsEnabled() && clientIP != "" {
+						autoBan.RecordViolation(clientIP, "ip_acl")
 					}
 
 					if res.Body == nil {
@@ -107,6 +151,10 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 					})
 				}
 
+				if autoBan := engine.AutoBanManager(); autoBan != nil && autoBan.IsEnabled() && clientIP != "" {
+					autoBan.RecordViolation(clientIP, "protocol")
+				}
+
 				if res.Body == nil {
 					res.Body = bytes.NewBuffer(nil)
 				}
@@ -132,7 +180,9 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 			}
 
 			if blocked {
+				cat := "waf"
 				for _, r := range matched {
+					cat = string(r.Category)
 					metrics.DefaultRegistry.RecordWAFBlocked(string(r.Category), req.Path)
 					if logger := engine.AuditLogger(); logger != nil {
 						snippet := ""
@@ -152,6 +202,10 @@ func NewWAFMiddleware(engine *WAFEngine) MiddlewareFunc {
 							PayloadSnippet: snippet,
 						})
 					}
+				}
+
+				if autoBan := engine.AutoBanManager(); autoBan != nil && autoBan.IsEnabled() && clientIP != "" {
+					autoBan.RecordViolation(clientIP, cat)
 				}
 
 				res.SetStatus(403)

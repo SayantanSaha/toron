@@ -1,560 +1,112 @@
-<!DOCTYPE html>
-<html lang="en" class="dark h-full">
+<!doctype html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <title>Toron — Edge Gateway & Control Center</title>
-  
-  <link rel="stylesheet" href="/internal/dashboard/style.css">
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
-  
-  <script>
-    // Theme Initializer to prevent light/dark flicker
-    (function() {
-      const saved = localStorage.getItem('toron-theme') || 'system';
-      const isDark = saved === 'dark' || (saved === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
-      if (isDark) {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-      }
-    })();
-  </script>
-
-  <style>
-    :root {
-      --bg-canvas: #f8fafc;
-      --bg-card: #ffffff;
-      --bg-card-subtle: #f1f5f9;
-      --border-color: #e2e8f0;
-      --text-heading: #0f172a;
-      --text-muted: #64748b;
-      --traefik-cyan: #00bdd6;
-      --traefik-cyan-dark: #0099ad;
-      --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      --font-mono: 'JetBrains Mono', monospace;
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Toron · Gateway Observability</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/internal/dashboard/style.css">
+<script>
+  // Theme Initializer to prevent light/dark flicker
+  (function() {
+    const saved = localStorage.getItem('toron-theme') || 'system';
+    if (saved === 'dark' || (saved === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+      document.documentElement.setAttribute('data-theme', 'dark');
+    } else if (saved === 'light') {
+      document.documentElement.setAttribute('data-theme', 'light');
     }
-    
-    html.dark {
-      --bg-canvas: #090e17;
-      --bg-card: #101827;
-      --bg-card-subtle: #172338;
-      --border-color: #1e2c42;
-      --text-heading: #f8fafc;
-      --text-muted: #94a3b8;
-      --traefik-cyan: #24c1e0;
-      --traefik-cyan-dark: #00bdd6;
-    }
-
-    body {
-      font-family: var(--font-sans);
-      background-color: var(--bg-canvas);
-      color: var(--text-heading);
-      transition: background-color 0.2s ease, color 0.2s ease;
-    }
-
-    code, pre, .font-mono {
-      font-family: var(--font-mono);
-    }
-
-    /* Traefik Styled Cards */
-    .traefik-panel {
-      background-color: var(--bg-card);
-      border: 1px solid var(--border-color);
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-    }
-    .traefik-panel:hover {
-      border-color: rgba(36, 193, 224, 0.4);
-      box-shadow: 0 4px 20px -2px rgba(36, 193, 224, 0.08);
-    }
-
-    /* Traefik Rule Chip (Rule Matcher Box) */
-    .traefik-rule-box {
-      background-color: var(--bg-card-subtle);
-      border: 1px solid var(--border-color);
-      font-family: var(--font-mono);
-    }
-
-    /* Traefik Pill Badges */
-    .tr-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.375rem;
-      padding: 0.2rem 0.6rem;
-      border-radius: 9999px;
-      font-size: 0.72rem;
-      font-weight: 600;
-    }
-
-    .tr-badge-cyan {
-      background: rgba(36, 193, 224, 0.12);
-      color: #00bdd6;
-      border: 1px solid rgba(36, 193, 224, 0.25);
-    }
-    html.dark .tr-badge-cyan {
-      color: #24c1e0;
-    }
-
-    .tr-badge-emerald {
-      background: rgba(16, 185, 129, 0.12);
-      color: #10b981;
-      border: 1px solid rgba(16, 185, 129, 0.25);
-    }
-    .tr-badge-indigo {
-      background: rgba(99, 102, 241, 0.12);
-      color: #6366f1;
-      border: 1px solid rgba(99, 102, 241, 0.25);
-    }
-    .tr-badge-amber {
-      background: rgba(245, 158, 11, 0.12);
-      color: #f59e0b;
-      border: 1px solid rgba(245, 158, 11, 0.25);
-    }
-    .tr-badge-rose {
-      background: rgba(239, 68, 68, 0.12);
-      color: #ef4444;
-      border: 1px solid rgba(239, 68, 68, 0.25);
-    }
-
-    /* Tab Pill Navigation (Traefik Style) */
-    .traefik-tab {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.5rem;
-      padding: 0.5rem 1rem;
-      border-radius: 0.5rem;
-      font-size: 0.8125rem;
-      font-weight: 600;
-      white-space: nowrap;
-      cursor: pointer;
-      transition: all 0.15s ease;
-      color: var(--text-muted);
-    }
-    .traefik-tab:hover {
-      color: var(--text-heading);
-      background-color: var(--bg-card-subtle);
-    }
-    .traefik-tab.active {
-      color: #ffffff;
-      background-color: #00bdd6;
-    }
-    html.dark .traefik-tab.active {
-      background-color: #00bdd6;
-      color: #090e17;
-    }
-  </style>
+  })();
+</script>
 </head>
-<body class="min-h-full flex flex-col antialiased selection:bg-cyan-500 selection:text-white">
+<body>
 
-  <!-- ===================================================================== -->
-  <!-- TOP TRAEFIK-STYLE HEADER -->
-  <!-- ===================================================================== -->
-  <header class="sticky top-0 z-50 bg-white/90 dark:bg-[#090e17]/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800/80">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-4">
-      
-      <!-- Brand & Version -->
-      <div class="flex items-center space-x-3.5 min-w-0">
-        <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-cyan-500 to-indigo-600 flex items-center justify-center text-white shadow-md shadow-cyan-500/20 flex-shrink-0">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-        </div>
-        <div class="flex items-center space-x-2 truncate">
-          <span class="font-extrabold text-lg tracking-tight text-slate-900 dark:text-white">TORON</span>
-          <span id="header-version" class="text-[10px] font-bold px-2 py-0.5 rounded-full tr-badge-cyan">v1.5.29</span>
-          
-          <div class="hidden lg:flex items-center space-x-3 text-xs text-slate-500 dark:text-slate-400 pl-3 border-l border-slate-200 dark:border-slate-800">
-            <span class="flex items-center gap-1.5 font-medium text-emerald-600 dark:text-emerald-400">
-              <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-              Gateway Online
-            </span>
-            <span>•</span>
-            <span class="font-mono text-cyan-600 dark:text-cyan-400 font-semibold">EntryPoints: :8080 / :8443</span>
-          </div>
-        </div>
-      </div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+  <defs>
+    <symbol id="i-overview" viewBox="0 0 24 24"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></symbol>
+    <symbol id="i-routes" viewBox="0 0 24 24"><circle cx="6" cy="19" r="3"/><path d="M9 19h8.5a3.5 3.5 0 0 0 0-7h-11a3.5 3.5 0 0 1 0-7H15"/><circle cx="18" cy="5" r="3"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect width="20" height="8" x="2" y="2" rx="2"/><rect width="20" height="8" x="2" y="14" rx="2"/><path d="M6 6h.01M6 18h.01"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-cube" viewBox="0 0 24 24"><path d="M12 3 3 7.5v9L12 21l9-4.5v-9z"/><path d="M3 7.5 12 12l9-4.5M12 12v9"/></symbol>
+    <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></symbol>
+    <symbol id="i-terminal" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z"/></symbol>
+    <symbol id="i-pause" viewBox="0 0 24 24"><rect x="14" y="4" width="4" height="16" rx="1"/><rect x="6" y="4" width="4" height="16" rx="1"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 3l14 9-14 9z"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+    <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="m15 9-6 6M9 9l6 6"/></symbol>
+    <symbol id="i-dash" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/></symbol>
+    <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></symbol>
+  </defs>
+</svg>
 
-      <!-- Controls: Refresh + Theme Switcher -->
-      <div class="flex items-center space-x-2 sm:space-x-3">
-        
-        <!-- Refresh Button -->
-        <button id="btn-refresh" class="p-2 sm:px-3 sm:py-1.5 rounded-lg border border-slate-200 dark:border-slate-800 hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition active:scale-95">
-          <svg class="w-3.5 h-3.5 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
-          <span class="hidden sm:inline">Refresh</span>
-        </button>
-
-        <!-- 3-Way Theme Switcher (Light / Dark / System) -->
-        <div class="inline-flex p-0.5 rounded-lg border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-900 text-xs">
-          <button id="theme-btn-light" class="p-1.5 sm:px-2.5 sm:py-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-1" title="Light Mode">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z"/></svg>
-            <span class="hidden md:inline font-medium">Light</span>
-          </button>
-          <button id="theme-btn-dark" class="p-1.5 sm:px-2.5 sm:py-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-1" title="Dark Mode">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z"/></svg>
-            <span class="hidden md:inline font-medium">Dark</span>
-          </button>
-          <button id="theme-btn-system" class="p-1.5 sm:px-2.5 sm:py-1 rounded-md text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white transition flex items-center gap-1" title="Sync with System OS">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"/></svg>
-            <span class="hidden md:inline font-medium">Auto</span>
-          </button>
-        </div>
-
-      </div>
+<div class="app">
+  <aside class="rail" id="rail" aria-label="Primary Navigation">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V11a8 8 0 0 1 16 0v10"/><path d="M9 21v-9a3 3 0 0 1 6 0v9"/></svg>
+      <span class="word">toron</span><span class="env" id="envBadge">v1.5.29</span>
     </div>
-  </header>
-
-  <!-- ===================================================================== -->
-  <!-- MAIN APP CONTAINER -->
-  <!-- ===================================================================== -->
-  <main class="flex-grow max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8 space-y-6">
-
-    <!-- TRAEFIK-STYLE PROTOCOL & PROVIDER SUMMARY CARDS -->
-    <section class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
-      
-      <!-- HTTP Routers -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">HTTP Routers</span>
-          <span class="p-1 rounded bg-cyan-500/10 text-cyan-500">🌐</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-routers-count" class="text-xl font-extrabold font-mono text-slate-900 dark:text-white">0 Routes</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Rules & Host Matchers</p>
-        </div>
-      </div>
-
-      <!-- HTTP Services / Upstream Nodes -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">HTTP Services</span>
-          <span class="p-1 rounded bg-emerald-500/10 text-emerald-500">⚡</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-upstreams-count" class="text-xl font-extrabold font-mono text-emerald-600 dark:text-emerald-400">0 Nodes</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Load Balanced Targets</p>
-        </div>
-      </div>
-
-      <!-- OCI Container Discovery -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">OCI Discovery</span>
-          <span class="p-1 rounded bg-cyan-500/10 text-cyan-500">🐋</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-oci-count" class="text-xl font-extrabold font-mono text-cyan-600 dark:text-cyan-400">0 Containers</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Docker / Podman Engine</p>
-        </div>
-      </div>
-
-      <!-- Middlewares & WAF Guard -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">Middlewares & WAF</span>
-          <span class="p-1 rounded bg-rose-500/10 text-rose-500">🛡️</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-waf-status" class="text-xl font-extrabold font-mono text-rose-600 dark:text-rose-400">ENFORCE</div>
-          <p id="stat-waf-rules" class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">10 Active OWASP Rules</p>
-        </div>
-      </div>
-
-      <!-- Service Mesh & Ingress -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">Mesh & Ingress</span>
-          <span class="p-1 rounded bg-violet-500/10 text-violet-500">🕸️</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-mesh-status" class="text-xl font-extrabold font-mono text-violet-600 dark:text-violet-400">mTLS Ready</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">K8s v1 & Sidecars</p>
-        </div>
-      </div>
-
-      <!-- Worker Pool & Event Loop -->
-      <div class="p-4 rounded-xl traefik-panel flex flex-col justify-between">
-        <div class="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400">
-          <span class="font-bold uppercase tracking-wider text-[10px]">Worker Pool</span>
-          <span class="p-1 rounded bg-indigo-500/10 text-indigo-500">⚙️</span>
-        </div>
-        <div class="mt-3">
-          <div id="stat-workers-count" class="text-xl font-extrabold font-mono text-indigo-600 dark:text-indigo-400">128 Workers</div>
-          <p class="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">Non-blocking Epoll/Kqueue</p>
-        </div>
-      </div>
-
-    </section>
-
-    <!-- TRAEFIK-STYLE TAB NAVIGATION -->
-    <nav class="flex items-center space-x-2 overflow-x-auto pb-1 no-scrollbar border-b border-slate-200 dark:border-slate-800" id="desktop-tabs">
-      <button data-tab="tab-routers" class="traefik-tab active">
-        <span>🌐 HTTP Routers</span>
-        <span class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-cyan-100 text-cyan-800 dark:bg-slate-900 dark:text-cyan-400 font-bold" id="tab-badge-routers">0</span>
-      </button>
-      <button data-tab="tab-services" class="traefik-tab">
-        <span>⚡ HTTP Services</span>
-        <span class="px-1.5 py-0.2 rounded-full text-[10px] font-mono bg-emerald-100 text-emerald-800 dark:bg-slate-900 dark:text-emerald-400 font-bold" id="tab-badge-services">0</span>
-      </button>
-      <button data-tab="tab-security" class="traefik-tab">
-        <span>🛡️ Middlewares & WAF</span>
-      </button>
-      <button data-tab="tab-tester" class="traefik-tab">
-        <span>🧪 API Console</span>
-      </button>
-      <button data-tab="tab-providers" class="traefik-tab">
-        <span>🐋 Providers & Telemetry</span>
-      </button>
-    </nav>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 1: HTTP ROUTERS (TRAEFIK RULE MATCHER CARDS) -->
-    <!-- ===================================================================== -->
-    <section id="tab-routers" class="tab-content space-y-4">
-      
-      <!-- Filter and Search Header -->
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div class="relative flex-grow max-w-md">
-          <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
-            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
-          </div>
-          <input type="text" id="route-search-input" placeholder="Filter by rule, host, prefix, or provider..." class="w-full pl-9 pr-4 py-2 text-xs rounded-lg border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:border-cyan-500 transition font-mono">
-        </div>
-        <div class="text-xs text-slate-500 dark:text-slate-400 flex items-center gap-2">
-          <span>Active Table:</span>
-          <span class="tr-badge tr-badge-cyan font-mono">L7 Prefix Trie Engine</span>
-        </div>
-      </div>
-
-      <!-- DYNAMIC ROUTE CARDS GRID -->
-      <div id="routes-container" class="grid grid-cols-1 gap-4">
-        <!-- Rendered dynamically by app.js -->
-      </div>
-    </section>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 2: HTTP SERVICES / UPSTREAM HEALTH MATRIX -->
-    <!-- ===================================================================== -->
-    <section id="tab-services" class="tab-content hidden space-y-4">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h2 class="text-sm font-bold text-slate-900 dark:text-white">Upstream Services & Load Balancers</h2>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Server health probes, response latency, and weighted round-robin distribution.</p>
-        </div>
-        <div>
-          <button id="btn-probe-all" class="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold flex items-center gap-1.5 transition active:scale-95 shadow-sm">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-            <span>Probe All Targets</span>
-          </button>
-        </div>
-      </div>
-
-      <div id="upstream-services-grid" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-        <!-- Rendered dynamically by app.js -->
-      </div>
-    </section>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 3: MIDDLEWARES & WAF SECURITY -->
-    <!-- ===================================================================== -->
-    <section id="tab-security" class="tab-content hidden space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h2 class="text-sm font-bold text-slate-900 dark:text-white">Security Middlewares & OWASP Threat Engine</h2>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Deep packet protocol verification, SQLi / XSS anomaly scoring, and live incident stream.</p>
-        </div>
-        <span class="tr-badge tr-badge-rose font-mono">WAF Mode: ENFORCE</span>
-      </div>
-
-      <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <div class="p-3.5 rounded-xl traefik-panel">
-          <span class="text-xs text-slate-500 dark:text-slate-400 block">OWASP Rules</span>
-          <span id="stat-sec-rules" class="text-lg font-bold text-slate-900 dark:text-white font-mono">10 Rules</span>
-        </div>
-        <div class="p-3.5 rounded-xl traefik-panel">
-          <span class="text-xs text-slate-500 dark:text-slate-400 block">Threats Blocked</span>
-          <span id="sec-blocked-count" class="text-lg font-bold text-rose-600 dark:text-rose-400 font-mono">0</span>
-        </div>
-        <div class="p-3.5 rounded-xl traefik-panel">
-          <span class="text-xs text-slate-500 dark:text-slate-400 block">Anomaly Threshold</span>
-          <span id="stat-sec-threshold" class="text-lg font-bold text-amber-600 dark:text-amber-400 font-mono">5 Score</span>
-        </div>
-        <div class="p-3.5 rounded-xl traefik-panel">
-          <span class="text-xs text-slate-500 dark:text-slate-400 block">Smuggling Guard</span>
-          <span class="text-lg font-bold text-emerald-600 dark:text-emerald-400 font-mono">Active</span>
-        </div>
-      </div>
-
-      <!-- INCIDENT AUDIT TABLE -->
-      <div class="rounded-xl traefik-panel p-4 sm:p-5 space-y-3">
-        <h3 class="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Live Security Violation Stream</h3>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left text-xs">
-            <thead>
-              <tr class="border-b border-slate-200 dark:border-slate-800 text-slate-500 dark:text-slate-400 font-semibold">
-                <th class="py-2 px-3">Timestamp</th>
-                <th class="py-2 px-3">Client IP</th>
-                <th class="py-2 px-3">Path</th>
-                <th class="py-2 px-3">Rule ID</th>
-                <th class="py-2 px-3 text-right">Action</th>
-              </tr>
-            </thead>
-            <tbody id="incidents-table-body" class="divide-y divide-slate-100 dark:divide-slate-800/60 font-mono text-slate-700 dark:text-slate-300">
-              <tr>
-                <td colspan="5" class="py-6 text-center text-slate-400 italic">No security violations detected. Server operating normally.</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 4: INTERACTIVE API CONSOLE -->
-    <!-- ===================================================================== -->
-    <section id="tab-tester" class="tab-content hidden space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h2 class="text-sm font-bold text-slate-900 dark:text-white">Edge Gateway API Console & Debugger</h2>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Execute real-time requests directly against Toron proxy routes and inspect live headers & payloads.</p>
-        </div>
-      </div>
-
-      <div class="rounded-xl traefik-panel p-4 sm:p-6 space-y-4">
-        <form id="tester-form" class="space-y-4">
-          <div class="grid grid-cols-1 sm:grid-cols-12 gap-3">
-            
-            <!-- HTTP Method -->
-            <div class="sm:col-span-2">
-              <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Method</label>
-              <select id="tester-method" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500">
-                <option value="GET">GET</option>
-                <option value="POST">POST</option>
-                <option value="PUT">PUT</option>
-                <option value="DELETE">DELETE</option>
-              </select>
-            </div>
-
-            <!-- Target URL / Prefix -->
-            <div class="sm:col-span-6">
-              <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Target Endpoint</label>
-              <select id="tester-url" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500">
-                <option value="/health" data-host="">GET /health</option>
-                <option value="/internal/api/status" data-host="">GET /internal/api/status</option>
-              </select>
-            </div>
-
-            <!-- Host Header Override -->
-            <div class="sm:col-span-4">
-              <label class="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Host Header (Optional)</label>
-              <input type="text" id="tester-host-header" placeholder="e.g. api.example.com" class="w-full bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:border-cyan-500">
-            </div>
-
-          </div>
-
-          <!-- Submit Button -->
-          <div class="flex justify-end">
-            <button type="submit" class="w-full sm:w-auto px-6 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-bold transition active:scale-95 shadow-sm flex items-center justify-center gap-2">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
-              <span>Execute Request</span>
-            </button>
-          </div>
-        </form>
-
-        <!-- Response Inspector -->
-        <div class="pt-4 border-t border-slate-200 dark:border-slate-800 space-y-2">
-          <div class="flex items-center justify-between text-xs">
-            <div class="flex items-center gap-2">
-              <span class="font-bold text-slate-700 dark:text-slate-300">Response Status</span>
-              <span id="res-status" class="font-mono text-xs font-bold text-slate-400">Ready</span>
-            </div>
-            <button id="btn-copy-response" class="px-2.5 py-1 rounded bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-[11px] text-slate-600 dark:text-slate-400 transition font-medium">
-              Copy JSON
-            </button>
-          </div>
-          <pre id="res-body" class="p-3.5 rounded-lg bg-slate-100 dark:bg-slate-950 border border-slate-200 dark:border-slate-800/80 text-xs font-mono text-slate-800 dark:text-cyan-300 overflow-x-auto max-h-72">Press "Execute Request" to test endpoint...</pre>
-        </div>
-
-      </div>
-    </section>
-
-    <!-- ===================================================================== -->
-    <!-- TAB 5: PROVIDERS & TELEMETRY -->
-    <!-- ===================================================================== -->
-    <section id="tab-providers" class="tab-content hidden space-y-6">
-      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2 border-b border-slate-200 dark:border-slate-800">
-        <div>
-          <h2 class="text-sm font-bold text-slate-900 dark:text-white">Active Configuration Providers & Telemetry</h2>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Integrated OCI container engines, file watchers, and Prometheus metric exporters.</p>
-        </div>
-        <span class="tr-badge tr-badge-cyan font-mono">Control Plane</span>
-      </div>
-
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-        
-        <!-- Provider 1: Docker / OCI Engine -->
-        <div class="rounded-xl traefik-panel p-4 sm:p-5 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <span class="text-lg">🐋</span>
-              <span class="font-bold text-xs text-slate-900 dark:text-white">Docker / OCI Provider</span>
-            </div>
-            <span class="tr-badge tr-badge-emerald text-[10px]">ENABLED</span>
-          </div>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Watches <code>/var/run/docker.sock</code> for <code>toron.*</code> container labels.</p>
-          <div class="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-400 flex justify-between">
-            <span>Discovered Containers:</span>
-            <span id="provider-oci-count" class="font-bold text-cyan-600 dark:text-cyan-400">0</span>
-          </div>
-        </div>
-
-        <!-- Provider 2: Static File Watcher -->
-        <div class="rounded-xl traefik-panel p-4 sm:p-5 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <span class="text-lg">📄</span>
-              <span class="font-bold text-xs text-slate-900 dark:text-white">File Config Provider</span>
-            </div>
-            <span class="tr-badge tr-badge-emerald text-[10px]">ACTIVE</span>
-          </div>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Dynamic YAML hot-reloader monitoring <code>routes.yaml</code> and <code>config.yaml</code>.</p>
-          <div class="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono text-slate-600 dark:text-slate-400 flex justify-between">
-            <span>Reload Strategy:</span>
-            <span class="font-bold text-emerald-600 dark:text-emerald-400">Zero-Downtime</span>
-          </div>
-        </div>
-
-        <!-- Provider 3: Prometheus Telemetry -->
-        <div class="rounded-xl traefik-panel p-4 sm:p-5 space-y-3">
-          <div class="flex items-center justify-between">
-            <div class="flex items-center space-x-2">
-              <span class="text-lg">📊</span>
-              <span class="font-bold text-xs text-slate-900 dark:text-white">Prometheus Exporter</span>
-            </div>
-            <span class="tr-badge tr-badge-cyan text-[10px]">STREAMING</span>
-          </div>
-          <p class="text-xs text-slate-500 dark:text-slate-400">Real-time atomic request latency buckets, status code counters, and memory tracking.</p>
-          <div class="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] font-mono flex justify-between">
-            <span>Raw Endpoint:</span>
-            <a href="/metrics" target="_blank" class="font-bold text-cyan-600 dark:text-cyan-400 hover:underline">/metrics ↗</a>
-          </div>
-        </div>
-
-      </div>
-    </section>
-
-  </main>
-
-  <!-- FOOTER -->
-  <footer class="mt-auto border-t border-slate-200 dark:border-slate-800 py-4 text-center text-xs text-slate-500 dark:text-slate-400">
-    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-      <div class="flex items-center space-x-2">
-        <span class="w-2 h-2 rounded-full bg-cyan-500"></span>
-        <span>Toron Edge Gateway & Web Server — Cloud Native Proxy</span>
-      </div>
-      <div class="font-mono text-[11px]">HTTP/2 • HTTP/3 QUIC • Layer 4 TCP/UDP</div>
+    <nav id="nav" aria-label="Sections"></nav>
+    <div class="rail-foot" title="Toron Edge Gateway Observability">
+      <svg class="ic" aria-hidden="true"><use href="#i-info"/></svg>
+      <span class="txt">Connected to Toron Edge Gateway engine.</span>
     </div>
-  </footer>
+  </aside>
 
-  <script src="/internal/dashboard/app.js"></script>
+  <div class="main">
+    <header class="topbar">
+      <button class="btn icon" id="menuBtn" aria-label="Open navigation" aria-expanded="false"><svg class="ic" aria-hidden="true"><use href="#i-menu"/></svg></button>
+      <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 21V11a8 8 0 0 1 16 0v10"/><path d="M9 21v-9a3 3 0 0 1 6 0v9"/></svg>
+      <span class="word">toron</span>
+      <span class="grow"></span>
+      <button class="btn icon" id="themeBtn2" aria-label="Toggle theme"><svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg></button>
+    </header>
+
+    <main id="main" class="wrap" tabindex="-1">
+      <div class="head">
+        <div><h1 id="title">Overview</h1><p id="sub"></p></div>
+        <div class="controls">
+          <span class="stamp" id="stamp"></span>
+          <div id="instWrap">
+            <label class="mut" for="instSel" style="position:absolute;left:-9999px">Instance</label>
+            <select id="instSel" class="field" aria-label="Instance">
+              <option value="all">All Instances</option>
+              <option value="node-primary">Node Primary</option>
+            </select>
+          </div>
+          <div class="seg" id="rangeSeg" role="group" aria-label="Time range">
+            <button data-r="15m" aria-pressed="false">15m</button>
+            <button data-r="1h" aria-pressed="true">1h</button>
+            <button data-r="6h" aria-pressed="false">6h</button>
+            <button data-r="24h" aria-pressed="false">24h</button>
+          </div>
+          <button class="btn live" id="liveBtn" aria-pressed="true"><span class="dot"></span><span id="liveTxt">Live</span></button>
+          <button class="btn icon" id="themeBtn" aria-label="Toggle theme"><svg class="ic" aria-hidden="true"><use href="#i-moon"/></svg></button>
+        </div>
+      </div>
+      <div class="pad" id="view"></div>
+      <p class="foot">Toron Edge Gateway & Control Center — Active Node Telemetry.</p>
+    </main>
+  </div>
+</div>
+
+<div class="scrim" id="scrim"></div>
+<aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dwTitle" hidden>
+  <div class="dw-h">
+    <div style="min-width:0"><h2 id="dwTitle"></h2><div class="dw-sub" id="dwSub"></div></div>
+    <button class="btn icon" id="dwClose" aria-label="Close panel"><svg class="ic" aria-hidden="true"><use href="#i-close"/></svg></button>
+  </div>
+  <div class="dw-b" id="dwBody"></div>
+</aside>
+
+<script src="/internal/dashboard/app.js"></script>
 </body>
 </html>

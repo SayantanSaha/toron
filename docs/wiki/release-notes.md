@@ -1,5 +1,59 @@
 # Release Notes
 
+## 2026-09-21 - Toron v1.5.34 Milestone (Native Dynamic 2-Stage WAF Auto-Ban Engine, Atomic File Persistence & Multi-Tier OS Firewall Defense - REQ-136 / TASK-159)
+
+### Milestone Summary
+- **Native Dynamic 2-Stage Auto-Ban Engine ([REQ-136](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-136.md), [TASK-159](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-159.md), [ADR-136](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-136.md), [TC-136](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-136.md), [CR-136](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-136.md), [SR-136](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-136.md))**:
+  - Implemented progressive 2-stage banning: Stage 1 applies a temporary ban (`ban_duration`, e.g. 1h) upon reaching `max_violations` within sliding `window`; Stage 2 escalates repeat offenders to a **Permanent Ban** after $X$ temporary bans (`max_temporary_bans`).
+  - Fast-path $\mathcal{O}(1)$ rejection ($< 1\mu\text{s}$) drops banned traffic immediately before regex evaluation or upstream proxying.
+  - CIDR allowlist (`whitelist`) with guaranteed immunity for loopback (`127.0.0.1`, `::1`) and private management subnets.
+- **Atomic State File Persistence**:
+  - Persistent disk serialization to JSON (`banned_ips.json`) using atomic temporary file write + sync + rename pattern (`.tmp` $\to$ target).
+  - Survives server reboots and gateway restarts without losing permanent bans or active temporary bans.
+- **Observability Dashboard & REST Management**:
+  - Added "Dynamic 2-Stage Auto-Ban & Blocked IPs" control section to dashboard with real-time TTL countdowns and 1-click Unban action.
+  - Added `/internal/api/security/banned-ips`, `/internal/api/security/unban`, and `/internal/api/security/ban`.
+- **Multi-Platform OS-Level IP Blocking Guide**:
+  - Created comprehensive recipes for kernel packet drops: Linux (Fail2ban + iptables/nftables), macOS (`pfctl` packet filter), and Windows (PowerShell + Windows Defender Firewall).
+
+### Added
+- **`pkg/waf/auto_ban.go`**: Progressive 2-stage auto-ban engine, atomic state persistence, and background expiration sweeper.
+- **`pkg/waf/auto_ban_test.go`**: Full unit test suite verifying strike tracking, stage 1/2 escalation, allowlists, persistence reload, and concurrent stress.
+- **`docs/wiki/features/os-level-ip-blocking.md`**: Guide for Linux (Fail2ban), macOS (pfctl), and Windows (Defender Firewall).
+- **`docs/requirements/REQ-136.md`**, **`docs/tasks/TASK-159.md`**, **`docs/architecture/ADR-136.md`**, **`docs/testCases/TC-136.md`**, **`docs/codeReview/CR-136.md`**, **`docs/securityReview/SR-136.md`**.
+
+### Changed
+- **`pkg/waf/waf.go` & `pkg/waf/middleware.go`**: Integrated auto-ban engine into WAF lifecycle with fast-path checking and violation recording.
+- **`pkg/server/internal_api.go`**: Added endpoints for `/internal/api/security/banned-ips`, `/internal/api/security/unban`, and `/internal/api/security/ban`.
+- **`public/app.js`**: Added Banned IPs live table and unban/ban management modal in the Alerts view.
+- **`docs/wiki/reference/api.md` & `docs/wiki/index.md`**: Updated API reference and navigation index.
+
+---
+
+## 2026-09-21 - Toron v1.5.33 Milestone (Next-Generation High-Density Observability Dashboard and Zero-Allocation Telemetry Time-Series Engine - REQ-135 / TASK-158)
+
+### Milestone Summary
+- **Next-Generation Observability Control Center ([REQ-135](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-135.md), [TASK-158](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-158.md), [ADR-135](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-135.md), [TC-135](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-135.md), [CR-135](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-135.md), [SR-135](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-135.md))**: Delivered a high-density, professional observability dashboard at `/internal/dashboard/` featuring pure vector SVG graphics, an interactive Sankey traffic flow diagram, real-time request waterfalls, and slide-over inspector drawers with zero external JavaScript dependencies.
+- **Zero-Allocation 60-Bucket Time-Series Ring Buffer**: Implemented `TimeSeriesCollector` in [`pkg/metrics/timeseries.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/metrics/timeseries.go) tracking rolling metrics for RPS, latency percentiles (p50/p95/p99), 4xx/5xx error volumes, and Go runtime stats (Goroutines, Heap MB, GC pause p99, CPU%, Open FDs).
+- **Circular Request Trace Stream (300 Entries)**: Added `GlobalTraceBuffer` and `GET /internal/api/logs` exposing live request traces with detailed span breakdowns.
+- **48-Tick Upstream Health Histories**: Added continuous probe history tracking to populate visual health status bars in the Upstreams view.
+- **Strict DOM XSS Prevention (CWE-79)**: Enforced contextual HTML escaping (`escapeHTML`) on all dynamic UI template bindings.
+
+### Added
+- **`pkg/metrics/timeseries.go`**: 60-bucket rolling time series collector and snapshotting engine.
+- **`pkg/metrics/timeseries_test.go`**: Unit tests verifying ring buffer capacity wrapping and periodic sampling.
+- **`public/index.html`**: Modern high-density layout with navigation rail, drawer, and IBM Plex fonts.
+- **`public/style.css`**: CSS variables, dark/light themes, and pure-SVG chart styling.
+- **`public/app.js`**: Vector chart engine, 7 dashboard views, API test debugger, and data adapter.
+- **`docs/wiki/features/observability-dashboard.md`**: User documentation for the gateway dashboard.
+- **`docs/requirements/REQ-135.md`**, **`docs/tasks/TASK-158.md`**, **`docs/architecture/ADR-135.md`**, **`docs/testCases/TC-135.md`**, **`docs/codeReview/CR-135.md`**, **`docs/securityReview/SR-135.md`**.
+
+### Changed
+- **`pkg/server/internal_api.go`**: Enriched `/internal/api/status` and `/internal/api/metrics` with time-series and certificate metadata, added 48-tick upstream health histories, and added `GET /internal/api/logs`.
+- **`docs/wiki/reference/api.md`**: Documented new API response structures and logs endpoint.
+
+---
+
 ## 2026-09-17 - Toron v1.5.32 Milestone (RFC 9111 Cache Session Boundary Isolation, Application Path Confusion Scope, and Comprehensive Host Port Routing Invariants - REQ-134 / TASK-157)
 
 ### Milestone Summary

@@ -115,6 +115,7 @@ Toron is an event-driven, high-performance web server, reverse proxy, API gatewa
 ### 🛡️ Traffic Control, Performance & Security
 - [Layered Path Traversal Defense](./features/path-traversal-defense.md) – Route-aware prefix boundary protection, WAF raw wire URI inspection, and fail-fast transport socket teardown (CWE-22).
 - [Web Application Firewall (WAF) & Injection Protection](./features/waf.md) – OWASP Top 10 SQLi, XSS, Path Traversal, and RCE threat mitigation.
+- [Multi-Tier Threat Defense & OS-Level IP Blocking Guide](./features/os-level-ip-blocking.md) – 2-stage dynamic WAF auto-ban, state persistence, Fail2ban (Linux), pfctl (macOS), and PowerShell Defender Firewall (Windows).
 - [CORS Policies & Enterprise Security Headers](./features/cors-security-headers.md) – Preflight OPTIONS handling, origin matching, and OWASP security headers.
 - [Transparent Response Compression](./features/compression.md) – Streaming Zstd, Brotli, Gzip & Deflate response compression.
 - [In-Memory Response Caching](./features/response-caching.md) – RFC 9111 HTTP response caching, Shared Cache Session Boundary Isolation, Host:Port authority derivation, cross-port cache isolation (CWE-524), dual-stage Set-Cookie purging (CWE-384), and Web Cache Deception Shared Responsibility Model (REQ-134 / TASK-157).

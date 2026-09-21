@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -18,6 +20,7 @@ import (
 
 	"toron/pkg/httpparser"
 	"toron/pkg/router"
+	"toron/pkg/waf"
 )
 
 func TestInternalAPIRoutes(t *testing.T) {
@@ -204,6 +207,85 @@ func TestInternalAPIRoutes(t *testing.T) {
 
 		if _, ok := payload["incidents"]; !ok {
 			t.Error("expected incidents key in payload")
+		}
+	})
+
+	t.Run("Auto-Ban Endpoints: banned-ips, ban, unban", func(t *testing.T) {
+		autoBanMgr, err := waf.NewAutoBanManager(waf.AutoBanConfig{
+			Enabled:          true,
+			MaxViolations:    3,
+			Window:           1 * time.Minute,
+			BanDuration:      1 * time.Hour,
+			MaxTemporaryBans: 3,
+			PersistenceFile:  filepath.Join(t.TempDir(), "banned_ips.json"),
+		}, nil)
+		if err != nil {
+			t.Fatalf("failed to create auto-ban manager: %v", err)
+		}
+		defer autoBanMgr.Close()
+
+		testRouter := router.New()
+		RegisterInternalAPIRoutes(testRouter, InternalAPIConfig{
+			Port:           8080,
+			AutoBanManager: autoBanMgr,
+		})
+
+		// 1. Initially empty
+		req1, _ := httpparser.NewRequest("GET", "/internal/api/security/banned-ips", "HTTP/1.1")
+		res1 := httpparser.NewResponse()
+		testRouter.ServeHTTP(req1, res1)
+		if res1.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", res1.StatusCode)
+		}
+
+		// 2. Ban IP
+		banBody := `{"ip":"198.51.100.99","type":"temporary","duration":"30m","reason":"Manual test ban"}`
+		req2, _ := httpparser.NewRequest("POST", "/internal/api/security/ban", "HTTP/1.1")
+		req2.Body = io.NopCloser(strings.NewReader(banBody))
+		res2 := httpparser.NewResponse()
+		testRouter.ServeHTTP(req2, res2)
+		if res2.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 for ban, got %d: %s", res2.StatusCode, res2.Body.String())
+		}
+
+		// 3. Verify IP listed in banned-ips
+		req3, _ := httpparser.NewRequest("GET", "/internal/api/security/banned-ips", "HTTP/1.1")
+		res3 := httpparser.NewResponse()
+		testRouter.ServeHTTP(req3, res3)
+		var listPayload struct {
+			Total     int `json:"total"`
+			BannedIPs []struct {
+				IP   string `json:"ip"`
+				Type string `json:"type"`
+			} `json:"banned_ips"`
+		}
+		if err := json.Unmarshal(res3.Body.Bytes(), &listPayload); err != nil {
+			t.Fatalf("failed to parse banned-ips response: %v", err)
+		}
+		if listPayload.Total != 1 || listPayload.BannedIPs[0].IP != "198.51.100.99" {
+			t.Fatalf("expected 1 banned IP 198.51.100.99, got: %+v", listPayload)
+		}
+
+		// 4. Unban IP
+		unbanBody := `{"ip":"198.51.100.99"}`
+		req4, _ := httpparser.NewRequest("POST", "/internal/api/security/unban", "HTTP/1.1")
+		req4.Body = io.NopCloser(strings.NewReader(unbanBody))
+		res4 := httpparser.NewResponse()
+		testRouter.ServeHTTP(req4, res4)
+		if res4.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 for unban, got %d: %s", res4.StatusCode, res4.Body.String())
+		}
+
+		// 5. Verify IP is removed
+		req5, _ := httpparser.NewRequest("GET", "/internal/api/security/banned-ips", "HTTP/1.1")
+		res5 := httpparser.NewResponse()
+		testRouter.ServeHTTP(req5, res5)
+		var emptyPayload struct {
+			Total int `json:"total"`
+		}
+		_ = json.Unmarshal(res5.Body.Bytes(), &emptyPayload)
+		if emptyPayload.Total != 0 {
+			t.Fatalf("expected 0 banned IPs after unban, got %d", emptyPayload.Total)
 		}
 	})
 }
@@ -1079,3 +1161,57 @@ func TestProxyTest_ConcurrentProbes_RaceClean(t *testing.T) {
 	}
 	wg.Wait()
 }
+
+func TestInternalAPI_LogsAndTracing(t *testing.T) {
+	cfg := InternalAPIConfig{
+		Port:           8080,
+		WorkerPoolSize: 128,
+		ProxyEnabled:   true,
+	}
+
+	r := router.New()
+	RegisterInternalAPIRoutes(r, cfg)
+
+	// Record sample traces into GlobalTraceBuffer
+	GlobalTraceBuffer.RecordTrace(TraceLogEntry{
+		Method: "GET",
+		Path:   "/v1/orders/123",
+		Route:  "orders",
+		Short:  "api /v1/orders",
+		Status: 200,
+		MS:     12.4,
+		Up:     "10.0.1.11:8080",
+		Trace:  "trace12345678",
+		IP:     "192.168.1.50",
+		Bytes:  1024,
+		Spans: []TraceSpan{
+			{Name: "Accept & Parse", Mod: "listener.http", D: 0.2},
+			{Name: "Upstream Proxy", Mod: "proxy.reverse", D: 12.2},
+		},
+	})
+
+	t.Run("GET /internal/api/logs", func(t *testing.T) {
+		req, err := httpparser.NewRequest("GET", "/internal/api/logs", "HTTP/1.1")
+		if err != nil {
+			t.Fatalf("failed to create request: %v", err)
+		}
+
+		res := httpparser.NewResponse()
+		r.ServeHTTP(req, res)
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected status 200, got %d", res.StatusCode)
+		}
+
+		var payload map[string]interface{}
+		if err := json.Unmarshal(res.Body.Bytes(), &payload); err != nil {
+			t.Fatalf("failed to parse JSON response: %v", err)
+		}
+
+		logs, ok := payload["logs"].([]interface{})
+		if !ok || len(logs) == 0 {
+			t.Errorf("expected non-empty logs array in /internal/api/logs")
+		}
+	})
+}
+

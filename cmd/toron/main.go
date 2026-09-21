@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -107,6 +108,9 @@ func main() {
 	}
 
 	srvCfg := appCfg.ToServerConfig()
+	if appCfg.Server.TLS.Enabled {
+		srvCfg.HTTPRedirectEnabled = false
+	}
 	r := router.New()
 
 	// Attach Middlewares
@@ -204,6 +208,48 @@ func main() {
 		}))
 	}
 
+	// Global Telemetry & Trace Buffer Middleware
+	r.Use(func(next router.HandlerFunc) router.HandlerFunc {
+		return func(req *httpparser.Request, res *httpparser.Response) {
+			start := time.Now()
+			next(req, res)
+			dur := time.Since(start)
+			if req != nil && !strings.HasPrefix(req.Path, "/internal/api/") {
+				reqHost := ""
+				traceID := ""
+				if req.Header != nil {
+					reqHost = req.Header.Get("Host")
+					traceID = req.Header.Get("X-Request-ID")
+				}
+				if traceID == "" {
+					traceID = fmt.Sprintf("%x", time.Now().UnixNano())
+				}
+				routeStr := req.Path
+				shortStr := req.Path
+				if reqHost != "" {
+					shortStr = reqHost + " " + req.Path
+				}
+				var bodyBytes int64
+				if res.Body != nil {
+					bodyBytes = int64(res.Body.Len())
+				}
+				server.GlobalTraceBuffer.RecordTrace(server.TraceLogEntry{
+					TS:      time.Now().UnixMilli(),
+					Method:  req.Method,
+					Path:    req.Path,
+					Route:   routeStr,
+					Short:   shortStr,
+					Status:  res.StatusCode,
+					MS:      float64(dur.Microseconds()) / 1000.0,
+					Up:      "gateway",
+					Trace:   traceID,
+					IP:      req.RemoteAddr,
+					Bytes:   bodyBytes,
+				})
+			}
+		}
+	})
+
 	// Register Internal Management API Routes (/internal/api/)
 	internalRoutes := make([]server.RouteInfo, 0)
 	var staticEnabled bool
@@ -300,6 +346,12 @@ func main() {
 			return res
 		},
 		AuditLogger: auditLogger,
+		AutoBanManager: func() *waf.AutoBanManager {
+			if globalWafEngine != nil {
+				return globalWafEngine.AutoBanManager()
+			}
+			return nil
+		}(),
 		AdminAuthEnabled: appCfg.Server.AdminAuth.Enabled ||
 			os.Getenv("TORON_ADMIN_KEY") != "" ||
 			appCfg.Server.AdminAuth.Token != "" ||
@@ -317,6 +369,8 @@ func main() {
 		AdminPassword: appCfg.Server.AdminAuth.Password,
 		AdminUsers:    appCfg.Server.AdminAuth.Users,
 		AdminSubnets:  appCfg.Server.AdminSubnets,
+		ACMEDomains:   appCfg.Server.ACME.Domains,
+		ACMEChallengeType: appCfg.Server.ACME.ChallengeType,
 	}
 	server.RegisterInternalAPIRoutes(r, internalCfg)
 

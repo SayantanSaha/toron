@@ -67,6 +67,7 @@ type WAFConfig struct {
 	Excluded           []string           `json:"excluded" yaml:"excluded"`
 	CustomRules        []CustomRuleConfig `json:"custom_rules" yaml:"custom_rules"`
 	AuditLog           AuditLogConfig     `json:"audit_log" yaml:"audit_log"`
+	AutoBan            AutoBanConfig      `json:"auto_ban" yaml:"auto_ban"`
 	TrustedProxies     []string           `json:"trusted_proxies" yaml:"trusted_proxies"`
 }
 
@@ -83,6 +84,7 @@ func DefaultConfig() WAFConfig {
 		Excluded:           nil,
 		CustomRules:        nil,
 		AuditLog:           DefaultAuditLogConfig(),
+		AutoBan:            DefaultAutoBanConfig(),
 	}
 }
 
@@ -177,6 +179,7 @@ type WAFEngine struct {
 	rules       []WAFRule
 	ipACL       *IPAccessList
 	auditLogger *AuditLogger
+	autoBanMgr  *AutoBanManager
 	mu          sync.RWMutex
 }
 
@@ -205,6 +208,14 @@ func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 		}
 	}
 
+	var autoBan *AutoBanManager
+	if cfg.AutoBan.Enabled {
+		autoBan, err = NewAutoBanManager(cfg.AutoBan, logger)
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	activeRules, err := buildActiveRules(cfg)
 	if err != nil {
 		return nil, err
@@ -215,6 +226,7 @@ func NewEngine(cfg WAFConfig) (*WAFEngine, error) {
 		rules:       activeRules,
 		ipACL:       acl,
 		auditLogger: logger,
+		autoBanMgr:  autoBan,
 	}, nil
 }
 
@@ -248,8 +260,20 @@ func (e *WAFEngine) Reload(cfg WAFConfig) error {
 		}
 	}
 
+	var autoBan *AutoBanManager
+	if cfg.AutoBan.Enabled {
+		autoBan, err = NewAutoBanManager(cfg.AutoBan, logger)
+		if err != nil {
+			return fmt.Errorf("failed to reload WAF auto-ban engine: %w", err)
+		}
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if e.autoBanMgr != nil {
+		_ = e.autoBanMgr.Close()
+	}
 
 	e.config = cfg
 	e.rules = activeRules
@@ -257,6 +281,7 @@ func (e *WAFEngine) Reload(cfg WAFConfig) error {
 	if cfg.AuditLog.Enabled {
 		e.auditLogger = logger
 	}
+	e.autoBanMgr = autoBan
 
 	return nil
 }
@@ -482,4 +507,24 @@ func (e *WAFEngine) SetAuditLogger(l *AuditLogger) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.auditLogger = l
+}
+
+// AutoBanManager returns the auto-ban manager associated with the engine.
+func (e *WAFEngine) AutoBanManager() *AutoBanManager {
+	if e == nil {
+		return nil
+	}
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.autoBanMgr
+}
+
+// SetAutoBanManager overrides or sets the engine's auto-ban manager.
+func (e *WAFEngine) SetAutoBanManager(m *AutoBanManager) {
+	if e == nil {
+		return
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.autoBanMgr = m
 }

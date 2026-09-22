@@ -57,7 +57,7 @@ related_to:
 
 ## 1. Overview & Motivation
 
-The **Multi-Proxy Differential Docker Benchmark Suite** ([`REQ-121`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-121.md), [`ADR-121`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-121.md), [`TASK-144`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-144.md)) delivers an automated, containerized benchmarking testbed comparing **Toron** against major production reverse proxies under identical network topology, connection pooling, and heterogeneous upstream runtime conditions:
+The **Multi-Proxy Differential Docker Benchmark Suite** (`REQ-121`, `ADR-121`, `TASK-144`) delivers an automated, containerized benchmarking testbed comparing **Toron** against major production reverse proxies under identical network topology, connection pooling, and heterogeneous upstream runtime conditions:
 1. **Toron (v1.5.29)** (Go event-driven zero-dependency edge gateway)
 2. **NGINX (Alpine)** (C-based asynchronous multi-process reverse proxy)
 3. **Traefik (v3.1)** (Go-based cloud-native edge router)
@@ -72,7 +72,7 @@ All 5 proxies front the **exact same heterogeneous upstream origin runtimes** in
 
 ### 1.1 Multi-Tier Duration Support & Empirical Parity (`REQ-130` / `TASK-153` / `ADR-130`)
 
-Under [`REQ-130`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-130.md) and [`ADR-130`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-130.md), the benchmark suite eliminates the short-duration evaluation blindspot (transient socket startup bias, GC masking, and hidden memory leaks) by introducing a standardized **Multi-Tier Duration Taxonomy**:
+Under `REQ-130` and `ADR-130`, the benchmark suite eliminates the short-duration evaluation blindspot (transient socket startup bias, GC masking, and hidden memory leaks) by introducing a standardized **Multi-Tier Duration Taxonomy**:
 - **Quick Smoke (`quick`, 5s)**: Rapid pre-merge CI regression and smoke verification.
 - **Steady-State / GC Observation (`medium` / `steady`, 60s)**: High-resolution tail latency ($p95, p99, p99.9$) and Go GC cycle convergence observation.
 - **Long-Term Soak & Memory Stability (`soak`, 300s / 5 min)**: Extended soak testing evaluating container RSS memory trajectory and connection pool longevity.
@@ -169,7 +169,7 @@ make benchmark-compare-clean
 
 ## 5. Methodological Parity & Empirical Rigor (`REQ-130`)
 
-To guarantee publication-grade empirical integrity, [`benchmarks/docker-compare/runner.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/docker-compare/runner.go) implements strict experimental safeguards:
+To guarantee publication-grade empirical integrity, `benchmarks/docker-compare/runner.go` implements strict experimental safeguards:
 
 ### 5.1 Mandatory 5-Second Pre-Warm Phase (Runs $\ge 30\text{s}$)
 Prior to recording metrics for steady-state (60s) and soak (300s) tiers, `runner.go` executes a mandatory 5-second warm-up phase (`prewarmTargetDuration`):
@@ -210,20 +210,20 @@ type TimeSeriesSample struct {
 ## 7. Container GC Log Extraction & Go Differential Analysis
 
 ### 7.1 Non-Invasive Container GC Extraction
-In [`benchmarks/docker-compare/docker-compose.compare.yml`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/docker-compare/docker-compose.compare.yml), `GODEBUG=gctrace=1` is injected into the environment for all Go-based reverse proxy containers:
+In `benchmarks/docker-compare/docker-compose.compare.yml`, `GODEBUG=gctrace=1` is injected into the environment for all Go-based reverse proxy containers:
 - `toron-proxy`
 - `traefik-proxy`
 - `caddy-proxy`
 
 C-based proxies (`nginx-proxy` and `haproxy-proxy`) run without Go environment variables, serving as the empirical baseline for manual C heap management.
 
-Immediately following each benchmark cell, `runner.go` queries container logs via `docker logs --since <cell_start_timestamp> <container>`, filters lines prefixed with `gc `, and feeds them to [`gcparser.ParseReader`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/telemetry/gcparser/parser.go).
+Immediately following each benchmark cell, `runner.go` queries container logs via `docker logs --since <cell_start_timestamp> <container>`, filters lines prefixed with `gc `, and feeds them to `gcparser.ParseReader`.
 
 ### 7.2 Comparative Section 1 & Section 4 Reports
 1. **Section 1 Comparative Summary Table**:
    Augmented with **"GC Cycles"** and **"P99 GC Pause"** columns. Displays exact cycle counts and tail pause times for Go proxies, and `N/A (C)` for NGINX and HAProxy.
 2. **Section 4: Go Runtime GC Differential Analysis (Toron vs Traefik vs Caddy)**:
-   In [`benchmarks/results/docker_compare_report.md`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/docker_compare_report.md), Section 4 renders a direct head-to-head comparison contrasting memory management across Go reverse proxies:
+   In `benchmarks/results/docker_compare_report.md`, Section 4 renders a direct head-to-head comparison contrasting memory management across Go reverse proxies:
 
 ```markdown
 ## 4. Go Runtime GC Differential Analysis (Toron vs Traefik vs Caddy)
@@ -259,24 +259,24 @@ All ports are intentionally mapped outside the commonly used `8080-8085` range t
 ## 9. Output Artifacts & Retention Model
 
 Every benchmark run produces:
-- **Canonical Markdown Report**: [`benchmarks/results/docker_compare_report.md`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/docker_compare_report.md) (featuring Section 1 Summary with GC columns and Section 4 Go Differential Analysis).
-- **Canonical JSON Report**: [`benchmarks/results/docker_compare_report.json`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/docker_compare_report.json) (embedding `gc_telemetry` and `time_series` objects for every cell).
+- **Canonical Markdown Report**: `benchmarks/results/docker_compare_report.md` (featuring Section 1 Summary with GC columns and Section 4 Go Differential Analysis).
+- **Canonical JSON Report**: `benchmarks/results/docker_compare_report.json` (embedding `gc_telemetry` and `time_series` objects for every cell).
 - **Historical Snapshot Archive**: `benchmarks/results/history/YYYY-MM-DD_HH-MM-SS/`
-- **Master Telemetry Index**: [`benchmarks/results/history/manifest.json`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/history/manifest.json) indexing duration tier, cell parameters, and summary telemetry.
+- **Master Telemetry Index**: `benchmarks/results/history/manifest.json` indexing duration tier, cell parameters, and summary telemetry.
 
 ---
 
 ## 10. Related Specifications & Documentation
 
-- [`REQ-130`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-130.md) – Multi-Tier Duration Stress Testing (5s, 60s, 300s), Runtime GC Telemetry Capture, and Differential Reverse Proxy Benchmarking
-- [`TASK-153`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-153.md) – Implement Multi-Tier Duration Stress Testing, GC Telemetry Capture, and Differential Benchmarking
-- [`ADR-130`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-130.md) – Architectural Decision Record for Multi-Tier Stress Testing and GC Telemetry
-- [`TC-130`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-130.md) – Test Specification for Multi-Tier Duration Testing, Docker Stats Polling, and GC Log Extraction
-- [`CR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-126.md) – Code Review of Multi-Tier Benchmarking and Differential Reverse Proxy Architecture
-- [`SR-130`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-130.md) – Security Review of Multi-Tier Benchmarking and Subprocess Boundary Isolation
-- [`REQ-121`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-121.md) / [`TASK-144`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-144.md) – Differential Multi-Proxy Docker Benchmark Testbed
-- [`REQ-122`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-122.md) / [`TASK-145`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-145.md) – Docker Compare Performance Optimization and Latency Parity
-- [`REQ-119`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-119.md) / [`TASK-142`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-142.md) – Historical Result Retention and Manifest Indexing
+- `REQ-130` – Multi-Tier Duration Stress Testing (5s, 60s, 300s), Runtime GC Telemetry Capture, and Differential Reverse Proxy Benchmarking
+- `TASK-153` – Implement Multi-Tier Duration Stress Testing, GC Telemetry Capture, and Differential Benchmarking
+- `ADR-130` – Architectural Decision Record for Multi-Tier Stress Testing and GC Telemetry
+- `TC-130` – Test Specification for Multi-Tier Duration Testing, Docker Stats Polling, and GC Log Extraction
+- `CR-126` – Code Review of Multi-Tier Benchmarking and Differential Reverse Proxy Architecture
+- `SR-130` – Security Review of Multi-Tier Benchmarking and Subprocess Boundary Isolation
+- `REQ-121` / `TASK-144` – Differential Multi-Proxy Docker Benchmark Testbed
+- `REQ-122` / `TASK-145` – Docker Compare Performance Optimization and Latency Parity
+- `REQ-119` / `TASK-142` – Historical Result Retention and Manifest Indexing
 - [High-Concurrency Saturation Stress Benchmark](./saturation-stress-benchmark.md) – Decoupled dual-stream saturation testing and 4-tier status classification
 - [Master Benchmark Suite Guide](./benchmarking.md) – Complete evaluation suite architecture and orchestration
 - [Release Notes](../release-notes.md) – Toron v1.5.29 Release Notes

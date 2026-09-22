@@ -39,18 +39,18 @@ related_to:
 
 # 🕸️ Service Mesh Sidecar Mode (`pkg/sidecar`)
 
-Toron Edge Gateway features a lightweight, zero-dependency **Service Mesh Sidecar Mode** ([`pkg/sidecar`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go)). In Sidecar Mode, Toron runs alongside pod application containers (`127.0.0.1`), transparently enforcing pod-to-pod Mutual TLS (mTLS) zero-trust encryption, dynamic weighted traffic splitting (e.g. 80/20 canary releases), configurable request body bounding with fail-fast HTTP 413 rejection, and thread-safe origin-keyed reverse proxy caching with minimal memory overhead (<10MB RAM).
+Toron Edge Gateway features a lightweight, zero-dependency **Service Mesh Sidecar Mode** (`pkg/sidecar`). In Sidecar Mode, Toron runs alongside pod application containers (`127.0.0.1`), transparently enforcing pod-to-pod Mutual TLS (mTLS) zero-trust encryption, dynamic weighted traffic splitting (e.g. 80/20 canary releases), configurable request body bounding with fail-fast HTTP 413 rejection, and thread-safe origin-keyed reverse proxy caching with minimal memory overhead (<10MB RAM).
 
 ---
 
 ## 🌟 Key Features
 
 * **Zero External Dependencies**: Implements mTLS certificate verification, weighted traffic splitting, and bounded body ingestion using Go standard library `crypto/tls`, `net/http`, and `io`.
-* **Thread-Safe ReverseProxy Caching & Socket Reuse ([`SEC-37`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L510-L518))**: Thread-safe origin-keyed reverse proxy caching with canonical origin normalization (`scheme://host[:port]`), HTTP keep-alive connection pooling, and automatic idle connection teardown on engine shutdown, eliminating per-request transport allocation and socket exhaustion (`EMFILE`).
+* **Thread-Safe ReverseProxy Caching & Socket Reuse (`SEC-37`)**: Thread-safe origin-keyed reverse proxy caching with canonical origin normalization (`scheme://host[:port]`), HTTP keep-alive connection pooling, and automatic idle connection teardown on engine shutdown, eliminating per-request transport allocation and socket exhaustion (`EMFILE`).
 * **Pod-to-Pod Strict mTLS**: Enforces `client_auth: "require_and_verify"` with Root CA certificate pools (`ca_file`).
 * **Weighted Traffic Splitting**: Distributes outbound egress traffic across multiple canary backends according to assigned integer weights (e.g. 80% to v1, 20% to v2).
 * **Ingress / Egress / Dual Modes**: Flexible operational modes running on dedicated local ports (Ingress: 15006, Egress: 15001, Application: 8080).
-* **Configurable Request Body Limit & HTTP 413 Protection ([`SEC-25`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L366-L374))**: Configurable request payload threshold via [`SidecarConfig.MaxBodyBytes`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L109) (`max_body_bytes`), defaulting to a 10 MB fallback. Prevents silent truncation and upstream data corruption by rejecting oversized payloads immediately with `413 Request Entity Too Large` (`http.StatusRequestEntityTooLarge`).
+* **Configurable Request Body Limit & HTTP 413 Protection (`SEC-25`)**: Configurable request payload threshold via `SidecarConfig.MaxBodyBytes` (`max_body_bytes`), defaulting to a 10 MB fallback. Prevents silent truncation and upstream data corruption by rejecting oversized payloads immediately with `413 Request Entity Too Large` (`http.StatusRequestEntityTooLarge`).
 
 ---
 
@@ -97,17 +97,17 @@ sidecar:
 
 ---
 
-## 🛡️ Request Body Size Limits & HTTP 413 Rejection ([`SEC-25`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L366-L374))
+## 🛡️ Request Body Size Limits & HTTP 413 Rejection (`SEC-25`)
 
 ### Background & Security Remediation
 
-Prior to the remediation of [`SEC-25`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L366-L374) (addressed in [`REQ-086`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-086.md), [`ADR-081`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-081.md), and [`TASK-090`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-090.md)–[`TASK-092`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-092.md)), the sidecar proxy engine used a hardcoded 10 MB limit and an unbounded `io.LimitReader` when proxying mutating request bodies. When a client transmitted a payload exceeding 10 MB, the proxy silently truncated the incoming data, updated the request `Content-Length` to the truncated length, and forwarded the partial payload upstream.
+Prior to the remediation of `SEC-25` (addressed in `REQ-086`, `ADR-081`, and `TASK-090`–`TASK-092`), the sidecar proxy engine used a hardcoded 10 MB limit and an unbounded `io.LimitReader` when proxying mutating request bodies. When a client transmitted a payload exceeding 10 MB, the proxy silently truncated the incoming data, updated the request `Content-Length` to the truncated length, and forwarded the partial payload upstream.
 
 This resulted in silent data corruption, truncated JSON payloads, and desynchronization in backend microservices without error visibility.
 
 The enhanced sidecar architecture resolves this vulnerability through:
-1. **Configurable Limits**: Exposed via [`SidecarConfig.MaxBodyBytes`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L109) (`max_body_bytes`).
-2. **Safe Fallback**: Any configuration with `max_body_bytes <= 0` or missing defaults to 10 MB (`10,485,760` bytes) in [`DefaultAppConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L466), [`validateConfigDefaults`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/loader.go#L153), and [`NewProxyEngine`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L37).
+1. **Configurable Limits**: Exposed via `SidecarConfig.MaxBodyBytes` (`max_body_bytes`).
+2. **Safe Fallback**: Any configuration with `max_body_bytes <= 0` or missing defaults to 10 MB (`10,485,760` bytes) in `DefaultAppConfig`, `validateConfigDefaults`, and `NewProxyEngine`.
 3. **Dual-Stage Overflow Protection**: Oversized requests are caught either before body reading (via `Content-Length`) or during bounded stream ingestion (via `io.LimitReader(r.Body, maxBody+1)`), returning HTTP `413 Request Entity Too Large` (`http.StatusRequestEntityTooLarge`).
 4. **Zero Partial Forwarding**: When rejected, `r.Body` is cleanly closed and zero bytes are dispatched to upstream application backends.
 5. **Byte-Fidelity Forwarding**: Valid requests below the limit are forwarded intact with exact byte fidelity.
@@ -152,11 +152,11 @@ When an incoming payload exceeds `max_body_bytes`, the sidecar proxy engine logs
 
 ---
 
-## 🔒 Strict Egress TLS Certificate Validation & System Trust Root Fallback ([`SEC-35`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L481-L489))
+## 🔒 Strict Egress TLS Certificate Validation & System Trust Root Fallback (`SEC-35`)
 
 ### Background & Vulnerability Analysis (CWE-295)
 
-Prior to the remediation of [`SEC-35`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L481-L489) (addressed in [`REQ-097`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md), [`ADR-097`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-097.md), [`TASK-120`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md), and [`TC-097`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-097.md)), the sidecar egress TLS configuration builder ([`BuildClientTLSConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/mtls.go#L47)) contained a critical architectural defect:
+Prior to the remediation of `SEC-35` (addressed in `REQ-097`, `ADR-097`, `TASK-120`, and `TC-097`), the sidecar egress TLS configuration builder (`BuildClientTLSConfig`) contained a critical architectural defect:
 
 ```go
 // VULNERABLE HISTORICAL CODE:
@@ -178,7 +178,7 @@ This hardcoded default completely disabled peer certificate validation, certific
 
 The enhanced sidecar client TLS constructor eliminates this vulnerability across six defense layers:
 
-1. **Strict Verification by Default**: [`SidecarConfig.InsecureSkipVerify`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L114) defaults strictly to `false` in [`defaultConfig()`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L580). Full X.509 certificate chain validation, expiration checks, and SAN/hostname verification are enforced on all outbound egress connections.
+1. **Strict Verification by Default**: `SidecarConfig.InsecureSkipVerify` defaults strictly to `false` in `defaultConfig()`. Full X.509 certificate chain validation, expiration checks, and SAN/hostname verification are enforced on all outbound egress connections.
 2. **Host Operating System Trust Root Fallback**: When `ca_file` is omitted or empty (`""`), `BuildClientTLSConfig` leaves `tlsConfig.RootCAs = nil`. The Go standard library `crypto/tls` automatically defaults to the host operating system's system root certificate pool (`x509.SystemCertPool()`). Services backed by public PKI validate seamlessly without requiring custom certificate bundles.
 3. **Custom CA Bundle Integration (`ca_file`)**: When `ca_file` is specified (e.g. `./certs/ca.crt`), certificates are parsed and loaded into an isolated `x509.CertPool` assigned to `tlsConfig.RootCAs`. Outbound egress connections strictly validate that upstream certificates chain up to this custom CA, providing end-to-end zero-trust validation for private enterprise PKI.
 4. **Explicit Opt-In & Mandatory Warning Log**: Bypassing certificate verification is strictly restricted to intentional test or debugging scenarios and requires explicit configuration (`insecure_skip_verify: true`). Whenever enabled, `BuildClientTLSConfig` emits a high-visibility audit warning:
@@ -211,11 +211,11 @@ flowchart TD
 
 ---
 
-## 🔄 Thread-Safe ReverseProxy Caching & Transport Lifecycle ([`SEC-37`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L510-L518))
+## 🔄 Thread-Safe ReverseProxy Caching & Transport Lifecycle (`SEC-37`)
 
 ### Background & Security Remediation (CWE-400 / CWE-772)
 
-Prior to the remediation of [`SEC-37`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L510-L518) (addressed in [`REQ-099`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-099.md), [`ADR-099`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-099.md), [`TASK-122`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-122.md), and [`TC-099`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-099.md)), the sidecar proxy engine ([`pkg/sidecar/proxy.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go)) instantiated a new `*proxy.ReverseProxy`, `*http.Client`, and `*http.Transport` on every incoming egress request in `proxyToURL`. 
+Prior to the remediation of `SEC-37` (addressed in `REQ-099`, `ADR-099`, `TASK-122`, and `TC-099`), the sidecar proxy engine (`pkg/sidecar/proxy.go`) instantiated a new `*proxy.ReverseProxy`, `*http.Client`, and `*http.Transport` on every incoming egress request in `proxyToURL`. 
 
 Each transport allocated a dedicated connection pool (`MaxIdleConns: 100`, `IdleConnTimeout: 90s`) that was never reused across requests or closed after completion. Under sustained microservice traffic (500–5,000 req/sec), thousands of idle TCP sockets accumulated concurrently without connection reuse, rapidly exhausting system file descriptors (`EMFILE: too many open files`), triggering intense garbage collector thrashing, and crashing the sidecar gateway (CWE-400, CWE-772). Furthermore, `ReverseProxy.Close()` failed to close idle transport connections, and `proxyToURL` omitted client TLS configurations, causing egress HTTPS connections to lose configured client certificates and CA trust roots.
 
@@ -240,7 +240,7 @@ The enhanced sidecar proxy architecture eliminates these vulnerabilities across 
    Because `ReverseProxy` instances are cached per origin, Go's standard library `http.Transport` connection pool maintains active persistent TCP sockets across successive and concurrent requests to the same upstream service. Reusing keep-alive sockets reduces connection handshake latency to near zero and drastically bounds the active file descriptor count ($\le 2$ sockets per backend under steady traffic).
 
 4. **Idle Transport Connection Teardown (`ReverseProxy.Close()` & `ProxyEngine.Stop()`)**:
-   [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go) extends `ReverseProxy.Close()` to type-assert and invoke `tr.CloseIdleConnections()` on `p.Client.Transport`:
+   `pkg/proxy/proxy.go` extends `ReverseProxy.Close()` to type-assert and invoke `tr.CloseIdleConnections()` on `p.Client.Transport`:
    ```go
    func (p *ReverseProxy) Close() {
        if p.Balancer != nil {
@@ -256,7 +256,7 @@ The enhanced sidecar proxy architecture eliminates these vulnerabilities across 
    When `ProxyEngine.Stop()` is invoked during pod shutdown or container lifecycle events, it iterates over all cached proxies in `p.proxies`, invoking `px.Close()` and releasing all idle TCP connections immediately, preventing socket leaks.
 
 5. **Client mTLS Propagation & Defensive Cloning (`ProxyOptions.TLSClientConfig`)**:
-   [`ProxyOptions`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L466) includes `TLSClientConfig *tls.Config`. During initialization, `NewProxyEngine` compiles the client TLS configuration once via `BuildClientTLSConfig(cfg)`. When a cached proxy is created in `getOrCreateProxy`, `p.clientTLS.Clone()` is passed to `opts.TLSClientConfig`, and `NewProxyWithOptions` defensively clones it again (`tr.TLSClientConfig = opts.TLSClientConfig.Clone()`). This two-tier defensive cloning prevents Go standard library data races on `NextProtos` during concurrent TLS handshakes across multiple transports. Egress mutual TLS handshakes seamlessly validate upstream custom CA bundles and present client certificates (`cert_file`, `key_file`), satisfying [`REQ-097`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md) and [`SEC-35`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L481-L489).
+   `ProxyOptions` includes `TLSClientConfig *tls.Config`. During initialization, `NewProxyEngine` compiles the client TLS configuration once via `BuildClientTLSConfig(cfg)`. When a cached proxy is created in `getOrCreateProxy`, `p.clientTLS.Clone()` is passed to `opts.TLSClientConfig`, and `NewProxyWithOptions` defensively clones it again (`tr.TLSClientConfig = opts.TLSClientConfig.Clone()`). This two-tier defensive cloning prevents Go standard library data races on `NextProtos` during concurrent TLS handshakes across multiple transports. Egress mutual TLS handshakes seamlessly validate upstream custom CA bundles and present client certificates (`cert_file`, `key_file`), satisfying `REQ-097` and `SEC-35`.
 
 ### Proxy Caching & Connection Lifecycle Flow
 
@@ -322,34 +322,34 @@ curl -v -X POST http://127.0.0.1:15006/api/upload \
 
 ## 🔗 Related Documentation & Code References
 
-* [`SidecarConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L103) – Sidecar configuration struct in [`pkg/config/config.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go).
-* [`SidecarConfig.MaxBodyBytes`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L109) – Maximum request body size field definition.
-* [`SidecarConfig.InsecureSkipVerify`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L114) – Explicit egress TLS verification opt-in boolean.
-* [`validateConfigDefaults`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/loader.go#L153) – 10 MB normalization fallback in [`pkg/config/loader.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/loader.go).
-* [`NewProxyEngine`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L37) – Sidecar proxy constructor and fallback in [`pkg/sidecar/proxy.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go).
-* [`ProxyEngine.proxyToURL`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L192) – HTTP 413 rejection, cached proxy lookup, and payload forwarding implementation.
-* [`ProxyOptions.TLSClientConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L466) – Client TLS configuration propagation in [`pkg/proxy/proxy.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go).
-* [`ReverseProxy.Close`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L601) – Load balancer stop and transport idle connection teardown.
-* [`BuildClientTLSConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/mtls.go#L47) – Secure client TLS configuration constructor in [`pkg/sidecar/mtls.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/mtls.go).
-* [`BuildServerTLSConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/mtls.go#L14) – Ingress server-side mTLS configuration constructor.
-* [`sidecar_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/sidecar_test.go) – Automated test suite verifying SEC-25, SEC-35, and SEC-37 fixes.
-* [`SEC-25`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L366-L374) – Security audit finding record for sidecar payload truncation.
-* [`SEC-35`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L481-L489) – Security audit finding record for sidecar client TLS certificate validation.
-* [`SEC-37`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L510-L518) – Security audit finding record for unbounded transport allocation and socket leaks.
-* [`REQ-086`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-086.md) – Requirement specification for configurable sidecar body limits.
-* [`REQ-097`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-097.md) – Requirement specification for secure default sidecar client TLS validation.
-* [`REQ-099`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-099.md) – Requirement specification for thread-safe sidecar reverse proxy caching and transport teardown.
-* [`ADR-081`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-081.md) – Architecture decision record for sidecar body limiting and rejection.
-* [`ADR-097`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-097.md) – Architecture decision record for secure default client TLS validation.
-* [`ADR-099`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-099.md) – Architecture decision record for reverse proxy caching and transport teardown.
-* [`TASK-120`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-120.md) – Implementation task for SEC-35 remediation.
-* [`TASK-122`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-122.md) – Implementation task for SEC-37 remediation.
-* [`TC-086`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-086.md) – Test case specification for sidecar body bounding.
-* [`TC-097`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-097.md) – Test case specification for sidecar client TLS verification.
-* [`TC-099`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-099.md) – Test case specification for reverse proxy caching and transport teardown.
-* [`CR-093`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-093.md) – Code review record for SEC-35 remediation.
-* [`CR-095`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-095.md) – Code review record for SEC-37 remediation.
-* [`SR-097`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-097.md) – Security review and vulnerability assessment for SEC-35 remediation.
-* [`SR-099`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-099.md) – Security review and vulnerability assessment for SEC-37 remediation.
+* `SidecarConfig` – Sidecar configuration struct in `pkg/config/config.go`.
+* `SidecarConfig.MaxBodyBytes` – Maximum request body size field definition.
+* `SidecarConfig.InsecureSkipVerify` – Explicit egress TLS verification opt-in boolean.
+* `validateConfigDefaults` – 10 MB normalization fallback in `pkg/config/loader.go`.
+* `NewProxyEngine` – Sidecar proxy constructor and fallback in `pkg/sidecar/proxy.go`.
+* `ProxyEngine.proxyToURL` – HTTP 413 rejection, cached proxy lookup, and payload forwarding implementation.
+* `ProxyOptions.TLSClientConfig` – Client TLS configuration propagation in `pkg/proxy/proxy.go`.
+* `ReverseProxy.Close` – Load balancer stop and transport idle connection teardown.
+* `BuildClientTLSConfig` – Secure client TLS configuration constructor in `pkg/sidecar/mtls.go`.
+* `BuildServerTLSConfig` – Ingress server-side mTLS configuration constructor.
+* `sidecar_test.go` – Automated test suite verifying SEC-25, SEC-35, and SEC-37 fixes.
+* `SEC-25` – Security audit finding record for sidecar payload truncation.
+* `SEC-35` – Security audit finding record for sidecar client TLS certificate validation.
+* `SEC-37` – Security audit finding record for unbounded transport allocation and socket leaks.
+* `REQ-086` – Requirement specification for configurable sidecar body limits.
+* `REQ-097` – Requirement specification for secure default sidecar client TLS validation.
+* `REQ-099` – Requirement specification for thread-safe sidecar reverse proxy caching and transport teardown.
+* `ADR-081` – Architecture decision record for sidecar body limiting and rejection.
+* `ADR-097` – Architecture decision record for secure default client TLS validation.
+* `ADR-099` – Architecture decision record for reverse proxy caching and transport teardown.
+* `TASK-120` – Implementation task for SEC-35 remediation.
+* `TASK-122` – Implementation task for SEC-37 remediation.
+* `TC-086` – Test case specification for sidecar body bounding.
+* `TC-097` – Test case specification for sidecar client TLS verification.
+* `TC-099` – Test case specification for reverse proxy caching and transport teardown.
+* `CR-093` – Code review record for SEC-35 remediation.
+* `CR-095` – Code review record for SEC-37 remediation.
+* `SR-097` – Security review and vulnerability assessment for SEC-35 remediation.
+* `SR-099` – Security review and vulnerability assessment for SEC-37 remediation.
 * [Configuration Options Reference](../reference/config-options.md) – Global configuration options.
 * [Configuration Guide](../configuration.md) – Dual-file YAML configuration guide.

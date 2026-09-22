@@ -33,14 +33,14 @@ related_to:
 > [!NOTE]
 > For the comprehensive feature documentation and architecture guide, see [Service Mesh Sidecar Feature Guide](./features/service-mesh-sidecar.md).
 
-Toron Edge Gateway provides a lightweight, zero-dependency **Service Mesh Sidecar Mode** ([`pkg/sidecar`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go)) designed to run as a local container within Kubernetes pods (`127.0.0.1`).
+Toron Edge Gateway provides a lightweight, zero-dependency **Service Mesh Sidecar Mode** (`pkg/sidecar`) designed to run as a local container within Kubernetes pods (`127.0.0.1`).
 
 ## Core Capabilities
 
 - **Zero-Trust Mutual TLS (mTLS)**: Enforces strict pod-to-pod encrypted communication (`strict_mtls: true`).
 - **Weighted Traffic Splitting**: Dynamic canary and A/B release traffic distribution.
 - **Dual-Mode Operation**: Concurrent ingress (port 15006) and egress (port 15001) proxying.
-- **Configurable Request Body Limits & HTTP 413 Protection ([`SEC-25`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L366-L374))**: Bounded request body ingestion configured via [`SidecarConfig.MaxBodyBytes`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L109) (`max_body_bytes`), defaulting to a 10 MB fallback (`10 * 1024 * 1024` bytes). Requests exceeding the limit are immediately rejected with HTTP `413 Request Entity Too Large` (`http.StatusRequestEntityTooLarge`) without silent truncation or upstream data corruption.
+- **Configurable Request Body Limits & HTTP 413 Protection (`SEC-25`)**: Bounded request body ingestion configured via `SidecarConfig.MaxBodyBytes` (`max_body_bytes`), defaulting to a 10 MB fallback (`10 * 1024 * 1024` bytes). Requests exceeding the limit are immediately rejected with HTTP `413 Request Entity Too Large` (`http.StatusRequestEntityTooLarge`) without silent truncation or upstream data corruption.
 
 ## Quick Configuration (`toron.yaml`)
 
@@ -70,5 +70,5 @@ sidecar:
 - [Full Service Mesh Sidecar Documentation](./features/service-mesh-sidecar.md)
 - [Configuration Guide](./configuration.md)
 - [Configuration Options Reference](./reference/config-options.md)
-- [`SidecarConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L103)
-- [`ProxyEngine`](file:///Users/sneha/Developer/toron-research/toron/pkg/sidecar/proxy.go#L23)
+- `SidecarConfig`
+- `ProxyEngine`

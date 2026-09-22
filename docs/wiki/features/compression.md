@@ -37,11 +37,11 @@ related_to:
 
 ## Overview
 
-Toron includes a transparent, high-throughput HTTP response compression engine ([`pkg/router/compression.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/compression.go)) supporting **Zstandard (`zstd`)**, **Brotli (`br`)**, **Gzip (`gzip`)**, and **Deflate (`deflate`)**. 
+Toron includes a transparent, high-throughput HTTP response compression engine (`pkg/router/compression.go`) supporting **Zstandard (`zstd`)**, **Brotli (`br`)**, **Gzip (`gzip`)**, and **Deflate (`deflate`)**. 
 
 When downstream clients advertise supported algorithms via the `Accept-Encoding` header, Toron automatically negotiates the optimal algorithm, compresses payloads exceeding a configurable byte threshold, adjusts headers, and delivers compressed responses with minimal CPU overhead.
 
-Under [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md) and [`ADR-128`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-128.md), Toron enforces **content-aware streaming exemptions**, ensuring that Server-Sent Events (SSE `text/event-stream`) and unbuffered proxy feeds (`X-Accel-Buffering: no`) bypass compression entirely, delivering raw event chunks to clients with sub-millisecond latency and zero buffering delays.
+Under `REQ-128` and `ADR-128`, Toron enforces **content-aware streaming exemptions**, ensuring that Server-Sent Events (SSE `text/event-stream`) and unbuffered proxy feeds (`X-Accel-Buffering: no`) bypass compression entirely, delivering raw event chunks to clients with sub-millisecond latency and zero buffering delays.
 
 ---
 
@@ -82,7 +82,7 @@ When a client connects with standard browser headers (`Accept-Encoding: gzip, de
 
 ### The Content-Aware Pre-Compression Guard
 
-In [`pkg/router/compression.go:130-138`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/compression.go#L130-L138), Toron evaluates streaming exemption guards **prior** to MIME type matching, payload size checks, or compressor writer acquisition:
+In `pkg/router/compression.go:130-138`, Toron evaluates streaming exemption guards **prior** to MIME type matching, payload size checks, or compressor writer acquisition:
 
 ```go
 // 1. WebSocket upgrades, raw hijacked connections, or live streaming responses must not be compressed
@@ -172,7 +172,7 @@ server:
 ## Troubleshooting & FAQ
 
 ### Problem: My Server-Sent Events (SSE) feed is arriving without compression. Is compression broken?
-> **Answer**: No, this is intended and critical behavior. Under [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md), `text/event-stream` responses are exempted from compression. Compressing SSE streams buffers event chunks into memory until connection termination, causing event starvation for clients. Raw chunks are transmitted immediately to preserve real-time delivery.
+> **Answer**: No, this is intended and critical behavior. Under `REQ-128`, `text/event-stream` responses are exempted from compression. Compressing SSE streams buffers event chunks into memory until connection termination, causing event starvation for clients. Raw chunks are transmitted immediately to preserve real-time delivery.
 
 ### Problem: Small JSON responses (< 512 bytes) are not compressed.
 > **Answer**: Compressing very small payloads frequently produces compressed blocks larger than the original payload due to framing and checksum headers. Responses smaller than `min_length` (default: 512 bytes) are intentionally emitted uncompressed.

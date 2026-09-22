@@ -28,7 +28,7 @@ related_to:
 
 # 🐳 Vendor-Agnostic OCI Container Auto-Discovery Engine (`pkg/discovery`)
 
-Toron Edge Gateway features a vendor-agnostic, zero-dependency **OCI Container Auto-Discovery Engine** ([`pkg/discovery`](file:///Users/sneha/Developer/toron-research/toron/pkg/discovery)). It monitors container runtime Unix domain sockets in real time, aggregates multi-replica service instances into high-performance round-robin load balancers, enforces strict specificity-based route ordering, and dynamically reconciles routing state with zero downtime.
+Toron Edge Gateway features a vendor-agnostic, zero-dependency **OCI Container Auto-Discovery Engine** (`pkg/discovery`). It monitors container runtime Unix domain sockets in real time, aggregates multi-replica service instances into high-performance round-robin load balancers, enforces strict specificity-based route ordering, and dynamically reconciles routing state with zero downtime.
 
 ---
 

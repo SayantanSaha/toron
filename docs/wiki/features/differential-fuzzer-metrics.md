@@ -27,15 +27,15 @@ Toron implements a **Dual-Verification Testing Taxonomy** for HTTP protocol secu
 
 | Dimension | Paradigm A: Deterministic Invariant Suite | Paradigm B: Generative Fuzzing Engine |
 | :--- | :--- | :--- |
-| **Primary Implementation** | [`benchmarks/fuzzer/diff_fuzzer.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/fuzzer/diff_fuzzer.go) | [`pkg/httpparser/fuzz_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/fuzz_test.go) |
-| **Harness Runner** | [`benchmarks/fuzzer/run_fuzzer.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/fuzzer/run_fuzzer.sh) | [`benchmarks/fuzzer/run_generative_fuzz.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/fuzzer/run_generative_fuzz.sh) |
+| **Primary Implementation** | `benchmarks/fuzzer/diff_fuzzer.go` | `pkg/httpparser/fuzz_test.go` |
+| **Harness Runner** | `benchmarks/fuzzer/run_fuzzer.sh` | `benchmarks/fuzzer/run_generative_fuzz.sh` |
 | **Execution Boundary** | L4/L7 Live TCP Network Sockets | L7 In-Memory Byte Stream (`io.Reader`) |
 | **Input Search Space** | Deterministic (19 curated RFC/CVE vectors) | Stochastic, unbounded mutated byte streams |
 | **Feedback Mechanism** | Wire-level socket latency ($T_{\text{reject}}$, Eq. 7) | Go compiler basic-block edge instrumentation |
 | **Evaluation Oracle** | Invariant assertion (`ExpectedStatus`, `conn:closed`) | Non-circular differential (`net/http.ReadRequest`) |
 | **Measurement Objective**| $p50, p90, p99$ fail-fast wire rejection speed | Parser crash immunity, boundary desyncs ([CWE-444](https://cwe.mitre.org/data/definitions/444.html)) |
 | **Execution Cadence** | Benchmark runs ($K=1,000$ trials, $W=50$) | Fast CI ($< 1.0\text{s}$) & deep campaigns ($30\text{s}$–hours) |
-| **Governing Artifacts** | [`REQ-118`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-118.md), [`ADR-118`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-118.md), [`TC-118`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-118.md) | [`REQ-132`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-132.md), [`ADR-132`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-132.md), [`TASK-155`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-155.md), [`TC-132`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-132.md) |
+| **Governing Artifacts** | `REQ-118`, `ADR-118`, `TC-118` | `REQ-132`, `ADR-132`, `TASK-155`, `TC-132` |
 
 ---
 
@@ -106,9 +106,9 @@ bash benchmarks/fuzzer/run_fuzzer.sh -t 127.0.0.1:8080 -k 1000 -w 50
 Static invariant test suites declare their own hardcoded expected status codes (e.g. `tc.ExpectedStatus = []int{400, 501}`), evaluating whether the server matches its own predetermined assumptions. In contrast, true fuzzing requires:
 1. **Coverage-Guided Generative Mutation**: Compiler edge instrumentation dynamically guides input generation toward unexplored execution branches.
 2. **Unbounded Input Search Space**: Stochastic mutations across delimiter boundaries, control characters, and malformed grammars.
-3. **Non-Circular Differential Oracle**: An authoritative external reference parser ([`net/http.ReadRequest`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/request.go)) serving as ground truth.
+3. **Non-Circular Differential Oracle**: An authoritative external reference parser (`net/http.ReadRequest`) serving as ground truth.
 
-Under [`REQ-132`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-132.md) and [`TASK-155`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-155.md), Toron implements this in pure Go standard library ([`pkg/httpparser/fuzz_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/fuzz_test.go)) with zero third-party dependencies.
+Under `REQ-132` and `TASK-155`, Toron implements this in pure Go standard library (`pkg/httpparser/fuzz_test.go`) with zero third-party dependencies.
 
 ```mermaid
 flowchart TD
@@ -134,14 +134,14 @@ flowchart TD
 
 ### 2.2 The Four Specialized Fuzz Targets
 
-Located in [`pkg/httpparser/fuzz_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/fuzz_test.go):
+Located in `pkg/httpparser/fuzz_test.go`:
 
 1. **`FuzzParseRequest(f *testing.F)`**:
    - Ingests raw byte streams (`data []byte`) across request line, headers, and body.
    - Evaluates Oracle 1 (Crash Immunity) and Oracle 4 (Resource Boundedness).
    - Verifies clean return of either valid `*Request` or error, ensuring allocated body readers are recycled cleanly.
 2. **`FuzzDifferentialWithStdLib(f *testing.F)`**:
-   - Feeds identical payload bytes to Toron's [`httpparser.ParseRequest`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/parser.go#L109) and standard library `http.ReadRequest`.
+   - Feeds identical payload bytes to Toron's `httpparser.ParseRequest` and standard library `http.ReadRequest`.
    - Evaluates Oracle 2 (Desynchronization Guard) and Oracle 3 (Framing Boundary Agreement).
    - Detects dangerous parser leniency and semantic desynchronizations.
 3. **`FuzzHeaderGrammar(f *testing.F)`**:
@@ -149,7 +149,7 @@ Located in [`pkg/httpparser/fuzz_test.go`](file:///Users/sneha/Developer/toron-r
    - Validates RFC 7230 §3.2.4 whitespace-before-colon rejection (`Host : example.com`), obs-fold continuation lines, and control character filtering.
 4. **`FuzzChunkFraming(f *testing.F)`**:
    - Synthesizes chunked transfer framing with mutated hex lengths, extensions, and chunk bodies.
-   - Enforces Toron's inbound anti-smuggling policy ([`ADR-056`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-056.md)), asserting rejection of inbound chunked requests and verifying extension bounds ($\le 8\,\text{KB}$).
+   - Enforces Toron's inbound anti-smuggling policy (`ADR-056`), asserting rejection of inbound chunked requests and verifying extension bounds ($\le 8\,\text{KB}$).
 
 ### 2.3 The Four Non-Circular Differential Semantic Oracles
 
@@ -180,7 +180,7 @@ Located in [`pkg/httpparser/fuzz_test.go`](file:///Users/sneha/Developer/toron-r
 
 ### 2.4 Curated Seed Corpus
 
-The seed corpus in [`pkg/httpparser/fuzz_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/fuzz_test.go#L14-L67) primes the mutator with:
+The seed corpus in `pkg/httpparser/fuzz_test.go` primes the mutator with:
 - **7 Nominal RFC 7230 Requests**: Minimal GET, GET with query parameters, POST with body, HEAD, OPTIONS, PUT, and DELETE.
 - **19 Structural CVE Attack Vectors**:
   - `SMUGGLE-001` (CL.TE conflict)
@@ -207,7 +207,7 @@ The seed corpus in [`pkg/httpparser/fuzz_test.go`](file:///Users/sneha/Developer
 
 ## 3. Generative-Driven Zero-Day Parser Hardenings
 
-During initial generative fuzzing campaigns, the engine synthesized edge cases that exposed five subtle parser ambiguities in [`pkg/httpparser/parser.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/parser.go), which were proactively hardened and verified:
+During initial generative fuzzing campaigns, the engine synthesized edge cases that exposed five subtle parser ambiguities in `pkg/httpparser/parser.go`, which were proactively hardened and verified:
 
 ```
 +----------------------------------------------------------------------------------------------------------------------+
@@ -288,7 +288,7 @@ During initial generative fuzzing campaigns, the engine synthesized edge cases t
 
 ### 4.1 Dedicated CLI Orchestrator (`run_generative_fuzz.sh`)
 
-[`benchmarks/fuzzer/run_generative_fuzz.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/fuzzer/run_generative_fuzz.sh) manages execution loops, crash isolation, and dual-output reporting:
+`benchmarks/fuzzer/run_generative_fuzz.sh` manages execution loops, crash isolation, and dual-output reporting:
 
 ```bash
 # Run all 4 fuzz targets for 30 seconds each (default)
@@ -375,10 +375,10 @@ All seed corpus test cases execute as standard unit tests in **$< 1.0\,\text{sec
 
 ## 6. Academic Traceability & Specifications
 
-- **Governing Requirements**: [`REQ-118`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-118.md) (Invariant Latency Suite), [`REQ-132`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-132.md) (Generative Differential Fuzzing Engine)
-- **Architectural Decisions**: [`ADR-118`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-118.md) (Harness Disaggregation), [`ADR-132`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-132.md) (Coverage-Guided Differential Oracles)
-- **Task Implementation**: [`TASK-155`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-155.md)
-- **Test Specifications**: [`TC-118`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-118.md), [`TC-132`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-132.md) (100% pass across TC-132.1..TC-132.12)
-- **Code Reviews**: [`CR-114`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-114.md), [`CR-128`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-128.md)
-- **Security Audits**: [`SR-118`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-118.md), [`SR-132`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-132.md)
+- **Governing Requirements**: `REQ-118` (Invariant Latency Suite), `REQ-132` (Generative Differential Fuzzing Engine)
+- **Architectural Decisions**: `ADR-118` (Harness Disaggregation), `ADR-132` (Coverage-Guided Differential Oracles)
+- **Task Implementation**: `TASK-155`
+- **Test Specifications**: `TC-118`, `TC-132` (100% pass across TC-132.1..TC-132.12)
+- **Code Reviews**: `CR-114`, `CR-128`
+- **Security Audits**: `SR-118`, `SR-132`
 - **Mitigated Vulnerabilities**: [CWE-444](https://cwe.mitre.org/data/definitions/444.html) (HTTP Request Smuggling), [CWE-113](https://cwe.mitre.org/data/definitions/113.html) (CRLF Injection), [CWE-117](https://cwe.mitre.org/data/definitions/117.html) (Log Injection), [CWE-400](https://cwe.mitre.org/data/definitions/400.html) (Resource Exhaustion), [CWE-770](https://cwe.mitre.org/data/definitions/770.html), [CWE-78](https://cwe.mitre.org/data/definitions/78.html), [CWE-88](https://cwe.mitre.org/data/definitions/88.html), [CWE-362](https://cwe.mitre.org/data/definitions/362.html) (Race Conditions), [CWE-436](https://cwe.mitre.org/data/definitions/436.html) (Interpretation Conflict), [CWE-775](https://cwe.mitre.org/data/definitions/775.html) (Resource Retention)

@@ -43,7 +43,7 @@ Historically, edge gateways that canonicalize incoming URL paths (such as collap
 Toron resolves these issues through a coordinated, two-tier active defense model:
 - **Layer 1 (Layer 7 WAF Raw Wire URI Inspection)**: Evaluates raw wire URIs directly from the network socket before path mutation occurs.
 - **Layer 2 (Route-Aware Static Prefix Escape Guard)**: Validates static prefix boundaries during router dispatch, actively rejecting prefix escapes even if the WAF is disabled or omitted.
-- **Fail-Fast Transport Socket Teardown**: Enforces immediate physical closure of the underlying TCP connection on all security rejections via `Connection: close` ([`REQ-107`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-107.md)).
+- **Fail-Fast Transport Socket Teardown**: Enforces immediate physical closure of the underlying TCP connection on all security rejections via `Connection: close` (`REQ-107`).
 
 ---
 
@@ -90,7 +90,7 @@ Toron coordinates three distinct security boundaries to eliminate single points 
 
 ### Layer 1: Layer 7 WAF Raw Wire URI Inspection (`pkg/waf/waf.go`)
 
-Toron's WAF engine ([`pkg/waf/waf.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/waf/waf.go)) inspects incoming requests using their raw wire representation:
+Toron's WAF engine (`pkg/waf/waf.go`) inspects incoming requests using their raw wire representation:
 - **Raw Wire Extraction**: Extracts the uncleaned request path directly from `req.RequestURI`. Query strings (following `?`) and URL fragments (following `#`) are cleanly stripped using zero-allocation byte slicing (`strings.IndexByte`). If `req.RequestURI` is empty, it safely falls back to `req.Path`.
 - **Dual-Path Evaluation**: For all rules targeting `InspectURL`, pattern matching is evaluated against both:
   1. The raw wire URL path (`urlPath`, preserving `%2e%2e`, `/../`, `%2E%2E`).
@@ -104,7 +104,7 @@ Toron's WAF engine ([`pkg/waf/waf.go`](file:///Users/sneha/Developer/toron-resea
 
 ### Layer 2: Route-Aware Static Prefix Escape Guard (`pkg/router/router.go`)
 
-To guarantee security even when WAF middleware is omitted, disabled, or configured in `detection` mode, Toron's core router ([`pkg/router/router.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go)) independently enforces static prefix containment:
+To guarantee security even when WAF middleware is omitted, disabled, or configured in `detection` mode, Toron's core router (`pkg/router/router.go`) independently enforces static prefix containment:
 - **Prefix Boundary Inspection**: During `Router.ServeHTTP`, when exact route matching fails, the router inspects all registered static routes (`pr.routeType == string(RouteTypeStatic)`).
 - **Targeting vs Escaping Invariant**:
   - Checks if the ingress path (either raw wire path or iterative unescaped candidate) explicitly targeted a configured static mount prefix $P$ (e.g. `/internal/dashboard`):
@@ -129,7 +129,7 @@ To guarantee security even when WAF middleware is omitted, disabled, or configur
 
 ### Layer 3: Static Filesystem Containment (`Router.createStaticHandler`)
 
-For legitimate requests that remain within the prefix boundary (e.g. `/internal/dashboard/assets/app.js`), [`createStaticHandler`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go) applies filesystem-level defense:
+For legitimate requests that remain within the prefix boundary (e.g. `/internal/dashboard/assets/app.js`), `createStaticHandler` applies filesystem-level defense:
 - Computes `cleanRel := filepath.Clean(filepath.FromSlash(strings.TrimPrefix(fileRelPath, "/")))`.
 - Uses `filepath.Rel(absDir, targetPath)` to ensure the path does not resolve outside the target filesystem root.
 - Uses `filepath.EvalSymlinks(targetPath)` to prevent directory escapes via symbolic links.
@@ -306,7 +306,7 @@ A critical architectural invariant is that hardening static file routes does not
 
 ## Transport Socket Teardown Enforcement (`Connection: close`)
 
-In accordance with [`REQ-107`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-107.md) and [`ADR-107`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-107.md), every path traversal rejection emitted by either Layer 1 (WAF) or Layer 2 (Router) injects:
+In accordance with `REQ-107` and `ADR-107`, every path traversal rejection emitted by either Layer 1 (WAF) or Layer 2 (Router) injects:
 
 ```http
 Connection: close

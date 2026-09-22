@@ -94,7 +94,7 @@ related_to:
 
 ## Overview
 
-Toron utilizes a decoupled dual-file YAML configuration architecture separating infrastructure parameters ([`config.yaml`](../../config.yaml)) from application routing rules ([`routes.yaml`](../../routes.yaml)).
+Toron utilizes a decoupled dual-file YAML configuration architecture separating infrastructure parameters (`config.yaml`) from application routing rules (`routes.yaml`).
 
 ## Specifying Configuration Files
 
@@ -409,7 +409,7 @@ server:
 
 ### In-Memory HTTP Response Caching & Host:Port Authority Isolation (`server.cache`)
 
-Toron provides an enterprise-grade in-memory HTTP response caching engine ([`pkg/router/cache.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go)) compliant with the **RFC 9111 HTTP Caching specification** ([`REQ-134`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-134.md), [`ADR-134`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-134.md)).
+Toron provides an enterprise-grade in-memory HTTP response caching engine (`pkg/router/cache.go`) compliant with the **RFC 9111 HTTP Caching specification** (`REQ-134`, `ADR-134`).
 
 #### Configuration Options
 
@@ -576,7 +576,7 @@ routes:
 
 ### Upstream Reverse Proxy & Transport Configuration (`ProxyTransportConfig`)
 
-Toron's reverse proxy engine (`pkg/proxy`) features granular Layer 7 upstream connection pooling, egress routing, and transport-level controls configured under `proxy.transport` globally in `config.yaml` or overridden per route under `routes[].transport` in `routes.yaml` ([`REQ-123`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-123.md), [`REQ-124`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-124.md), [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md)).
+Toron's reverse proxy engine (`pkg/proxy`) features granular Layer 7 upstream connection pooling, egress routing, and transport-level controls configured under `proxy.transport` globally in `config.yaml` or overridden per route under `routes[].transport` in `routes.yaml` (`REQ-123`, `REQ-124`, `REQ-129`).
 
 #### Transport Configuration Reference
 
@@ -600,7 +600,7 @@ Toron's reverse proxy engine (`pkg/proxy`) features granular Layer 7 upstream co
 
 #### Streaming by Default & Dynamic Bounded Ingestion Clamping (REQ-129 / TASK-152)
 
-Modern API gateways frequently manage routes combining standard REST microservices with real-time streaming (Server-Sent Events `text/event-stream`, live telemetry, or file downloads). When routes configure transparent compression or response caching, Toron enforces **Dynamic Bounded Ingestion Clamping** to guarantee constant $O(1) \le 32\text{KB}$ memory boundedness per active stream and neutralize the Upstream Infinite Stream OOM Bomb ([`SEC-36`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L483-L491), CWE-400, CWE-770):
+Modern API gateways frequently manage routes combining standard REST microservices with real-time streaming (Server-Sent Events `text/event-stream`, live telemetry, or file downloads). When routes configure transparent compression or response caching, Toron enforces **Dynamic Bounded Ingestion Clamping** to guarantee constant $O(1) \le 32\text{KB}$ memory boundedness per active stream and neutralize the Upstream Infinite Stream OOM Bomb (`SEC-36`, CWE-400, CWE-770):
 
 1. **Streaming Decision Rule**:
    - Direct socket streaming (`canStream = true`) activates if:
@@ -640,13 +640,13 @@ routes:
 
 #### Inbound Chunked Transfer-Encoding Ingestion & Edge Normalization (REQ-133 / TASK-156)
 
-Toron acts as an **Active Ingress Smuggling Firewall** for incoming HTTP/1.1 chunked payloads (`Transfer-Encoding: chunked`). Rather than blindly passing untrusted chunk frames to origin backends or statically rejecting all chunked traffic, Toron provides zero-tolerance RFC 9112 §7.1 wire decoding and upstream canonical re-framing ([`REQ-133`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-133.md), [`ADR-133`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-133.md)).
+Toron acts as an **Active Ingress Smuggling Firewall** for incoming HTTP/1.1 chunked payloads (`Transfer-Encoding: chunked`). Rather than blindly passing untrusted chunk frames to origin backends or statically rejecting all chunked traffic, Toron provides zero-tolerance RFC 9112 §7.1 wire decoding and upstream canonical re-framing (`REQ-133`, `ADR-133`).
 
 ##### Operational Profiles (`inbound_chunked_mode`)
 
 - **`"normalize"` (Default)**: Consumes and validates chunked client streams at the edge, verifies exact payload length $L$, strips `Transfer-Encoding`, sets an authoritative `Content-Length: L` header, and forwards a clean, standard HTTP request upstream. Downstream microservices (Node.js, Python, Ruby, Go) are 100% shielded from chunked parsing vulnerabilities and desynchronizations ([CWE-444](https://cwe.mitre.org/data/definitions/444.html)).
 - **`"passthrough"`**: Streams validated canonical chunks upstream with $O(1) \le 32\,\text{KB}$ constant memory. If the client disconnects or transmits invalid framing, Toron immediately cancels the upstream context and closes the client TCP connection. Recommended for large file or media uploads.
-- **`"reject"`**: Immediately rejects incoming chunked requests with `HTTP/1.1 501 Not Implemented: Inbound chunked transfer encoding is disabled` and severs the TCP connection. Preserves legacy [`ADR-056`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-056.md) perimeter behavior for ultra-hardened, zero-trust endpoints.
+- **`"reject"`**: Immediately rejects incoming chunked requests with `HTTP/1.1 501 Not Implemented: Inbound chunked transfer encoding is disabled` and severs the TCP connection. Preserves legacy `ADR-056` perimeter behavior for ultra-hardened, zero-trust endpoints.
 
 ##### Priority Resolution Hierarchy
 
@@ -946,7 +946,7 @@ All log files are opened in append mode (`O_APPEND`), making them immediately sa
 
 ### Layer 4 TCP & UDP Transport Proxy Configuration (`routes.yaml`)
 
-Toron provides raw Layer 4 socket forwarding (`type: "tcp"`) and datagram forwarding (`type: "udp"`). Both proxies feature resource bounds and idle deadline enforcement ([`SEC-26`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L375-L383)):
+Toron provides raw Layer 4 socket forwarding (`type: "tcp"`) and datagram forwarding (`type: "udp"`). Both proxies feature resource bounds and idle deadline enforcement (`SEC-26`):
 
 #### Configuration Parameters
 
@@ -966,7 +966,7 @@ For deep architectural details, buffer recycling (`sync.Pool`), session socket r
 
 ### Trusted Proxies & Ingress Anti-Spoofing Architecture (`trusted_proxies`)
 
-Toron enforces strict client IP validation and anti-spoofing guarantees across all supported transport protocols—HTTP/1.1, HTTP/2 multiplexed streams, and HTTP/3 QUIC datagrams ([`SEC-31`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L428-L436), [`REQ-092`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-092.md), [`ADR-087`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-087.md)).
+Toron enforces strict client IP validation and anti-spoofing guarantees across all supported transport protocols—HTTP/1.1, HTTP/2 multiplexed streams, and HTTP/3 QUIC datagrams (`SEC-31`, `REQ-092`, `ADR-087`).
 
 #### Core Principles
 
@@ -990,7 +990,7 @@ Toron enforces strict client IP validation and anti-spoofing guarantees across a
    | **Structured Access Logging** | Logs physical remote IP in access logs, preventing audit trail poisoning. | Logs verified client IP identity. |
 
 4. **Preserved Mobile Roaming Affinity (Non-Goal Invariant)**:
-   - Sticky session load balancing (`pkg/proxy/sticky.go`) pursuant to [`REQ-030`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-030.md) is intentionally decoupled from access control. It evaluates client identifiers to maintain stable backend routing during mobile cellular tower handovers and carrier CGNAT reassignments without regression.
+   - Sticky session load balancing (`pkg/proxy/sticky.go`) pursuant to `REQ-030` is intentionally decoupled from access control. It evaluates client identifiers to maintain stable backend routing during mobile cellular tower handovers and carrier CGNAT reassignments without regression.
 
 #### Configuration Options
 

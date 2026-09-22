@@ -49,11 +49,11 @@ related_to:
 
 ## Overview
 
-At the heart of Toron is the **Event Reactor** ([`pkg/reactor`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor) and [`pkg/server`](file:///Users/sneha/Developer/toron-research/toron/pkg/server)), a high-performance network execution engine designed to handle tens of thousands of concurrent client connections with sub-millisecond latency, minimal memory allocations, and rock-solid protocol defense.
+At the heart of Toron is the **Event Reactor** (`pkg/reactor` and `pkg/server`), a high-performance network execution engine designed to handle tens of thousands of concurrent client connections with sub-millisecond latency, minimal memory allocations, and rock-solid protocol defense.
 
-Beginning with [`REQ-126`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md) and [`ADR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-126.md) ([`TASK-149`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-149.md)), Toron incorporates **Adaptive Socket Deadline Amortization** and **Activity-Refreshed Streaming Timeouts**, slashing operating system deadline system calls by $>99\%$ while preserving 100% compliance with Slowloris ([`REQ-005`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-005.md) §2) and Slow-Read Denial of Service ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)) protections.
+Beginning with `REQ-126` and `ADR-126` (`TASK-149`), Toron incorporates **Adaptive Socket Deadline Amortization** and **Activity-Refreshed Streaming Timeouts**, slashing operating system deadline system calls by $>99\%$ while preserving 100% compliance with Slowloris (`REQ-005` §2) and Slow-Read Denial of Service ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)) protections.
 
-Furthermore, under [`REQ-127`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-127.md) and [`ADR-127`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-127.md) ([`TASK-150`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-150.md)), Toron enforces **Explicit Client Socket Option Tuning** (`TCP_NODELAY`, 60-second TCP keep-alive probing) and **Recursive Socket Unwrapping** ([`ExtractTCPConn`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go#L15-L40)). This eliminates catastrophic 40ms–200ms Nagle delayed-ACK latency freezes on small payloads and real-time streaming frames (Server-Sent Events / SSE), while actively detecting and reaping half-open client sockets during quiet streaming intervals without leaking worker goroutines or upstream proxy handles ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)).
+Furthermore, under `REQ-127` and `ADR-127` (`TASK-150`), Toron enforces **Explicit Client Socket Option Tuning** (`TCP_NODELAY`, 60-second TCP keep-alive probing) and **Recursive Socket Unwrapping** (`ExtractTCPConn`). This eliminates catastrophic 40ms–200ms Nagle delayed-ACK latency freezes on small payloads and real-time streaming frames (Server-Sent Events / SSE), while actively detecting and reaping half-open client sockets during quiet streaming intervals without leaking worker goroutines or upstream proxy handles ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)).
 
 ---
 
@@ -117,7 +117,7 @@ Worker Goroutine (Server.handleConn)
 
 ## High-Concurrency Socket Syscall Saturation Problem
 
-During high-concurrency performance benchmarks under [`REQ-121`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-121.md) and [`REQ-124`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-124.md), Toron processes ~24.5k requests per second per container. In the server connection loop, naive per-transaction deadline enforcement required two operating system socket system calls on every HTTP transaction:
+During high-concurrency performance benchmarks under `REQ-121` and `REQ-124`, Toron processes ~24.5k requests per second per container. In the server connection loop, naive per-transaction deadline enforcement required two operating system socket system calls on every HTTP transaction:
 
 ```go
 conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
@@ -130,13 +130,13 @@ At 24.5k RPS, this resulted in **~49,000 socket deadline system calls per second
 - CPU instruction cache (I-cache) and data cache (D-cache) evictions.
 - Runtime netpoller mutex lock contention and timer heap restructuring.
 
-Simply eliminating deadlines was strictly rejected because it would violate [`REQ-005 §2`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-005.md#L40), [`TASK-004 §3`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-004.md#L41), and [`ADR-083`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-083.md), opening the gateway to Slowloris connection starvation and Slow-Read DoS ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)).
+Simply eliminating deadlines was strictly rejected because it would violate `REQ-005 §2`, `TASK-004 §3`, and `ADR-083`, opening the gateway to Slowloris connection starvation and Slow-Read DoS ([CWE-400](https://cwe.mitre.org/data/definitions/400.html)).
 
 ---
 
 ## Adaptive Socket Deadline Amortization
 
-To eliminate redundant kernel calls while preserving 100% security defense, [`ADR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-126.md) introduced [`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23) in [`pkg/server/deadline.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go).
+To eliminate redundant kernel calls while preserving 100% security defense, `ADR-126` introduced `connDeadlineTracker` in `pkg/server/deadline.go`.
 
 ### Tracker Architecture
 
@@ -194,11 +194,11 @@ flowchart TD
 - **Guaranteed Security Margin ($> \tau/2$)**:
   Amortization only elides system calls when more than $50\%$ of the configured timeout window remains active. For a 5-second `read_timeout`, the socket is guaranteed to have at least 2.5 seconds of execution window. Since normal HTTP request processing in Toron completes in $< 2\text{ms}$, 2.5 seconds is $> 1,000\times$ the required request processing duration.
 - **Syscall Reduction ($> 99\%$)**:
-  During rapid keep-alive bursts where hundreds of requests complete in tens of milliseconds, all subsequent requests execute within the initial half-window without issuing a single system call. Verified in [`TC-126.1`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L160-L190), 1,000 burst requests execute with $\le 2$ read deadline syscalls and $\le 2$ write deadline syscalls, achieving **$> 99.8\%$ syscall reduction**.
+  During rapid keep-alive bursts where hundreds of requests complete in tens of milliseconds, all subsequent requests execute within the initial half-window without issuing a single system call. Verified in `TC-126.1`, 1,000 burst requests execute with $\le 2$ read deadline syscalls and $\le 2$ write deadline syscalls, achieving **$> 99.8\%$ syscall reduction**.
 - **Deadline Renewal**:
-  When the remaining window decays to $\le \tau/2$, or if the timeout duration changes, the tracker renews the deadline by issuing a fresh system call to the socket and updating cached state ([`TC-126.2`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L193-L230)).
+  When the remaining window decays to $\le \tau/2$, or if the timeout duration changes, the tracker renews the deadline by issuing a fresh system call to the socket and updating cached state (`TC-126.2`).
 - **Zero-Timeout Benchmark Mode**:
-  When `read_timeout: 0` or `write_timeout: 0` is configured, the tracker clears any active deadline once via `conn.SetDeadline(time.Time{})`. All subsequent transactions return `nil` immediately, executing **zero system calls** for maximum benchmark throughput in isolated environments ([`TC-126.7`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L359-L384)).
+  When `read_timeout: 0` or `write_timeout: 0` is configured, the tracker clears any active deadline once via `conn.SetDeadline(time.Time{})`. All subsequent transactions return `nil` immediately, executing **zero system calls** for maximum benchmark throughput in isolated environments (`TC-126.7`).
 
 ---
 
@@ -208,7 +208,7 @@ A critical security challenge in socket deadline amortization is preventing an a
 
 ### State Synchronization Mechanism
 
-In [`pkg/server/server.go:214-221`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L214-L221), Toron's connection loop inspects the state of the socket buffer:
+In `pkg/server/server.go:214-221`, Toron's connection loop inspects the state of the socket buffer:
 
 ```go
 if !firstRequest && br.Buffered() == 0 && s.config.IdleTimeout > 0 {
@@ -273,19 +273,19 @@ sequenceDiagram
 1. **Immediate Reset**: `tracker.ResetReadAmortization()` clears `lastReadDeadline` under mutex protection, ensuring no stale timestamp survives into the idle phase.
 2. **Forced Arming**: `tracker.ForceSetReadDeadline` immediately sets the kernel socket read deadline to `time.Now().Add(idle_timeout)` without evaluation.
 3. **Pipelining Preservation**: If `br.Buffered() > 0`, pipelined request data is already present in the reader buffer; Toron continues parsing under the active `read_timeout`.
-4. **Clean Keep-Alive Teardown**: When `idle_timeout` expires on a persistent socket, Toron detects `errors.As(err, &netErr) && netErr.Timeout() && !firstRequest` and exits cleanly without logging spurious error diagnostics ([`TC-126.3`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L233-L257)).
+4. **Clean Keep-Alive Teardown**: When `idle_timeout` expires on a persistent socket, Toron detects `errors.As(err, &netErr) && netErr.Timeout() && !firstRequest` and exits cleanly without logging spurious error diagnostics (`TC-126.3`).
 
 ---
 
 ## Activity-Refreshed Streaming Write Deadlines
 
-For long-lived streaming connections—such as Server-Sent Events (SSE `text/event-stream`), live telemetry feeds, chunked transfer encoding, or direct socket proxy fast-paths ([`REQ-125`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md))—static deadlines introduce an architectural dilemma:
+For long-lived streaming connections—such as Server-Sent Events (SSE `text/event-stream`), live telemetry feeds, chunked transfer encoding, or direct socket proxy fast-paths (`REQ-125`)—static deadlines introduce an architectural dilemma:
 - **Static Write Deadline**: Setting a static 5-second `write_timeout` prior to emitting headers kills healthy streams after 5 seconds.
 - **Unbounded Write Deadline**: Completely removing `write_timeout` exposes Toron to **Slow-Read Denial of Service ([CWE-400](https://cwe.mitre.org/data/definitions/400.html))**. A malicious or stalled client reading at 1 byte/minute or advertising a zero TCP receive window pins server worker goroutines and file descriptors indefinitely until gateway exhaustion occurs.
 
 ### Chunk Relay Loop with Per-Chunk Refreshes
 
-In [`pkg/server/server.go:331-363`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L331-L363), when `res.StreamBody != nil`, Toron enforces activity-refreshed write deadlines:
+In `pkg/server/server.go:331-363`, when `res.StreamBody != nil`, Toron enforces activity-refreshed write deadlines:
 
 ```go
 if res.StreamBody != nil {
@@ -375,16 +375,16 @@ sequenceDiagram
 
 ### Teardown Guarantee on Slow-Read Clients ([CWE-400](https://cwe.mitre.org/data/definitions/400.html))
 
-1. **Active Consumption**: As long as the downstream client consumes chunks, each chunk successfully written refreshes the deadline (`ForceSetWriteDeadline`). Healthy streams (SSE feeds, live telemetry) persist for minutes, hours, or days ([`TC-126.4`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L260-L293)).
+1. **Active Consumption**: As long as the downstream client consumes chunks, each chunk successfully written refreshes the deadline (`ForceSetWriteDeadline`). Healthy streams (SSE feeds, live telemetry) persist for minutes, hours, or days (`TC-126.4`).
 2. **Send Buffer Saturation**: If a client stops reading, advertises a zero TCP window, or throttles reading below the rate needed to consume chunks, the kernel TCP send buffer saturates.
 3. **Kernel Deadline Expiry**: `conn.Write(buf[:n])` blocks waiting for window space until `time.Now().Add(write_timeout)` expires in the kernel.
-4. **Immediate Teardown**: `conn.Write` returns `os.ErrDeadlineExceeded` (`net.Error.Timeout() == true`). Toron exits the loop immediately, executes `defer res.StreamBody.Close()` to tear down upstream origin handles, closes the client socket, and returns worker capacity to the pool ([`TC-126.5`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L295-L324)).
+4. **Immediate Teardown**: `conn.Write` returns `os.ErrDeadlineExceeded` (`net.Error.Timeout() == true`). Toron exits the loop immediately, executes `defer res.StreamBody.Close()` to tear down upstream origin handles, closes the client socket, and returns worker capacity to the pool (`TC-126.5`).
 
 ---
 
 ## Bidirectional Upgraded Relays (`relayStreams`)
 
-In upgraded full-duplex tunnels (such as WebSockets, RFC 8441 HTTP/2 Extended CONNECT, or L4 TCP proxy tunnels) in [`pkg/server/server.go:696-770`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L696-L770):
+In upgraded full-duplex tunnels (such as WebSockets, RFC 8441 HTTP/2 Extended CONNECT, or L4 TCP proxy tunnels) in `pkg/server/server.go:696-770`:
 1. **Dual Tracker Wrapping**: Both connections are wrapped in `connDeadlineTracker` via `toDeadlineTracker(conn)`.
 2. **Amortized Bidirectional I/O**:
    ```go
@@ -398,7 +398,7 @@ In upgraded full-duplex tunnels (such as WebSockets, RFC 8441 HTTP/2 Extended CO
            }
        }
    ```
-   This elides $>99\%$ of redundant system calls during high-frequency bidirectional frame exchanges ([`TC-126.6`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md#L326-L356)).
+   This elides $>99\%$ of redundant system calls during high-frequency bidirectional frame exchanges (`TC-126.6`).
 3. **Inactivity Disconnection**: If both directions fall silent for longer than `idleTimeout`, the socket read deadline triggers, and `closeBoth()` shuts down both sockets.
 4. **TCP Half-Close Forwarding**: `connDeadlineTracker` implements `CloseWrite() error`, forwarding TCP `FIN` frames gracefully so the peer can finish transmitting pending responses.
 
@@ -418,7 +418,7 @@ To ensure that wrapping sockets in `connDeadlineTracker` does not break low-leve
 
 ## Explicit Client Socket Option Tuning (`TCP_NODELAY` & Keep-Alive)
 
-Under [`REQ-127`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-127.md) and [`ADR-127`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-127.md) ([`TASK-150`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-150.md)), Toron explicitly tunes client transport sockets immediately upon accept via [`ConfigureTCPSocket`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go#L48-L71) in [`pkg/reactor/socket.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go).
+Under `REQ-127` and `ADR-127` (`TASK-150`), Toron explicitly tunes client transport sockets immediately upon accept via `ConfigureTCPSocket` in `pkg/reactor/socket.go`.
 
 ### The Nagle Algorithm & TCP Delayed ACK Latency Problem
 
@@ -471,7 +471,7 @@ sequenceDiagram
 
 ### Transport Configuration Implementation
 
-Toron resolves this by disabling Nagle's algorithm and activating 60-second keep-alive probes via [`ConfigureTCPSocket`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go#L48-L71):
+Toron resolves this by disabling Nagle's algorithm and activating 60-second keep-alive probes via `ConfigureTCPSocket`:
 
 ```go
 func ConfigureTCPSocket(conn net.Conn) error {
@@ -502,9 +502,9 @@ func ConfigureTCPSocket(conn net.Conn) error {
 
 #### Dual-Integration Points
 
-1. **Accept Loop Fast-Path ([`pkg/reactor/reactor.go:192`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/reactor.go#L192))**:
+1. **Accept Loop Fast-Path (`pkg/reactor/reactor.go:192`)**:
    `ConfigureTCPSocket(conn)` is invoked immediately upon return from `ln.Accept()`. This guarantees that the transport socket is fully tuned **prior** to connection tracking (`r.trackConn(conn, true)`) and before worker queue submission (`r.tasks <- conn`).
-2. **Server Handler Safeguard ([`pkg/server/server.go:173`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L173))**:
+2. **Server Handler Safeguard (`pkg/server/server.go:173`)**:
    An idempotent safeguard call `_ = ConfigureTCPSocket(conn)` executes at the entry of `Server.handleConn`. If a connection undergoes TLS termination or protocol upgrades, this ensures the underlying physical socket remains tuned.
 
 ---
@@ -527,11 +527,11 @@ Persistent streaming connections (Server-Sent Events, live telemetry feeds, long
 In Toron's modular pipeline, connections can be wrapped across multiple abstractions:
 1. Raw `*net.TCPConn` accepted from `net.TCPListener`.
 2. Standard library TLS wrappers (`*crypto/tls.Conn` exposing `NetConn() net.Conn`).
-3. Custom deadline amortization wrappers ([`*connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23) exposing `Unwrap() net.Conn`).
+3. Custom deadline amortization wrappers (`*connDeadlineTracker` exposing `Unwrap() net.Conn`).
 4. HTTP/2 preface sniffing wrappers (`*prefixConn` exposing `Unwrap() net.Conn`).
 5. Arbitrary multi-tiered nesting (e.g. `*connDeadlineTracker` $\to$ `*prefixConn` $\to$ `*tls.Conn` $\to$ `*net.TCPConn`).
 
-To reliably reach the underlying transport socket regardless of wrapper hierarchy, [`ExtractTCPConn`](file:///Users/sneha/Developer/toron-research/toron/pkg/reactor/socket.go#L15-L40) implements an iterative unwrapper with circular reference guards:
+To reliably reach the underlying transport socket regardless of wrapper hierarchy, `ExtractTCPConn` implements an iterative unwrapper with circular reference guards:
 
 ```go
 func ExtractTCPConn(conn net.Conn) *net.TCPConn {
@@ -613,9 +613,9 @@ flowchart TD
 
 ---
 
-## Summary of Verification & Performance Results ([TC-126](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md), [TC-127](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-127.md))
+## Summary of Verification & Performance Results (TC-126, TC-127)
 
-### Deadline Amortization & Streaming Timeouts ([TC-126](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-126.md))
+### Deadline Amortization & Streaming Timeouts (TC-126)
 
 | Test Case | Description | Verification Target | Benchmark Outcome |
 | :--- | :--- | :--- | :--- |
@@ -630,7 +630,7 @@ flowchart TD
 | **`TC-126.9`** | Regression Safety | Zero regressions on `TC-087` / `TC-088` | 100% pass across all Slowloris test suites |
 | **`TC-126.10`**| Race Safety | Concurrency under mixed burst/stream traffic | 100% race-clean under `go test -race` |
 
-### Explicit Socket Tuning & Slab Recycling ([TC-127](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-127.md))
+### Explicit Socket Tuning & Slab Recycling (TC-127)
 
 | Test Case | Description | Verification Target | Test Result |
 | :--- | :--- | :--- | :--- |

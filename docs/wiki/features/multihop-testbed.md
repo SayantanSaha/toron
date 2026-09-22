@@ -35,7 +35,7 @@ related_to:
 
 ## Overview
 
-The **Heterogeneous Multi-Hop Backend Origin Testbed** ([`benchmarks/multihop/runner.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go)) evaluates Toron acting as an HTTP/2 and HTTP/1.1 edge gateway reverse-proxying requests to three distinct, live production backend HTTP parser runtimes across persistent connection pools:
+The **Heterogeneous Multi-Hop Backend Origin Testbed** (`benchmarks/multihop/runner.go`) evaluates Toron acting as an HTTP/2 and HTTP/1.1 edge gateway reverse-proxying requests to three distinct, live production backend HTTP parser runtimes across persistent connection pools:
 
 1. **Node.js 20 LTS**: C-based `llhttp` parser engine (`/node/*` $\rightarrow$ port `9101`).
 2. **Python 3.11**: ASGI `uvicorn` / `h11` parser engine (`/python/*` $\rightarrow$ port `9102`).
@@ -118,11 +118,11 @@ flowchart TD
 
 ### 1.1 Standalone In-Process Mode (`--standalone`)
 - **Zero-Dependency CI Verification**: Executes entirely using the Go standard library and vendored `golang.org/x/net/http2`, requiring no Docker daemon or external services.
-- **Dynamic Loopback Listeners**: Initializes an in-process Toron Edge server on `127.0.0.1:0` via [`SetupStandaloneTestbed()`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L343) alongside three in-process simulated backend mock listeners.
+- **Dynamic Loopback Listeners**: Initializes an in-process Toron Edge server on `127.0.0.1:0` via `SetupStandaloneTestbed()` alongside three in-process simulated backend mock listeners.
 - **Execution Speed**: All 30 evaluation scenarios complete in approximately 1–2 seconds.
 
 ### 1.2 Live Multi-Container Mode (`--docker`)
-- **Docker Compose Bridge Cluster**: Automated orchestration of 4 container services across an isolated bridge network `multihop-net` via [`benchmarks/multihop/docker-compose.multihop.yml`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/docker-compose.multihop.yml).
+- **Docker Compose Bridge Cluster**: Automated orchestration of 4 container services across an isolated bridge network `multihop-net` via `benchmarks/multihop/docker-compose.multihop.yml`.
 - **Physical Host Routing**: The testbed runner connects to Toron Edge exposed at `127.0.0.1:8080`, evaluating the full operating system TCP/IP network stack, kernel buffers, socket framing, and cleartext h2c connection prefaces.
 - **Heterogeneous Runtimes**: Real-world validation against production `llhttp` (Node.js), `uvicorn`/`h11` (Python), and `net/http` (Go).
 
@@ -130,7 +130,7 @@ flowchart TD
 
 ## 2. Live Testbed Architecture (`SetupLiveTestbed`)
 
-When launched with `-standalone=false -edge-addr 127.0.0.1:8080`, the harness initializes its runtime state through [`SetupLiveTestbed(edgeAddr)`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L408-L428):
+When launched with `-standalone=false -edge-addr 127.0.0.1:8080`, the harness initializes its runtime state through `SetupLiveTestbed(edgeAddr)`:
 
 ```go
 func SetupLiveTestbed(edgeAddr string) *TestbedEnvironment {
@@ -157,12 +157,12 @@ func SetupLiveTestbed(edgeAddr string) *TestbedEnvironment {
 ```
 
 ### Architectural Invariants:
-1. **Nil Pointer Dereference Immunity**: Non-nil backend target descriptors (`SimulatedBackend`) ensure that iteration over `backends := []*SimulatedBackend{env.NodeBackend, env.PyBackend, env.GoBackend}` in [`RunAllScenarios`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L922) never encounters a nil pointer dereference when accessing `b.Runtime` or `b.Prefix`.
-2. **Reverse Proxy Upstream Routing**: Toron Edge routes requests via [`benchmarks/multihop/routes.multihop.yaml`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/routes.multihop.yaml) using path prefix stripping:
+1. **Nil Pointer Dereference Immunity**: Non-nil backend target descriptors (`SimulatedBackend`) ensure that iteration over `backends := []*SimulatedBackend{env.NodeBackend, env.PyBackend, env.GoBackend}` in `RunAllScenarios` never encounters a nil pointer dereference when accessing `b.Runtime` or `b.Prefix`.
+2. **Reverse Proxy Upstream Routing**: Toron Edge routes requests via `benchmarks/multihop/routes.multihop.yaml` using path prefix stripping:
    - `/node/*` $\longrightarrow$ `http://node-origin:9101/*`
    - `/python/*` $\longrightarrow$ `http://python-origin:9102/*`
    - `/go/*` $\longrightarrow$ `http://go-origin:9103/*`
-3. **Safe Teardown Lifecycle Guards**: In live mode, backend processes are managed by Docker Compose. In [`sb.Close()`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L106) and [`env.Teardown()`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L431), lifecycle cleanup verifies `sb.Server != nil` and `env.EdgeServer != nil` before closing listeners, preventing nil dereferences during exit traps.
+3. **Safe Teardown Lifecycle Guards**: In live mode, backend processes are managed by Docker Compose. In `sb.Close()` and `env.Teardown()`, lifecycle cleanup verifies `sb.Server != nil` and `env.EdgeServer != nil` before closing listeners, preventing nil dereferences during exit traps.
 
 ---
 
@@ -171,13 +171,13 @@ func SetupLiveTestbed(edgeAddr string) *TestbedEnvironment {
 All direct in-memory calls (`env.EdgeServer.HTTP2AdapterHandler().ServeHTTP(...)`) are eliminated in the live execution path. Instead, three wire-level protocol adapters interface with the target gateway:
 
 ### 3.1 Cleartext HTTP/2 (Prior Knowledge `h2c`) Adapter
-Implemented in [`executeH2CRequest`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L878):
+Implemented in `executeH2CRequest`:
 - Utilizes `golang.org/x/net/http2.Transport` configured with `AllowHTTP: true` and a custom dialer (`net.Dialer{Timeout: 2*time.Second}`).
 - Transmits HTTP/2 requests directly over cleartext TCP, exercising Toron's HTTP/2 preface detection, SETTINGS exchange, and multiplexed stream routing.
 - Automatically cleans up idle connections via deferred `tr.CloseIdleConnections()` and enforces bounded 3-second deadlines.
 
 ### 3.2 Raw HTTP/2 Wire Framing Adapter
-Implemented in [`executeH2WireProbe`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L800):
+Implemented in `executeH2WireProbe`:
 - Standard Go HTTP clients sanitize or refuse to emit malformed HTTP/2 headers (e.g., `Transfer-Encoding: chunked`, duplicate `Content-Length`, or CRLF in header values).
 - To test the edge gateway's RFC compliance directly over the wire, `executeH2WireProbe`:
   1. Opens a raw TCP connection to `env.EdgeAddr`.
@@ -188,9 +188,9 @@ Implemented in [`executeH2WireProbe`](file:///Users/sneha/Developer/toron-resear
   6. Captures response frames, recording HTTP `400 Bad Request` or protocol stream terminations (`RST_STREAM`, `GOAWAY`) as successful active defense rejections (`Stage1Passed = true`).
 
 ### 3.3 Raw TCP Socket Stream Probing
-Implemented in [`executeRawSocketProbe`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L715):
+Implemented in `executeRawSocketProbe`:
 - Evaluates HTTP/1.1 smuggling vectors (`VECTOR-04`, `VECTOR-05`, `VECTOR-06`) by writing raw byte streams to TCP sockets.
-- Captures status line responses and verifies fail-fast socket teardown (`FIN`/`RST`) via [`verifySocketClosed`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L297), confirming that leftover unparsed bytes in socket buffers cannot trigger request pipeline desynchronization.
+- Captures status line responses and verifies fail-fast socket teardown (`FIN`/`RST`) via `verifySocketClosed`, confirming that leftover unparsed bytes in socket buffers cannot trigger request pipeline desynchronization.
 
 ---
 
@@ -213,8 +213,8 @@ flowchart LR
 
 ### Verification Steps:
 1. The harness transmits an h2c request to `POST /<prefix>/echo` containing `:protocol: websocket` and `:custom-pseudo: invisible`.
-2. All three backend origins ([`backends/node/server.js`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/backends/node/server.js), [`backends/python/server.py`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/backends/python/server.py), [`backends/go/main.go`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/backends/go/main.go)) implement `POST /echo`, echoing all received upstream headers as JSON under `"headers"`.
-3. In [`parseAndValidateEchoHeaders`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/multihop/runner.go#L783), the harness unmarshals the JSON response body and iterates over all keys.
+2. All three backend origins (`backends/node/server.js`, `backends/python/server.py`, `backends/go/main.go`) implement `POST /echo`, echoing all received upstream headers as JSON under `"headers"`.
+3. In `parseAndValidateEchoHeaders`, the harness unmarshals the JSON response body and iterates over all keys.
 4. If any key starts with `:` (`strings.HasPrefix(strings.TrimSpace(k), ":")`), the scenario fails immediately with `pseudo-header leaked to upstream: <key>`.
 
 ---
@@ -319,8 +319,8 @@ The multi-hop testbed is integrated into Stage 5 of the master benchmark orchest
 ## 8. Artifact Retention & Schema Conformance (`REQ-119`)
 
 Execution of `run_multihop.sh` generates matching reports in both modes:
-- Canonical JSON: [`benchmarks/results/multihop_report.json`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/multihop_report.json)
-- Canonical Markdown: [`benchmarks/results/multihop_report.md`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/results/multihop_report.md)
+- Canonical JSON: `benchmarks/results/multihop_report.json`
+- Canonical Markdown: `benchmarks/results/multihop_report.md`
 - Historical Snapshot: `benchmarks/results/history/<timestamp>/`
 - Central Manifest: `benchmarks/results/history/manifest.json`
 

@@ -37,7 +37,7 @@ Toron features a fully automated, zero-touch ACME (Automated Certificate Managem
 * **Zero External Dependencies**: Implemented strictly using Go standard library cryptography (`crypto/ecdsa`, `crypto/tls`, `crypto/x509`, `crypto/sha256`) and pure standard library HTTP networking.
 * **HTTP-01 Challenge Responder**: Responds to Let's Encrypt automated challenge validation requests under `/.well-known/acme-challenge/<token>`.
 * **TLS-ALPN-01 Challenge Responder**: Supports cleartext-free validation over port 443 using TLS ALPN negotiation (`acme-tls/1`) and id-pe-acmeIdentifier extension (`1.3.6.1.5.5.7.1.31`).
-* **Hardened RFC 8555 Token Validation ([`SEC-38`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L539-L561))**: Zero-allocation single-pass byte scanner rejecting malformed tokens, traversal dots, whitespace, and padding before internal lock acquisition.
+* **Hardened RFC 8555 Token Validation (`SEC-38`)**: Zero-allocation single-pass byte scanner rejecting malformed tokens, traversal dots, whitespace, and padding before internal lock acquisition.
 * **HTTP Method Hardening ([RFC 7231 §6.5.5](https://datatracker.ietf.org/doc/html/rfc7231#section-6.5.5))**: Rejects unauthorized HTTP methods with `405 Method Not Allowed` and mandatory `Allow: GET, HEAD` headers.
 * **RFC 7231 §4.3.2 Compliant HEAD Probing**: Supports lightweight automated CA status checks via `HEAD` returning exact `Content-Length` with empty body.
 * **Automatic Background Renewal**: Continuously monitors certificate expiration and initiates automated renewal 30 days prior to expiry without downtime.
@@ -89,12 +89,12 @@ server:
 
 ### Threat Model & Vulnerability Remediation (CWE-20 / CWE-400 / CWE-703)
 
-Prior to the remediation of [`SEC-38`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L539-L561) ([`REQ-100`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-100.md), [`ADR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-100.md), [`TASK-123`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-123.md)), the HTTP-01 challenge responder in `pkg/acme/acme.go` accepted arbitrary string inputs from external callers, silently masked whitespace, permitted non-idempotent verbs, wrote bodies on `HEAD` requests, and acquired internal read locks on unvalidated requests.
+Prior to the remediation of `SEC-38` (`REQ-100`, `ADR-100`, `TASK-123`), the HTTP-01 challenge responder in `pkg/acme/acme.go` accepted arbitrary string inputs from external callers, silently masked whitespace, permitted non-idempotent verbs, wrote bodies on `HEAD` requests, and acquired internal read locks on unvalidated requests.
 
 The hardened implementation establishes six concrete security guarantees:
 
 1. **Zero-Allocation RFC 8555 Base64URL Validation (`IsValidACMEToken`)**:
-   [`IsValidACMEToken(token string) bool`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go#L202-L218) enforces that every challenge token conforms strictly to the unpadded base64url character set:
+   `IsValidACMEToken(token string) bool` enforces that every challenge token conforms strictly to the unpadded base64url character set:
    $$\text{Alphabet} = \{ \text{'a'-'z'}, \text{'A'-'Z'}, \text{'0'-'9'}, \text{'-'}, \text{'_'} \}$$
    Tokens containing base64 padding (`=`), path separators (`/`, `\`), path traversal patterns (`..`), whitespace (`' '`, `\t`, `\r`, `\n`), control characters (`0x00`-`0x1F`), or UTF-8 multi-byte characters are rejected.
 2. **Length Boundary Bounds ($1 \le \text{len} \le 128$)**:
@@ -165,13 +165,13 @@ curl -i http://localhost:8443/.well-known/acme-challenge/../etc/passwd
 
 ## 🔗 Related Documentation & Code References
 
-* [`ACMEManager`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go#L35) – Core ACME manager struct in [`pkg/acme/acme.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go).
-* [`IsValidACMEToken`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go#L202-L218) – Zero-allocation RFC 8555 token validation function.
-* [`ServeHTTP01Handler`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go#L222-L262) – Hardened HTTP-01 challenge responder handler.
-* [`acme_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme_test.go) – Automated test suite for HTTP-01 and TLS-ALPN-01 responders (`TC-100`).
-* [`SEC-38`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L539-L561) – Security audit finding record for ACME token syntax and method validation.
-* [`REQ-100`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-100.md) – Requirement specification for ACME token syntax validation and method hardening.
-* [`ADR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-100.md) – Architectural Decision Record for ACME token validation.
-* [`TC-100`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-100.md) – Test specification and automated verification suite for SEC-38.
-* [`CR-096`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-096.md) – Code review report approving SEC-38 remediation.
-* [`SR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-100.md) – Security review report assessing SEC-38 remediation.
+* `ACMEManager` – Core ACME manager struct in `pkg/acme/acme.go`.
+* `IsValidACMEToken` – Zero-allocation RFC 8555 token validation function.
+* `ServeHTTP01Handler` – Hardened HTTP-01 challenge responder handler.
+* `acme_test.go` – Automated test suite for HTTP-01 and TLS-ALPN-01 responders (`TC-100`).
+* `SEC-38` – Security audit finding record for ACME token syntax and method validation.
+* `REQ-100` – Requirement specification for ACME token syntax validation and method hardening.
+* `ADR-100` – Architectural Decision Record for ACME token validation.
+* `TC-100` – Test specification and automated verification suite for SEC-38.
+* `CR-096` – Code review report approving SEC-38 remediation.
+* `SR-100` – Security review report assessing SEC-38 remediation.

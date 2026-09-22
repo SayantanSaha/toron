@@ -74,14 +74,14 @@ Complete parameter reference for `config.yaml` and `routes.yaml`.
 | `trusted_proxies` | `list` | `[]` | List of trusted proxy CIDR subnets gating `X-Forwarded-For` and `X-Real-IP` evaluation |
 | `admin_subnets` | `list` | `[]` | Allowed CIDR subnets permitted to access `/internal/api/*` administrative endpoints |
 
-### Server Connection Timeouts & Adaptive Amortization ([REQ-126](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-126.md))
+### Server Connection Timeouts & Adaptive Amortization (REQ-126)
 
-Toron enforces strict socket connection timeouts to guarantee immunity against Slowloris socket exhaustion and Slow-Read Denial of Service attacks ([`REQ-005`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-005.md) §2, [`TASK-004`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-004.md) §3, [`ADR-083`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-083.md), [`ADR-126`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-126.md)).
+Toron enforces strict socket connection timeouts to guarantee immunity against Slowloris socket exhaustion and Slow-Read Denial of Service attacks (`REQ-005` §2, `TASK-004` §3, `ADR-083`, `ADR-126`).
 
 #### Parameter Specifications
 
 - **`read_timeout`** (`time.Duration`):
-  Defines the maximum time Toron will wait to read the entire HTTP request headers and body. Under steady-state keep-alive traffic bursts, client connections are wrapped in an adaptive tracker ([`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L14-L23)). If an active kernel read deadline was already established and more than half the timeout window remains ($R > \tau/2$), redundant operating system calls to `SetReadDeadline` are safely bypassed, achieving $>99\%$ syscall reduction at high request rates.
+  Defines the maximum time Toron will wait to read the entire HTTP request headers and body. Under steady-state keep-alive traffic bursts, client connections are wrapped in an adaptive tracker (`connDeadlineTracker`). If an active kernel read deadline was already established and more than half the timeout window remains ($R > \tau/2$), redundant operating system calls to `SetReadDeadline` are safely bypassed, achieving $>99\%$ syscall reduction at high request rates.
 - **`write_timeout`** (`time.Duration`):
   Defines the maximum duration allowed to serialize response headers and write body bytes to the client socket.
   - **Discrete Responses**: Amortized identically to read deadlines during rapid keep-alive transactions.
@@ -89,10 +89,10 @@ Toron enforces strict socket connection timeouts to guarantee immunity against S
 - **`idle_timeout`** (`time.Duration`):
   Defines the maximum duration an idle keep-alive connection can wait for the arrival of the next request. The moment an HTTP transaction completes and the socket reader buffer is empty (`br.Buffered() == 0`), Toron immediately invalidates the read amortization cache (`ResetReadAmortization()`) and forces an explicit kernel deadline (`ForceSetReadDeadline(now + idle_timeout)`). This prevents long active request read deadlines (e.g. 5s or 10s) from lingering into idle periods, guaranteeing that idle connections disconnect promptly after `idle_timeout`.
 - **`upgrade_idle_timeout`** (`time.Duration`):
-  Defines the maximum inactivity timeout for upgraded full-duplex protocols (WebSockets, RFC 8441 HTTP/2 CONNECT tunnels, L4 transparent TCP relays). In bidirectional relay loops ([`relayStreams`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/server.go#L696-L770)), deadlines are amortized during active frame transfers, while silence across both directions terminates the connection after `upgrade_idle_timeout`. If set to `0` or omitted, Toron defaults to `idle_timeout` (or `60s` if `idle_timeout` is also 0) as a critical security fail-safe ([`SEC-27`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L384-L392), [`ADR-083`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-083.md)).
+  Defines the maximum inactivity timeout for upgraded full-duplex protocols (WebSockets, RFC 8441 HTTP/2 CONNECT tunnels, L4 transparent TCP relays). In bidirectional relay loops (`relayStreams`), deadlines are amortized during active frame transfers, while silence across both directions terminates the connection after `upgrade_idle_timeout`. If set to `0` or omitted, Toron defaults to `idle_timeout` (or `60s` if `idle_timeout` is also 0) as a critical security fail-safe (`SEC-27`, `ADR-083`).
 
 #### Non-Negative Validation Rules
-All server timeout parameters are strictly validated by [`ValidateConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/loader.go#L175-L203) during startup and configuration dry-run (`toron -t`):
+All server timeout parameters are strictly validated by `ValidateConfig` during startup and configuration dry-run (`toron -t`):
 - Any negative duration (e.g. `read_timeout: -5s`, `write_timeout: -1s`, `idle_timeout: -200ms`, `upgrade_idle_timeout: -10s`) is strictly rejected with an explicit error:
   ```text
   server.read_timeout must be non-negative, got -5s
@@ -102,7 +102,7 @@ All server timeout parameters are strictly validated by [`ValidateConfig`](file:
 #### Zero-Timeout Mode (Benchmark & Isolated Environments)
 For performance engineers conducting raw benchmark evaluations or deploying in isolated, trusted private enclaves where maximum throughput is paramount:
 - Setting `read_timeout: 0` (or `0s`) or `write_timeout: 0` (or `0s`) explicitly disables socket deadline enforcement.
-- When configured to `0`, [`connDeadlineTracker`](file:///Users/sneha/Developer/toron-research/toron/pkg/server/deadline.go#L57-L64) clears any existing deadline via `conn.SetDeadline(time.Time{})` and executes **exactly zero socket deadline system calls** during steady-state request processing.
+- When configured to `0`, `connDeadlineTracker` clears any existing deadline via `conn.SetDeadline(time.Time{})` and executes **exactly zero socket deadline system calls** during steady-state request processing.
 - The configuration loader preserves explicit `0` values and does **not** overwrite them with default values (`validateConfigDefaults`).
 
 > [!WARNING]

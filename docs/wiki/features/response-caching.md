@@ -38,11 +38,11 @@ related_to:
 
 ## Overview
 
-Toron features an enterprise-grade, thread-safe in-memory HTTP response caching engine ([`pkg/router/cache.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go)). Operating as a high-speed shared gateway proxy cache, Toron intercepts repeated idempotent `GET` and `HEAD` responses, caches eligible payloads in RAM, and serves subsequent matching requests with sub-millisecond latency while reducing CPU, database, and network overhead on upstream microservices.
+Toron features an enterprise-grade, thread-safe in-memory HTTP response caching engine (`pkg/router/cache.go`). Operating as a high-speed shared gateway proxy cache, Toron intercepts repeated idempotent `GET` and `HEAD` responses, caches eligible payloads in RAM, and serves subsequent matching requests with sub-millisecond latency while reducing CPU, database, and network overhead on upstream microservices.
 
-Toron complies strictly with the modern **RFC 9111 HTTP Caching specification** (superseding RFC 7234) and **RFC 9110 HTTP Semantics**. Pursuing zero-trust security and complete session isolation ([`REQ-134`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-134.md), [`ADR-134`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-134.md), [`TASK-157`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-157.md)), Toron enforces:
+Toron complies strictly with the modern **RFC 9111 HTTP Caching specification** (superseding RFC 7234) and **RFC 9110 HTTP Semantics**. Pursuing zero-trust security and complete session isolation (`REQ-134`, `ADR-134`, `TASK-157`), Toron enforces:
 1. **Host:Port Cache Key Authority Derivation**: Explicit preservation of network port numbers in cache keys, preventing cross-port cache key poisoning ([CWE-524](https://cwe.mitre.org/data/definitions/524.html)).
-2. **RFC 9111 Protocol Session Boundary Isolation**: Mandatory refusal of unshared authenticated requests (RFC 9111 §3.5), dual-stage `Set-Cookie`/`Set-Cookie2` header purging ([CWE-384](https://cwe.mitre.org/data/definitions/384.html)), origin directive enforcement (`no-store`, `no-cache`, `private`), and SSE streaming exemptions ([`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md)).
+2. **RFC 9111 Protocol Session Boundary Isolation**: Mandatory refusal of unshared authenticated requests (RFC 9111 §3.5), dual-stage `Set-Cookie`/`Set-Cookie2` header purging ([CWE-384](https://cwe.mitre.org/data/definitions/384.html)), origin directive enforcement (`no-store`, `no-cache`, `private`), and SSE streaming exemptions (`REQ-128`).
 3. **Web Cache Deception Shared Responsibility Model**: Clear delineation between edge transparent reverse proxy guarantees and mandatory upstream application framework routing hygiene.
 
 ---
@@ -53,7 +53,7 @@ Toron complies strictly with the modern **RFC 9111 HTTP Caching specification** 
 - **Strict RFC 9111 §5.2.2.2 & §5.2.2.4 Directives Enforcement**: Origin responses bearing `Cache-Control: no-cache`, `no-store`, or `private` are strictly barred from cache storage. In the absence of origin revalidation, `no-cache` strictly overrides `max-age`.
 - **Shared Cache Authorization Refusal (RFC 9111 §3.5)**: Requests bearing `Authorization` headers are excluded from shared cache lookup and storage unless the origin response explicitly contains `Cache-Control: public`.
 - **Dual-Stage Cookie Stripping (RFC 9111 §8 / CWE-384)**: Purges `Set-Cookie` and `Set-Cookie2` headers at admission (before storing in RAM snapshot) and again upon cache hit delivery, mathematically neutralizing shared cache session fixation and credential leakage.
-- **Streaming Response Exemption ([REQ-128](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md))**: Responses bearing `Content-Type: text/event-stream` (Server-Sent Events), `X-Accel-Buffering: no`, WebSocket upgrades (`101 Switching Protocols`), or dynamic socket streams (`res.StreamBody != nil`) unconditionally bypass cache storage.
+- **Streaming Response Exemption (REQ-128)**: Responses bearing `Content-Type: text/event-stream` (Server-Sent Events), `X-Accel-Buffering: no`, WebSocket upgrades (`101 Switching Protocols`), or dynamic socket streams (`res.StreamBody != nil`) unconditionally bypass cache storage.
 - **Deterministic Telemetry Headers**: Cache misses and bypassed responses consistently emit `X-Cache: MISS` while strictly deleting any upstream `Age` header. Cache hits emit `X-Cache: HIT` and a dynamically computed `Age: <seconds>` header.
 - **Zero-Allocation Exemption Guards**: Header inspection, streaming MIME detection, and authority extraction execute via zero-alloc string comparisons, maintaining Toron's zero-dependency, zero-overhead runtime profile.
 - **Client Cache Refresh**: Honors client request headers `Cache-Control: no-cache`, `Cache-Control: no-store`, `Cache-Control: max-age=0`, and `Pragma: no-cache`, allowing clients to force live upstream fetches.
@@ -68,7 +68,7 @@ Toron complies strictly with the modern **RFC 9111 HTTP Caching specification** 
 
 Under **RFC 9110 §4.2** (*Authority*) and **RFC 9111 §2** (*Overview of Cache Keys*), the primary cache key for an HTTP resource consists of the request method, target URI, and the target URI's authority component (which includes both host and optional port number).
 
-Toron constructs primary cache keys using the following canonical formula in [`pkg/router/cache.go:199`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go#L199):
+Toron constructs primary cache keys using the following canonical formula in `pkg/router/cache.go:199`:
 
 ```go
 cacheKey := req.Method + ":" + extractCacheHostPort(req) + ":" + uri
@@ -79,13 +79,13 @@ if ae := req.Header.Get("Accept-Encoding"); ae != "" {
 
 Where:
 - `req.Method`: The HTTP method (`GET` or `HEAD`).
-- `extractCacheHostPort(req)`: The dedicated authority extraction function ([`pkg/router/cache.go:327`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go#L327)).
+- `extractCacheHostPort(req)`: The dedicated authority extraction function (`pkg/router/cache.go:327`).
 - `uri`: The raw request target (`req.RequestURI`, falling back to `req.Path`).
 - `:ae=<encoding>`: Appended if `Accept-Encoding` is present, partitioning cached variants (e.g. gzip, br, zstd).
 
 ### Authority Normalization & Parsing (`extractCacheHostPort`)
 
-The dedicated authority extractor [`extractCacheHostPort(req)`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go#L327-L370) implements strict canonicalization without port loss:
+The dedicated authority extractor `extractCacheHostPort(req)` implements strict canonicalization without port loss:
 
 1. **Whitespace Trimming**: Strips leading and trailing ASCII whitespace and tabs (`strings.TrimSpace`).
 2. **Case Normalization**: Converts the domain hostname to lowercase (`strings.ToLower`), ensuring case-insensitive DNS equivalence (`API.EXAMPLE.COM:8080` matches `api.example.com:8080`).
@@ -222,7 +222,7 @@ Toron provides bulletproof protocol-level session boundary isolation whenever di
    - *Stage 2 (Delivery Purge)*: Explicitly deletes `Set-Cookie` and `Set-Cookie2` on cache hit delivery, ensuring no session tokens are ever leaked to downstream clients.
 3. **Origin Directive Enforcement (RFC 9111 §5.2.2)**:
    Origin responses declaring `Cache-Control: private`, `no-store`, or `no-cache` are strictly excluded from storage.
-4. **Streaming Response Exemption ([REQ-128](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md))**:
+4. **Streaming Response Exemption (REQ-128)**:
    Live streams (`text/event-stream`, `X-Accel-Buffering: no`, WebSocket upgrades) unconditionally bypass caching.
 5. **Host:Port Authority Partitioning**:
    In-memory cache entries are partitioned by full `Host:Port` authority, preventing cross-tenant or cross-port session bleed.
@@ -270,9 +270,9 @@ The caching middleware evaluates responses following downstream route or proxy h
 | **Origin `Cache-Control`** | `private` | **Bypass** | RFC 9111 §5.2.2.7: Private user response; forbidden in shared proxy cache. |
 | **Origin `Cache-Control`** | `public, max-age=N` | **Cached for $N$ seconds** | Explicit shared cache authorization with duration. |
 | **Origin `Cache-Control`** | *(omitted or no max-age)* | **Cached for `default_ttl`** | Fallback to configured route TTL (default: 60s). |
-| **Content-Type** | `text/event-stream` (SSE) | **Bypass** | Real-time live feed; caching freezes stream snapshots ([REQ-128](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md)). |
+| **Content-Type** | `text/event-stream` (SSE) | **Bypass** | Real-time live feed; caching freezes stream snapshots (REQ-128). |
 | **X-Accel-Buffering** | `no` | **Bypass** | Reverse proxy hint requesting unbuffered streaming. |
-| **Stream Body** | `res.StreamBody != nil` | **Bypass** | Active direct socket stream relay ([REQ-125](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-125.md), [REQ-129](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md)). |
+| **Stream Body** | `res.StreamBody != nil` | **Bypass** | Active direct socket stream relay (REQ-125, REQ-129). |
 | **Upgraded Socket** | `101 Switching Protocols` | **Bypass** | WebSocket or hijacked raw TCP tunnel. |
 | **Request Authorization** | `Authorization: ...` | **Bypass (unless `public`)** | RFC 9111 §3.5: Shared cache must protect authenticated endpoints. |
 | **Set-Cookie Header** | `Set-Cookie`, `Set-Cookie2` | **Purged on Store & Hit** | RFC 9111 §8 / CWE-384: Dual-stage stripping prevents session token leaks. |
@@ -316,7 +316,7 @@ If a caching proxy fails to inspect streaming MIME types or origin `no-cache` di
 
 ### Content-Aware Exemption Guard
 
-Toron neutralizes this failure mode at the entry point of cache post-processing ([`pkg/router/cache.go:246-249`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/cache.go#L246-L249)):
+Toron neutralizes this failure mode at the entry point of cache post-processing (`pkg/router/cache.go:246-249`):
 
 ```go
 // Streaming MIME or unbuffered responses must never be cached (REQ-128)
@@ -388,7 +388,7 @@ server:
 ## Troubleshooting & FAQ
 
 ### Problem: Two requests to the same path on different ports (e.g. `:80` and `:8080`) do not share cached entries. Is this intentional?
-> **Answer**: Yes, this is an essential security invariant ([`REQ-134`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-134.md), [CWE-524](https://cwe.mitre.org/data/definitions/524.html)). Toron derives cache keys using full `Host:Port` authority (`Method:HostPort:URI`). Distinct ports represent independent network origins under RFC 9110 §4.2 and RFC 9111 §2. Preserving the port ensures that public services on port 80 never serve confidential cached responses from administrative services on port 8080.
+> **Answer**: Yes, this is an essential security invariant (`REQ-134`, [CWE-524](https://cwe.mitre.org/data/definitions/524.html)). Toron derives cache keys using full `Host:Port` authority (`Method:HostPort:URI`). Distinct ports represent independent network origins under RFC 9110 §4.2 and RFC 9111 §2. Preserving the port ensures that public services on port 80 never serve confidential cached responses from administrative services on port 8080.
 
 ### Problem: An attacker appended `.css` to an authenticated user endpoint (`/api/profile.css`), and Toron cached the response. How do I fix this?
 > **Answer**: This is classical Web Cache Deception (Gil, 2017) caused by the upstream application framework omitting cache control headers. As an RFC 9111 transparent reverse proxy, Toron does not guess MIME types or rewrite application paths. To resolve this:
@@ -396,7 +396,7 @@ server:
 > 2. Configure your application router to enforce strict path matching and return `404 Not Found` for requests with unexpected static extensions on dynamic endpoints.
 
 ### Problem: Real-time SSE streams return `X-Cache: MISS` on every connection. Is this an error?
-> **Answer**: No, this is intended and correct behavior. Under [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md), Server-Sent Events (`text/event-stream`) are permanently exempted from cache storage to prevent stream freezing and Web Cache Deception ([CWE-524](https://cwe.mitre.org/data/definitions/524.html)). Every connection receives live events directly from origin.
+> **Answer**: No, this is intended and correct behavior. Under `REQ-128`, Server-Sent Events (`text/event-stream`) are permanently exempted from cache storage to prevent stream freezing and Web Cache Deception ([CWE-524](https://cwe.mitre.org/data/definitions/524.html)). Every connection receives live events directly from origin.
 
 ### Problem: My origin returns `Cache-Control: no-cache, max-age=300`, but Toron never returns `X-Cache: HIT`.
 > **Answer**: Under RFC 9111 §5.2.2.4, `no-cache` strictly overrides `max-age` in shared proxy caches without origin conditional validation. To make the response cacheable in Toron, configure your origin backend to emit `Cache-Control: public, max-age=300`.

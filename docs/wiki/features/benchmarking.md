@@ -151,7 +151,7 @@ To eliminate the 5-second evaluation blindspot (transient socket creation bias, 
 
 ### 1. Running the Master Orchestrator (`run_all.sh`)
 
-[`benchmarks/run_all.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/run_all.sh) coordinates all evaluation stages in sequence and consolidates all artifacts under a single unified master session directory:
+`benchmarks/run_all.sh` coordinates all evaluation stages in sequence and consolidates all artifacts under a single unified master session directory:
 
 ```bash
 # Standard Quick CI Execution (default: 5s quick tier, completes in < 60s)

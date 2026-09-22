@@ -106,12 +106,12 @@ Toron provides automated, zero-touch certificate issuance and background renewal
 
 ### HTTP-01 Protocol Hardening & Validation Standards ([SEC-38])
 
-Prior to [`SEC-38`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L539-L561) ([`REQ-100`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-100.md), [`ADR-100`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-100.md), [`TASK-123`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-123.md)), incoming challenge validation requests (`/.well-known/acme-challenge/<token>`) were processed without strict input validation, allowing arbitrary string payloads to query internal challenge tables under lock contention.
+Prior to `SEC-38` (`REQ-100`, `ADR-100`, `TASK-123`), incoming challenge validation requests (`/.well-known/acme-challenge/<token>`) were processed without strict input validation, allowing arbitrary string payloads to query internal challenge tables under lock contention.
 
 The hardened ACME challenge responder enforces six security and protocol compliance guarantees:
 
 1. **RFC 8555 §8.3 Base64URL Token Validation**:
-   All tokens are strictly validated via the public zero-allocation validator [`IsValidACMEToken`](file:///Users/sneha/Developer/toron-research/toron/pkg/acme/acme.go#L202-L218). Tokens must consist strictly of characters from the unpadded base64url alphabet (`[a-zA-Z0-9_-]`). Padding characters (`=`), directory traversal patterns (`..`), path separators (`/`, `\`), control characters, and high-order Unicode bytes are strictly rejected with `400 Bad Request`.
+   All tokens are strictly validated via the public zero-allocation validator `IsValidACMEToken`. Tokens must consist strictly of characters from the unpadded base64url alphabet (`[a-zA-Z0-9_-]`). Padding characters (`=`), directory traversal patterns (`..`), path separators (`/`, `\`), control characters, and high-order Unicode bytes are strictly rejected with `400 Bad Request`.
 2. **Strict Length Boundary Enforcement**:
    Tokens are strictly bounded to $1 \le \text{len}(token) \le 128$ bytes. Empty tokens (`/.well-known/acme-challenge/`) or oversized tokens (>128 bytes) fail fast with `400 Bad Request`.
 3. **Elimination of Silent Whitespace Trimming**:

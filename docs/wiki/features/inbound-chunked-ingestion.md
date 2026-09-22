@@ -33,10 +33,10 @@ related_to:
 
 Toron provides native, high-throughput, and secure ingestion of HTTP/1.1 inbound chunked transfer-encoded requests (`Transfer-Encoding: chunked`). Rather than blindly forwarding raw, potentially ambiguous chunked streams to origin microservices or naively accepting non-standard framing, Toron functions as an **Active Ingress Smuggling Firewall**:
 
-1. **Zero-Tolerance Ingress Wire Decoding (RFC 9112 §7.1)**: Strictly parses chunk framing on the wire using a streaming finite-state machine ([`ChunkedBodyReader`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/chunked.go#L44)). Non-hex characters, leading signs, leading or embedded whitespace, oversized extensions, bare linefeeds, and prohibited trailers trigger immediate `HTTP 400 Bad Request` and physical TCP connection teardown.
+1. **Zero-Tolerance Ingress Wire Decoding (RFC 9112 §7.1)**: Strictly parses chunk framing on the wire using a streaming finite-state machine (`ChunkedBodyReader`). Non-hex characters, leading signs, leading or embedded whitespace, oversized extensions, bare linefeeds, and prohibited trailers trigger immediate `HTTP 400 Bad Request` and physical TCP connection teardown.
 2. **Canonical Upstream Re-Framing Normalization (`"normalize"`, Default)**: Consumes and validates chunked payloads at the edge, calculates the exact payload byte length $L$, strips the hop-by-hop `Transfer-Encoding` header, injects an authoritative `Content-Length: L` header, and forwards a clean, standard HTTP/1.1 request upstream. Heterogeneous backend microservices (Node.js `llhttp`, Python `uvicorn`/`h11`, Ruby `puma`, Go `net/http`) are **100% shielded** from chunk-level parsing bugs and request smuggling desynchronizations ([CWE-444](https://cwe.mitre.org/data/definitions/444.html)).
 3. **Canonical Passthrough Streaming Mode (`"passthrough"`)**: For high-volume streaming uploads where buffering multi-megabyte or gigabyte files in memory is undesirable, Toron streams validated canonical chunks upstream with fail-fast upstream context cancellation upon any client framing fault or disconnection.
-4. **Configurable Backward Compatibility (`"reject"`)**: Operators requiring an uncompromising, zero-trust static rejection perimeter can preserve legacy [`ADR-056`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-056.md) behavior (`HTTP/1.1 501 Not Implemented` with immediate connection closure) globally or on sensitive routes.
+4. **Configurable Backward Compatibility (`"reject"`)**: Operators requiring an uncompromising, zero-trust static rejection perimeter can preserve legacy `ADR-056` behavior (`HTTP/1.1 501 Not Implemented` with immediate connection closure) globally or on sensitive routes.
 
 ---
 
@@ -44,17 +44,17 @@ Toron provides native, high-throughput, and secure ingestion of HTTP/1.1 inbound
 
 ### Why Static HTTP 501 Rejection Was Evolved
 
-Under historical architecture [`ADR-056`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-056.md) and [`REQ-061`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-061.md), Toron maintained an uncompromising perimeter posture: all incoming HTTP/1.1 requests carrying a `Transfer-Encoding` header were immediately rejected with `HTTP 501 Not Implemented`.
+Under historical architecture `ADR-056` and `REQ-061`, Toron maintained an uncompromising perimeter posture: all incoming HTTP/1.1 requests carrying a `Transfer-Encoding` header were immediately rejected with `HTTP 501 Not Implemented`.
 
 While this static rejection immunized Toron during its initial development phases against HTTP Request Smuggling ([CWE-444](https://cwe.mitre.org/data/definitions/444.html)), it prevented Toron from serving as a drop-in ingress gateway in modern cloud-native environments:
 - **Streaming Ingress Blocked**: Clients streaming real-time event feeds, audio/video data, database backups, or large file uploads could not ingress through Toron.
 - **Third-Party Webhook Drops**: Automated enterprise SaaS webhooks (e.g., GitHub, Stripe, Datadog, Slack) transmit JSON or multipart payloads chunked by default; Toron dropped them unconditionally.
 - **Microservice Ingress Inflexibility**: Heterogeneous backend architectures rely on reverse proxies (NGINX, Envoy, Traefik) to accept chunked client streams.
-- **Protocol Asymmetry**: Outbound streaming chunked responses were supported under [`REQ-128`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-128.md) and [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md); rejecting inbound chunking created an asymmetric protocol posture.
+- **Protocol Asymmetry**: Outbound streaming chunked responses were supported under `REQ-128` and `REQ-129`; rejecting inbound chunking created an asymmetric protocol posture.
 
 ### The Firewall and Normalization Model
 
-Under [`REQ-133`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-133.md) and [`ADR-133`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-133.md), Toron transforms from static rejection into an active security firewall:
+Under `REQ-133` and `ADR-133`, Toron transforms from static rejection into an active security firewall:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
@@ -101,7 +101,7 @@ Toron provides three distinct operational profiles configured via `inbound_chunk
 | :--- | :--- | :--- | :--- |
 | **`"normalize"`** *(Default)* | De-chunks request at edge into pooled memory; computes exact byte length $L$; strips `Transfer-Encoding`; sets authoritative `Content-Length: L`; forwards standard non-chunked HTTP request upstream. | **Maximum Isolation**: Downstream origins never receive chunked framing. Completely eliminates origin chunk desync vulnerabilities ([CWE-444](https://cwe.mitre.org/data/definitions/444.html)). | General API traffic, SaaS webhooks, standard JSON/form payloads $\le \text{MaxBodyBytes}$. |
 | **`"passthrough"`** | Validates chunk hex sizes, extensions, CRLFs, and trailers incrementally on the wire; forwards canonical RFC 9112 chunk frames directly upstream with $O(1) \le 32\,\text{KB}$ memory. Cancels upstream request context immediately on client fault or disconnect. | **Strict Edge Validation**: Ingress wire bytes are verified against RFC 9112 §7.1. Malformed chunks, extensions $> 256\,\text{B}$, or invalid delimiters trigger immediate TCP teardown before contaminating origin. | High-throughput streaming uploads, multi-gigabyte files, media streaming, continuous data pipelines. |
-| **`"reject"`** | Preserves legacy [`ADR-056`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-056.md) perimeter behavior: immediately responds with `HTTP/1.1 501 Not Implemented: Inbound chunked transfer encoding is disabled` and closes the TCP connection without reading the body. | **Zero Surface**: Disallows chunked ingestion entirely at the edge boundary. | High-security internal APIs, sensitive authentication/payment routes (`/api/v1/auth`), zero-trust perimeters. |
+| **`"reject"`** | Preserves legacy `ADR-056` perimeter behavior: immediately responds with `HTTP/1.1 501 Not Implemented: Inbound chunked transfer encoding is disabled` and closes the TCP connection without reading the body. | **Zero Surface**: Disallows chunked ingestion entirely at the edge boundary. | High-security internal APIs, sensitive authentication/payment routes (`/api/v1/auth`), zero-trust perimeters. |
 
 ---
 
@@ -148,7 +148,7 @@ Per RFC 9112 §7.1.1, chunk extensions follow the hex chunk size separated by a 
 - Valid trailers are parsed and made available via `req.Header` to application handlers and upstream proxies.
 
 ### 6. Preflight Smuggling Guards (Dual CL+TE and TE Grammar)
-Before instantiating the chunked reader, [`httpparser.ParseRequest`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/parser.go#L109) executes fail-closed preflight checks:
+Before instantiating the chunked reader, `httpparser.ParseRequest` executes fail-closed preflight checks:
 - **Dual CL+TE Rejection (RFC 9112 §6.3)**: If a request carries both `Content-Length` and `Transfer-Encoding`, Toron **fail-closes** immediately with `HTTP 400 Bad Request` and closes the TCP connection. Toron never strips or guesses precedence.
 - **Obfuscation Guards**:
   - Horizontal tab immediately following colon (`Transfer-Encoding:\tchunked`) triggers `HTTP 400 Bad Request`.
@@ -335,11 +335,11 @@ routes:
 
 | Metric | Target Specification | Empirical Result | Invariant Reference |
 | :--- | :--- | :--- | :--- |
-| **Streaming Memory Bounds** | Constant $O(1) \le 32\,\text{KB}$ per active reader | $< 16\,\text{KB}$ active reader footprint | [`ADR-129`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-129.md) / [`REQ-129`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-129.md) |
-| **Buffer Recycling** | `sync.Pool` recycling for payloads $\le 64\,\text{KB}$ | Zero heap allocations for nominal chunks | [`pkg/httpparser/parser.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/httpparser/parser.go#L37) |
-| **Decoding Latency** | $< 5\%$ CPU overhead vs `Content-Length` | $< 2.8\%$ parsing overhead | Verified in [`TC-133`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-133.md) |
+| **Streaming Memory Bounds** | Constant $O(1) \le 32\,\text{KB}$ per active reader | $< 16\,\text{KB}$ active reader footprint | `ADR-129` / `REQ-129` |
+| **Buffer Recycling** | `sync.Pool` recycling for payloads $\le 64\,\text{KB}$ | Zero heap allocations for nominal chunks | `pkg/httpparser/parser.go` |
+| **Decoding Latency** | $< 5\%$ CPU overhead vs `Content-Length` | $< 2.8\%$ parsing overhead | Verified in `TC-133` |
 | **Edge Normalization Latency**| $< 50\,\mu\text{s}$ for payloads $\le 64\,\text{KB}$ | $18.4\,\mu\text{s}$ average edge re-framing | Verified under `go test -bench` |
-| **Concurrency Cleanliness** | 100% race-free | Clean pass under `go test -race ./...` | [`CR-133`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-133.md) / [`SR-133`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-133.md) |
+| **Concurrency Cleanliness** | 100% race-free | Clean pass under `go test -race ./...` | `CR-133` / `SR-133` |
 
 ---
 

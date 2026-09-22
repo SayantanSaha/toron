@@ -37,7 +37,7 @@ related_to:
 
 ## Overview
 
-Toron supports full-duplex WebSocket protocol connections (RFC 6455) and HTTP/2 Extended CONNECT WebSockets (RFC 8441) for real-time web applications, chat services, and live telemetry streaming. The gateway detects HTTP/1.1 `Upgrade: websocket` headers, verifies 101 Switching Protocols handshakes, and provides transparent bi-directional stream tunneling between client sockets and backend microservice targets with built-in Slowloris defense and activity-refreshed idle deadline enforcement ([`SEC-27`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L384-L392), CWE-400).
+Toron supports full-duplex WebSocket protocol connections (RFC 6455) and HTTP/2 Extended CONNECT WebSockets (RFC 8441) for real-time web applications, chat services, and live telemetry streaming. The gateway detects HTTP/1.1 `Upgrade: websocket` headers, verifies 101 Switching Protocols handshakes, and provides transparent bi-directional stream tunneling between client sockets and backend microservice targets with built-in Slowloris defense and activity-refreshed idle deadline enforcement (`SEC-27`, CWE-400).
 
 ## Configuration
 
@@ -66,7 +66,7 @@ routes:
 2. **HTTP/2 Extended CONNECT (RFC 8441)**: For HTTP/2 connections, clients send `:method = CONNECT` and `:protocol = websocket`. Toron maps the extended CONNECT request, returns HTTP `200 OK` on the HTTP/2 stream, and bridges full-duplex stream data without dropping connection multiplexing.
 3. **Upstream Connection**: Toron connects to the configured upstream target and forwards the original WebSocket handshake headers.
 4. **Activity-Refreshed Bidirectional Stream Relay (`SEC-27`)**:
-   - Rather than permanently stripping socket deadlines, Toron arms both client and upstream sockets with [`upgrade_idle_timeout`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go) (default `60s`).
+   - Rather than permanently stripping socket deadlines, Toron arms both client and upstream sockets with `upgrade_idle_timeout` (default `60s`).
    - Every chunk of data transferred in either direction refreshes read and write deadlines.
    - If bidirectional silence exceeds `upgrade_idle_timeout`, both sockets are deterministically severed via `sync.Once`, unblocking relay routines and reclaiming file descriptors.
    - Standard WebSocket Ping/Pong control frames (RFC 6455) and application keep-alives continuously refresh the deadline, keeping legitimate long-lived sessions active indefinitely.

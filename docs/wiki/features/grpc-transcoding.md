@@ -32,23 +32,23 @@ related_to:
 
 # 🔀 REST-to-gRPC Transcoding Engine (`pkg/transcoder`)
 
-Toron Edge Gateway features a native, zero-dependency **REST-to-gRPC Transcoding Engine** ([`pkg/transcoder`](file:///Users/sneha/Developer/toron-research/toron/pkg/transcoder)). It translates incoming RESTful JSON HTTP requests (e.g. `GET /v1/users/123`) into binary Protobuf-encoded HTTP/2 gRPC requests (e.g. `POST /user.UserService/GetUser`) and converts returning binary gRPC payloads and `grpc-status` headers back into REST JSON responses.
+Toron Edge Gateway features a native, zero-dependency **REST-to-gRPC Transcoding Engine** (`pkg/transcoder`). It translates incoming RESTful JSON HTTP requests (e.g. `GET /v1/users/123`) into binary Protobuf-encoded HTTP/2 gRPC requests (e.g. `POST /user.UserService/GetUser`) and converts returning binary gRPC payloads and `grpc-status` headers back into REST JSON responses.
 
 ---
 
 ## 🌟 Key Features
 
 * **Zero External Dependencies**: Implements JSON payload parsing, path parameter extraction, gRPC 5-byte wire framing, and status code mapping using Go stdlib without protobuf compiler dependencies.
-* **Direct Parameterized Subpath Routing ([`SEC-30`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L411-L419), CWE-284 / CWE-400)**:
+* **Direct Parameterized Subpath Routing (`SEC-30`, CWE-284 / CWE-400)**:
   * **Elimination of Empty Upstream Proxies**: Completely removed dummy upstream reverse proxy registration that previously caused parameterized REST requests to abort with `502 Bad Gateway: No upstream target available`.
   * **Native In-Process Prefix Binding**: Parameterized endpoints (e.g. `GET /v1/users/:id`, `GET /v1/users/:id/orders/:orderId`) bind directly to `Router.HandlePrefixWithMatcher` with path pattern validation (`MatchPathPattern`), executing cleanly through `router.ServeHTTP`.
   * **Multi-Level Route Segregation & Method Gating**: Multiple routes sharing common path prefixes are cleanly segregated without route shadowing; invalid methods return `405 Method Not Allowed`, and segment count mismatches return `404 Not Found`.
-* **Hop-by-Hop Header Sanitization & Strict RFC 7540 Compliance ([`SEC-29`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L403-L411), CWE-444 / CWE-436)**:
+* **Hop-by-Hop Header Sanitization & Strict RFC 7540 Compliance (`SEC-29`, CWE-444 / CWE-436)**:
   * **Static Hop-by-Hop Header Stripping**: Strips standard RFC 7230 / RFC 7540 connection-specific headers (`Connection`, `Keep-Alive`, `Upgrade`, `Proxy-Connection`, `Transfer-Encoding`, `Proxy-Authenticate`, `Proxy-Authorization`, `Trailer`, `Trailers`, `Host`) before dispatching HTTP/2 gRPC requests.
   * **Dynamic Connection Token Parsing**: Dynamically parses comma-delimited tokens from the client `Connection` header and strips matching nominated headers per RFC 7230 §6.1 / RFC 9110 §7.6.1.
   * **Strict `TE: trailers` Invariant**: Discards client `TE` values (e.g. `gzip`, `deflate`) and strictly enforces single-valued `TE: trailers` per RFC 7540 §8.1.2.2 / RFC 9113 §8.2.2, preventing upstream gRPC backends from terminating streams with `RST_STREAM (PROTOCOL_ERROR 0x1)`.
   * **Metadata Preservation**: Preserves application authentication, tracing, and custom metadata headers (`Authorization`, `X-Request-Id`, `Traceparent`, `User-Agent`) intact with full byte fidelity.
-* **Bounded Ingestion & 413 Rejection ([`SEC-28`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L393-L401), CWE-400 / CWE-770)**: Protects against memory exhaustion and OOM kills via configurable `max_body_bytes` (default: 4 MB / `4194304` bytes):
+* **Bounded Ingestion & 413 Rejection (`SEC-28`, CWE-400 / CWE-770)**: Protects against memory exhaustion and OOM kills via configurable `max_body_bytes` (default: 4 MB / `4194304` bytes):
   * **Declared `Content-Length` Fast-Fail**: Requests declaring payload size $> \text{max\_body\_bytes}$ are rejected immediately with `HTTP 413 Payload Too Large` without socket reading or memory allocation.
   * **Bounded Stream Over-Read**: Chunked or undeclared streams are capped via `io.LimitReader` and rejected with `HTTP 413` if bytes exceed the ceiling, preventing `json.Unmarshal` heap explosion.
   * **Upstream Isolation**: Upstream gRPC backends receive 0 requests on rejected payloads.

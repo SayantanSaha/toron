@@ -33,18 +33,18 @@ related_to:
 
 # ⚡ Layer 4 TCP & UDP Transport Proxies (`pkg/proxy`)
 
-Toron provides high-performance, raw Layer 4 transport proxies for bidirectional stream forwarding ([`TCPProxy`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp.go#L64)) and datagram forwarding ([`UDPProxy`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp.go#L92)). Configured via [`ProxyRouteConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L253) in `routes.yaml`, these proxies enable Toron to act as a robust edge gateway for non-HTTP services, including database clusters, DNS caches, Redis/Memcached tiers, game servers, IoT telemetry collectors, and custom binary protocols.
+Toron provides high-performance, raw Layer 4 transport proxies for bidirectional stream forwarding (`TCPProxy`) and datagram forwarding (`UDPProxy`). Configured via `ProxyRouteConfig` in `routes.yaml`, these proxies enable Toron to act as a robust edge gateway for non-HTTP services, including database clusters, DNS caches, Redis/Memcached tiers, game servers, IoT telemetry collectors, and custom binary protocols.
 
-To protect host infrastructure against high-volume packet floods, slow-rate resource exhaustion (Slowloris), and ephemeral port starvation ([`SEC-26`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L375-L383), CWE-400), both proxies incorporate bounded concurrency, client session caching, buffer recycling, and bidirectional idle deadline enforcement with zero external dependencies.
+To protect host infrastructure against high-volume packet floods, slow-rate resource exhaustion (Slowloris), and ephemeral port starvation (`SEC-26`, CWE-400), both proxies incorporate bounded concurrency, client session caching, buffer recycling, and bidirectional idle deadline enforcement with zero external dependencies.
 
 ---
 
 ## 🌟 Key Capabilities & Architectural Safeguards
 
 * **Zero External Dependencies**: Built entirely with Go standard library packages (`net`, `net/netip`, `sync`, `sync/atomic`, `time`, `io`).
-* **Bounded TCP Concurrency & Fast-Fail Rejection**: Atomic tracking of active TCP connections against [`max_connections`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L290) (default `10,000`). Saturated connections are rejected immediately upon `Accept()` with zero buffer allocation and zero upstream dial overhead.
-* **Slowloris Immunity & Bidirectional Idle Deadlines**: Replaces unbounded blocking `io.Copy` transfers with deadline-aware streaming loops enforcing [`idle_timeout`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L291) (default `60s`). Active data transfer continuously refreshes socket deadlines; inactive or stalling connections are severed cleanly.
-* **Bounded UDP Worker Pool & Fail-Safe Dropping**: Inbound datagrams are queued into a fixed-capacity channel of size [`max_workers`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L292) (default `1,024`) serviced by long-lived workers. Under flood saturation, excess datagrams are dropped fail-safe without memory inflation or runtime goroutine explosions.
+* **Bounded TCP Concurrency & Fast-Fail Rejection**: Atomic tracking of active TCP connections against `max_connections` (default `10,000`). Saturated connections are rejected immediately upon `Accept()` with zero buffer allocation and zero upstream dial overhead.
+* **Slowloris Immunity & Bidirectional Idle Deadlines**: Replaces unbounded blocking `io.Copy` transfers with deadline-aware streaming loops enforcing `idle_timeout` (default `60s`). Active data transfer continuously refreshes socket deadlines; inactive or stalling connections are severed cleanly.
+* **Bounded UDP Worker Pool & Fail-Safe Dropping**: Inbound datagrams are queued into a fixed-capacity channel of size `max_workers` (default `1,024`) serviced by long-lived workers. Under flood saturation, excess datagrams are dropped fail-safe without memory inflation or runtime goroutine explosions.
 * **Upstream UDP Socket Reuse via Client Session Caching**: Maps client endpoints (`netip.AddrPort`) to active upstream sockets (`*net.UDPConn`). Successive packets from the same client reuse the open socket, completely eliminating per-packet socket dials, ephemeral port exhaustion (`bind: address already in use`), and file descriptor starvation (`EMFILE`).
 * **Zero-Allocation Buffer Recycling (`sync.Pool`)**: Datagram buffers (64 KB / 65,535 bytes) for client reads and upstream responses are recycled using `sync.Pool`, eliminating garbage collection churn under sustained traffic.
 * **Background Idle Session Eviction**: Dedicated sweeper routine scans active UDP client sessions every `idle_timeout / 2` and terminates sockets idle for longer than `idle_timeout`.
@@ -77,7 +77,7 @@ routes:
     idle_timeout: "30s"          # Client session inactivity expiration (default: 60s)
 ```
 
-### Parameter Reference ([`ProxyRouteConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L253))
+### Parameter Reference (`ProxyRouteConfig`)
 
 | Parameter | Type | Applicable To | Default | Description |
 | :--- | :--- | :--- | :--- | :--- |
@@ -91,9 +91,9 @@ routes:
 
 ---
 
-## 🔒 Security Architecture & Vulnerability Remediation ([`SEC-26`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L375-L383))
+## 🔒 Security Architecture & Vulnerability Remediation (`SEC-26`)
 
-[`SEC-26`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L375-L383) ([CWE-400: Uncontrolled Resource Consumption](https://cwe.mitre.org/data/definitions/400.html)) identified four critical attack vectors across unhardened Layer 4 implementations:
+`SEC-26` ([CWE-400: Uncontrolled Resource Consumption](https://cwe.mitre.org/data/definitions/400.html)) identified four critical attack vectors across unhardened Layer 4 implementations:
 
 1. **Unbounded Goroutine Explosion**: Every incoming packet or connection spawned an unconstrained goroutine, vulnerable to memory starvation (OOM) under flood conditions.
 2. **Ephemeral Port Starvation & `EMFILE` Exhaustion**: Dialing outbound UDP sockets per packet rapidly exhausted host ephemeral ports (`bind: address already in use`) and OS file descriptor limits (`socket: too many open files`).
@@ -104,10 +104,10 @@ The following architectural mechanisms remediate these vectors:
 
 ---
 
-### 1. TCP Proxy Architecture ([`pkg/proxy/tcp.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp.go))
+### 1. TCP Proxy Architecture (`pkg/proxy/tcp.go`)
 
 #### Concurrency Gating & Fast-Fail Rejection
-[`TCPProxy`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp.go#L64) maintains an atomic counter `activeConns int64`. When `l.Accept()` returns an incoming client socket:
+`TCPProxy` maintains an atomic counter `activeConns int64`. When `l.Accept()` returns an incoming client socket:
 * If `atomic.LoadInt64(&p.activeConns) >= int64(p.maxConnections)`:
   * The socket is closed immediately (`clientConn.Close()`).
   * A diagnostic warning is logged:
@@ -164,10 +164,10 @@ flowchart TD
 
 ---
 
-### 2. UDP Proxy Architecture ([`pkg/proxy/udp.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp.go))
+### 2. UDP Proxy Architecture (`pkg/proxy/udp.go`)
 
 #### Bounded Worker Pool & Queue Saturation Drop
-Instead of spawning an unconstrained goroutine per datagram (`go p.handleDatagram(...)`), [`UDPProxy`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp.go#L92) initializes:
+Instead of spawning an unconstrained goroutine per datagram (`go p.handleDatagram(...)`), `UDPProxy` initializes:
 * A fixed-capacity channel `packetQueue chan udpPacketTask` of capacity `max_workers` (default `1024`).
 * Exactly `max_workers` long-lived worker goroutines servicing incoming datagram tasks.
 * Inbound datagram reception acquires a recycled 64 KB buffer from `sync.Pool`.
@@ -243,7 +243,7 @@ flowchart TD
 
 ## 📊 Benchmark Results & Zero-Allocation Performance Profile
 
-Automated microbenchmarks ([`pkg/proxy/tcp_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp_test.go#L515), [`pkg/proxy/udp_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp_test.go#L625)) verify that bounded concurrency and buffer pooling eliminate garbage collection overhead while sustaining high throughput.
+Automated microbenchmarks (`pkg/proxy/tcp_test.go`, `pkg/proxy/udp_test.go`) verify that bounded concurrency and buffer pooling eliminate garbage collection overhead while sustaining high throughput.
 
 ### Benchmark Execution
 
@@ -266,37 +266,37 @@ go test -bench='Benchmark(TCP|UDP)Proxy' -benchmem -run=^$ ./pkg/proxy
 
 ---
 
-## 🧪 Verification & Test Suite ([`TC-087`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-087.md))
+## 🧪 Verification & Test Suite (`TC-087`)
 
-The Layer 4 proxy security and resilience features are verified through the comprehensive automated test suite [`TC-087`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-087.md) in [`pkg/proxy/tcp_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp_test.go) and [`pkg/proxy/udp_test.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp_test.go):
+The Layer 4 proxy security and resilience features are verified through the comprehensive automated test suite `TC-087` in `pkg/proxy/tcp_test.go` and `pkg/proxy/udp_test.go`:
 
 | Test ID | Test Function | Verified Security Behavior |
 | :--- | :--- | :--- |
-| **TC-087-01** | [`TestTCPProxy_MaxConnections`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp_test.go#L87) | Rejects 3rd connection when `max_connections: 2`; upstream backend receives 0 connections; counter decrements on close. |
-| **TC-087-02** | [`TestTCPProxy_IdleTimeout`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp_test.go#L229) | Stagnant streams terminate cleanly after 150ms inactivity; continuous traffic refreshes deadline and preserves stream. |
-| **TC-087-03** | [`TestUDPProxy_WorkerPoolSaturation`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp_test.go#L91) | 40-packet blast against `max_workers: 2` bounds goroutines ($\Delta \le 8$), drops saturated packets fail-safe, and drains queue. |
-| **TC-087-04** | [`TestUDPProxy_SocketReuse`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp_test.go#L194) | 10 consecutive packets from the same client arrive at backend from the **exact same upstream source port**. |
-| **TC-087-05** | [`TestUDPProxy_SessionIdleTimeout`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp_test.go#L280) | Inactivity > 200ms evicts session and closes socket; subsequent packet triggers new socket allocation ($P_2 \ne P_1$). |
-| **TC-087-06** | [`TestUDPProxy_BufferPooling`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp_test.go#L385) | `testing.AllocsPerRun` confirms $\le 2$ allocs/op with 0 allocations for 64 KB buffers. |
-| **TC-087-07** | [`TestTCPProxy_GracefulShutdown`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp_test.go#L335), [`TestUDPProxy_GracefulShutdown`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp_test.go#L457) | `Close()` under concurrent traffic terminates sockets and workers cleanly within $\le 500\text{ms}$. |
-| **TC-087-08** | [`TestTCPProxy_ConcurrencyRaceSafety`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp_test.go#L433), [`TestUDPProxy_ConcurrencyRaceSafety`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp_test.go#L549) | Verified 100% race-free under `go test -race` with 40 concurrent workers. |
-| **Config Tests** | [`TestConfig_Layer4ProxySettings`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config_test.go#L551) | Verifies default fallbacks (10k conns, 60s idle, 1024 workers) and custom parsing. |
+| **TC-087-01** | `TestTCPProxy_MaxConnections` | Rejects 3rd connection when `max_connections: 2`; upstream backend receives 0 connections; counter decrements on close. |
+| **TC-087-02** | `TestTCPProxy_IdleTimeout` | Stagnant streams terminate cleanly after 150ms inactivity; continuous traffic refreshes deadline and preserves stream. |
+| **TC-087-03** | `TestUDPProxy_WorkerPoolSaturation` | 40-packet blast against `max_workers: 2` bounds goroutines ($\Delta \le 8$), drops saturated packets fail-safe, and drains queue. |
+| **TC-087-04** | `TestUDPProxy_SocketReuse` | 10 consecutive packets from the same client arrive at backend from the **exact same upstream source port**. |
+| **TC-087-05** | `TestUDPProxy_SessionIdleTimeout` | Inactivity > 200ms evicts session and closes socket; subsequent packet triggers new socket allocation ($P_2 \ne P_1$). |
+| **TC-087-06** | `TestUDPProxy_BufferPooling` | `testing.AllocsPerRun` confirms $\le 2$ allocs/op with 0 allocations for 64 KB buffers. |
+| **TC-087-07** | `TestTCPProxy_GracefulShutdown`, `TestUDPProxy_GracefulShutdown` | `Close()` under concurrent traffic terminates sockets and workers cleanly within $\le 500\text{ms}$. |
+| **TC-087-08** | `TestTCPProxy_ConcurrencyRaceSafety`, `TestUDPProxy_ConcurrencyRaceSafety` | Verified 100% race-free under `go test -race` with 40 concurrent workers. |
+| **Config Tests** | `TestConfig_Layer4ProxySettings` | Verifies default fallbacks (10k conns, 60s idle, 1024 workers) and custom parsing. |
 
 ---
 
 ## 🔗 Related Documentation & Code References
 
-* [`TCPProxy`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp.go#L64) – TCP stream proxy implementation in [`pkg/proxy/tcp.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/tcp.go).
-* [`UDPProxy`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp.go#L92) – UDP datagram proxy implementation in [`pkg/proxy/udp.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/udp.go).
-* [`ProxyRouteConfig`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L253) – Layer 4 route configuration struct in [`pkg/config/config.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go).
-* [`GetMaxConnections`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L461), [`GetIdleTimeout`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L469), [`GetMaxWorkers`](file:///Users/sneha/Developer/toron-research/toron/pkg/config/config.go#L477) – Configuration getters and default fallbacks.
-* [`cmd/toron/main.go`](file:///Users/sneha/Developer/toron-research/toron/cmd/toron/main.go#L390-L439) – Gateway initialization and Layer 4 route wiring.
-* [`SEC-26`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L375-L383) – Security audit finding record for CWE-400 resource exhaustion.
-* [`ADR-082`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-082.md) – Architecture Decision Record for Layer 4 bounded concurrency and socket reuse.
-* [`REQ-087`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-087.md) – Requirement specification for Layer 4 hardening.
-* [`CR-083`](file:///Users/sneha/Developer/toron-research/toron/docs/codeReview/CR-083.md) – Code review approval for Layer 4 TCP/UDP remediation.
-* [`SR-086`](file:///Users/sneha/Developer/toron-research/toron/docs/securityReview/SR-086.md) – Security review approval for SEC-26 resolution.
-* [`TC-087`](file:///Users/sneha/Developer/toron-research/toron/docs/testCases/TC-087.md) – Verification test specifications.
+* `TCPProxy` – TCP stream proxy implementation in `pkg/proxy/tcp.go`.
+* `UDPProxy` – UDP datagram proxy implementation in `pkg/proxy/udp.go`.
+* `ProxyRouteConfig` – Layer 4 route configuration struct in `pkg/config/config.go`.
+* `GetMaxConnections`, `GetIdleTimeout`, `GetMaxWorkers` – Configuration getters and default fallbacks.
+* `cmd/toron/main.go` – Gateway initialization and Layer 4 route wiring.
+* `SEC-26` – Security audit finding record for CWE-400 resource exhaustion.
+* `ADR-082` – Architecture Decision Record for Layer 4 bounded concurrency and socket reuse.
+* `REQ-087` – Requirement specification for Layer 4 hardening.
+* `CR-083` – Code review approval for Layer 4 TCP/UDP remediation.
+* `SR-086` – Security review approval for SEC-26 resolution.
+* `TC-087` – Verification test specifications.
 * [Configuration Options Reference](../reference/config-options.md) – Global YAML configuration options.
 * [Configuration Guide](../configuration.md) – Comprehensive dual-file YAML configuration guide.
 * [Benchmarking Guide](./benchmarking.md) – Native Go benchmark performance metrics.

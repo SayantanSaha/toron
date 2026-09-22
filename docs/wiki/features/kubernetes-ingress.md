@@ -29,9 +29,9 @@ related_to:
 
 # ☸️ Native Zero-Dependency Kubernetes Ingress Controller (`pkg/ingress`)
 
-Toron Edge Gateway features a native, zero-dependency **Kubernetes Ingress Controller** ([`pkg/ingress/controller.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/ingress/controller.go)). It connects to the Kubernetes API server (`networking.k8s.io/v1`) via in-cluster ServiceAccounts or external API endpoints, translates Kubernetes `Ingress`, `Service`, `Endpoints`, and `Secret` resources into high-performance upstream reverse proxies, and dynamically registers prefix routes into Toron's core routing engine ([`pkg/router/router.go`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go)).
+Toron Edge Gateway features a native, zero-dependency **Kubernetes Ingress Controller** (`pkg/ingress/controller.go`). It connects to the Kubernetes API server (`networking.k8s.io/v1`) via in-cluster ServiceAccounts or external API endpoints, translates Kubernetes `Ingress`, `Service`, `Endpoints`, and `Secret` resources into high-performance upstream reverse proxies, and dynamically registers prefix routes into Toron's core routing engine (`pkg/router/router.go`).
 
-Following security remediation [`SEC-33`](file:///Users/sneha/Developer/toron-research/toron/SECURITY_AUDIT.md#L449-L457) ([`REQ-094`](file:///Users/sneha/Developer/toron-research/toron/docs/requirements/REQ-094.md), [`ADR-089`](file:///Users/sneha/Developer/toron-research/toron/docs/architecture/ADR-089.md), [`TASK-116`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-116.md), [`TASK-117`](file:///Users/sneha/Developer/toron-research/toron/docs/tasks/TASK-117.md)), the Ingress Controller enforces an **atomic, bounded route lifecycle** featuring source-tagged atomic route table replacement, strictly bounded memory consumption, instant zombie route pruning, multi-pod endpoint aggregation with round-robin load balancing, and clean background resource teardown.
+Following security remediation `SEC-33` (`REQ-094`, `ADR-089`, `TASK-116`, `TASK-117`), the Ingress Controller enforces an **atomic, bounded route lifecycle** featuring source-tagged atomic route table replacement, strictly bounded memory consumption, instant zombie route pruning, multi-pod endpoint aggregation with round-robin load balancing, and clean background resource teardown.
 
 ---
 
@@ -39,12 +39,12 @@ Following security remediation [`SEC-33`](file:///Users/sneha/Developer/toron-re
 
 * **Zero External Dependencies**: Communicates directly with the Kubernetes API server using Go standard library HTTP and TLS primitives without importing `k8s.io/client-go`, preserving minimal binary footprint and supply chain integrity.
 * **In-Cluster Auto-Authentication**: Automatically loads in-cluster ServiceAccount bearer tokens and cluster CA certificates from `/var/run/secrets/kubernetes.io/serviceaccount/`.
-* **Dynamic Route Synchronization & Atomic Replacement ([`ReplacePrefixRoutesBySource`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go))**:
+* **Dynamic Route Synchronization & Atomic Replacement (`ReplacePrefixRoutesBySource`)**:
   * The Ingress Controller synchronizes cluster routes using Toron's source-tagged atomic replacement API:
     ```go
     c.router.ReplacePrefixRoutesBySource("k8s-ingress", desiredRoutes)
     ```
-  * **Fail-Fast Pre-Compilation**: Route specifications ([`PrefixRouteSpec`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go)) and reverse proxy instances are fully compiled and validated prior to acquiring the router write lock. If any route specification is invalid, the operation aborts cleanly without modifying active routes.
+  * **Fail-Fast Pre-Compilation**: Route specifications (`PrefixRouteSpec`) and reverse proxy instances are fully compiled and validated prior to acquiring the router write lock. If any route specification is invalid, the operation aborts cleanly without modifying active routes.
   * **Atomic Cutover**: Under the router's exclusive write lock (`r.mu.Lock()`), existing `"k8s-ingress"` routes are partitioned and swapped with the new validated route batch in a single atomic pointer swap. Incoming HTTP requests dispatched via `ServeHTTP` observe either the complete prior route set or the complete new route set—with zero intermediate or partially initialized states.
   * **Source Subsystem Isolation**: Mutations are strictly scoped to the `"k8s-ingress"` source. Prefix routes registered by configuration files (`"config"`), static directory bindings (`"static"`), or administrative endpoints remain completely unaffected and preserve their relative matching order.
 * **Strictly Bounded Memory Invariant ($O(K)$ Scaling)**:
@@ -58,11 +58,11 @@ Following security remediation [`SEC-33`](file:///Users/sneha/Developer/toron-re
 * **Multi-Pod Endpoint Aggregation & Fair Round-Robin Load Balancing**:
   * When an Ingress path is backed by a Kubernetes Service with multiple pod replicas (e.g. $M$ pod IPs in `Endpoints.Subsets[].Addresses`), the Ingress Controller aggregates all pod endpoint target URLs (`http://<pod-ip>:<port>`) sharing `(Host, Prefix)` into a unified multi-target reverse proxy configuration.
   * Exactly **one** prefix route entry is registered in the routing table for each unique `(Host, Prefix)` tuple.
-  * Traffic is distributed across all healthy pod replicas using Toron's built-in round-robin load balancer ([`proxy.AlgorithmRoundRobin`](file:///Users/sneha/Developer/toron-research/toron/pkg/proxy/proxy.go#L30)), allocating approximately $1/M$ traffic per replica and eliminating pod replica starvation.
+  * Traffic is distributed across all healthy pod replicas using Toron's built-in round-robin load balancer (`proxy.AlgorithmRoundRobin`), allocating approximately $1/M$ traffic per replica and eliminating pod replica starvation.
   * **Zero Stale Endpoint Shadowing**: When pod endpoints change during rollouts or restarts, the updated endpoint target list replaces the route in place. Stale routes are evicted rather than appended to the end of the routing table, guaranteeing immediate cutover with zero requests routed to terminated pod IPs.
   * **Cluster DNS Fallback**: If a Service has no active pod endpoints registered, the controller falls back to the cluster Service DNS address (`http://<service>.<namespace>.svc.cluster.local:<port>`).
 * **Clean Resource Teardown (Zero Goroutine / Socket Leaks)**:
-  * Whenever a prefix route is replaced, evicted, or removed via [`ReplacePrefixRoutesBySource`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go), [`RemovePrefixRoute`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go), or [`Reset`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go), Toron calls `.Close()` on the evicted route's reverse proxy instance.
+  * Whenever a prefix route is replaced, evicted, or removed via `ReplacePrefixRoutesBySource`, `RemovePrefixRoute`, or `Reset`, Toron calls `.Close()` on the evicted route's reverse proxy instance.
   * Active background health check ticker goroutines (`t.StopActiveHealthCheck()`) are cleanly terminated, and idle transport connections are closed, preventing socket descriptor leaks (EMFILE) and background goroutine accumulation.
 * **IngressClass Isolation**: Filters cluster Ingresses matching configured `ingressClassName` (default: `toron`).
 
@@ -138,7 +138,7 @@ When `user-service` scales to 3 pod replicas (`10.244.1.15:8080`, `10.244.2.22:8
 When an Ingress rule is deleted or modified:
 1. Kubernetes emits a `DELETED` watch event (or the periodic 30s resync cycle fires).
 2. The Ingress Controller gathers current Ingresses and Endpoints from the API server.
-3. Desired route specifications are compiled and passed to [`ReplacePrefixRoutesBySource`](file:///Users/sneha/Developer/toron-research/toron/pkg/router/router.go).
+3. Desired route specifications are compiled and passed to `ReplacePrefixRoutesBySource`.
 4. The deleted route is immediately removed from Toron's prefix route table.
 5. The associated reverse proxy is closed, stopping health check goroutines.
 6. Subsequent client requests to the deleted path immediately receive HTTP `404 Not Found`.
@@ -161,5 +161,5 @@ When an Ingress rule is deleted or modified:
 
 - [Reverse Proxy & Load Balancing](./reverse-proxy.md)
 - [OCI Container Auto-Discovery](./oci-container-auto-discovery.md)
-- [Gateway Configuration Reference](./configuration.md)
+- [Gateway Configuration Reference](../configuration.md)
 - [Toron v1.5.14 Release Notes](../release-notes.md)

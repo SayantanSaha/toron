@@ -415,6 +415,7 @@ function buildDataModel() {
         sev: 'critical',
         title: `Upstream Degradation: ${p.displayName || p.id}`,
         timestamp: Date.now() - 60000,
+        ip: '',
         go: 'upstreams',
         detail: () => `${p.down} of ${p.insts.length} instances are failing health checks.`
       });
@@ -429,6 +430,7 @@ function buildDataModel() {
         sev: 'critical',
         title: `High 5xx Error Rate: ${r.short}`,
         timestamp: Date.now() - 60000,
+        ip: '',
         go: 'routes',
         detail: () => `5xx error rate (${fmt.pct(r.cur.err5, 1)}) exceeds 2% threshold.`
       });
@@ -443,6 +445,7 @@ function buildDataModel() {
         sev: 'critical',
         title: `Certificate Renewal Failed: ${c.domain}`,
         timestamp: Date.now() - 300000,
+        ip: '',
         go: 'certs',
         detail: () => `Automated Let's Encrypt renewal failed for domain ${c.domain}.`
       });
@@ -458,6 +461,7 @@ function buildDataModel() {
         sev: 'warning',
         title: `WAF Security Anomaly: ${inc.category || inc.rule_id || 'Threat'} on ${inc.path}`,
         timestamp: incTs,
+        ip: inc.client_ip || '',
         go: 'alerts',
         detail: () => `Blocked malicious threat from client IP ${inc.client_ip || 'unknown'}`
       });
@@ -473,14 +477,19 @@ function buildDataModel() {
         sev: ban.type === 'permanent' ? 'critical' : 'warning',
         title: `Banned Threat Actor: ${ban.ip} (${ban.type})`,
         timestamp: banTs,
+        ip: ban.ip || '',
         go: 'alerts',
         detail: () => ban.reason || `IP address has been banned due to repeated security violations`
       });
     });
   }
 
-  // Sort alerts: Latest first
-  alerts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+  // Multi-level sort alerts: 1) timestamp descending (latest first), 2) client IP ascending
+  alerts.sort((a, b) => {
+    const dt = (b.timestamp || 0) - (a.timestamp || 0);
+    if (dt !== 0) return dt;
+    return (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true });
+  });
 
   cache = { routes, pools, A, X, labels, B, total, redir: total * 0.06, certs, modules, alerts, bannedIps: rawApiBannedIps };
   return cache;
@@ -1038,7 +1047,15 @@ function lgUpdate(D, force) {
     { id: 102, ts: Date.now() - 900, method: 'POST', path: '/v1/payments/charge', route: 'payments', short: 'api /v1/payments', status: 502, ms: 210.5, up: '10.0.4.13:8080', trace: 'b9e3d1a8c7f2', ip: '192.168.1.15', bytes: 420, err: 'connect: connection refused' }
   ];
 
-  const f = logs.filter(e => state.lst.has(stCls(e.status)) && (state.lroute === 'all' || e.route === state.lroute) && (!state.lq || (e.path + e.up + e.trace + (e.short || '') + (e.ip || '')).toLowerCase().includes(state.lq)));
+  const f = logs.filter(e => state.lst.has(stCls(e.status)) && (state.lroute === 'all' || e.route === state.lroute) && (!state.lq || (e.path + e.up + e.trace + (e.short || '') + (e.ip || '')).toLowerCase().includes(state.lq))).sort((a, b) => {
+    const dt = (b.ts || 0) - (a.ts || 0);
+    if (dt !== 0) return dt;
+    const ipA = a.ip || a.client_ip || '';
+    const ipB = b.ip || b.client_ip || '';
+    const dip = ipA.localeCompare(ipB, undefined, { numeric: true });
+    if (dip !== 0) return dip;
+    return (a.path || '').localeCompare(b.path || '', undefined, { numeric: true });
+  });
   const sumEl = $('#lgSum');
   if (sumEl) sumEl.textContent = `Showing ${Math.min(f.length, 70)} of ${f.length} requests in live tail.` + (state.live ? '' : ' Tail is paused.');
 
@@ -1155,7 +1172,11 @@ function alUpdate(D) {
 
   const tb = $('#bannedIpsTable');
   if (tb) {
-    const bans = (D.bannedIps || []).slice().sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
+    const bans = (D.bannedIps || []).slice().sort((a, b) => {
+      const dt = new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime();
+      if (dt !== 0) return dt;
+      return (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true });
+    });
     if (bans.length === 0) {
       tb.innerHTML = `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--text-muted)">${ICON('i-check')} Zero active IP bans in effect.</td></tr>`;
     } else {

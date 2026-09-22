@@ -14,6 +14,7 @@ const sum=a=>(a||[]).reduce((x,y)=>x+y,0), avg=a=>(a&&a.length)?sum(a)/a.length:
 const p2=n=>String(n).padStart(2,'0');
 const hms=d=>`${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
 const hm=d=>`${p2(d.getHours())}:${p2(d.getMinutes())}`;
+const dtFmt=d=>{if(!d)return'';const t=(d instanceof Date)?d:new Date(d);if(isNaN(t.getTime()))return String(d);return`${t.getFullYear()}-${p2(t.getMonth()+1)}-${p2(t.getDate())} ${p2(t.getHours())}:${p2(t.getMinutes())}:${p2(t.getSeconds())}`;};
 const ago=s=>s<90?`${Math.round(s)} s`:s<5400?`${Math.round(s/60)} min`:s<129600?`${Math.round(s/3600)} h`:`${Math.round(s/86400)} d`;
 const fmt={
   n:v=>v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e4?(v/1e3).toFixed(1)+'k':v>=1e3?(v/1e3).toFixed(2)+'k':v>=100?String(Math.round(v)):v>=10?v.toFixed(0):v.toFixed(1),
@@ -412,8 +413,8 @@ function buildDataModel() {
       alerts.push({
         id: `upstream_${p.id}`,
         sev: 'critical',
-        title: `Upstream Degradation: ${p.id}`,
-        since: 60,
+        title: `Upstream Degradation: ${p.displayName || p.id}`,
+        timestamp: Date.now() - 60000,
         go: 'upstreams',
         detail: () => `${p.down} of ${p.insts.length} instances are failing health checks.`
       });
@@ -427,7 +428,7 @@ function buildDataModel() {
         id: `route_${r.id}`,
         sev: 'critical',
         title: `High 5xx Error Rate: ${r.short}`,
-        since: 60,
+        timestamp: Date.now() - 60000,
         go: 'routes',
         detail: () => `5xx error rate (${fmt.pct(r.cur.err5, 1)}) exceeds 2% threshold.`
       });
@@ -441,7 +442,7 @@ function buildDataModel() {
         id: `cert_${c.id}`,
         sev: 'critical',
         title: `Certificate Renewal Failed: ${c.domain}`,
-        since: 300,
+        timestamp: Date.now() - 300000,
         go: 'certs',
         detail: () => `Automated Let's Encrypt renewal failed for domain ${c.domain}.`
       });
@@ -451,13 +452,14 @@ function buildDataModel() {
   // 4. WAF Security Incidents
   if (rawApiIncidents && rawApiIncidents.length > 0) {
     rawApiIncidents.forEach((inc, i) => {
+      const incTs = inc.timestamp ? new Date(inc.timestamp).getTime() : Date.now();
       alerts.push({
         id: `inc_${i}`,
         sev: 'warning',
         title: `WAF Security Anomaly: ${inc.category || inc.rule_id || 'Threat'} on ${inc.path}`,
-        since: 60,
+        timestamp: incTs,
         go: 'alerts',
-        detail: () => `Blocked malicious threat from client IP ${inc.client_ip}`
+        detail: () => `Blocked malicious threat from client IP ${inc.client_ip || 'unknown'}`
       });
     });
   }
@@ -465,16 +467,20 @@ function buildDataModel() {
   // 5. Active Banned Threat Actors
   if (rawApiBannedIps && rawApiBannedIps.length > 0) {
     rawApiBannedIps.forEach((ban, i) => {
+      const banTs = ban.created_at ? new Date(ban.created_at).getTime() : Date.now();
       alerts.push({
         id: `ban_${i}`,
         sev: ban.type === 'permanent' ? 'critical' : 'warning',
         title: `Banned Threat Actor: ${ban.ip} (${ban.type})`,
-        since: 60,
+        timestamp: banTs,
         go: 'alerts',
         detail: () => ban.reason || `IP address has been banned due to repeated security violations`
       });
     });
   }
+
+  // Sort alerts: Latest first
+  alerts.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
 
   cache = { routes, pools, A, X, labels, B, total, redir: total * 0.06, certs, modules, alerts, bannedIps: rawApiBannedIps };
   return cache;
@@ -894,7 +900,7 @@ function ovUpdate(D) {
   }
   const alEl = $('#alertRows');
   if (alEl) {
-    alEl.innerHTML = (D.alerts || []).slice(0, 4).map(a => `<li data-go="${a.go}" tabindex="0" role="link"><span class="${a.sev === 'critical' ? 't-err' : 't-warn'}">${ICON(a.sev === 'critical' ? 'i-x' : 'i-alert')}</span><div><div class="al-t">${esc(a.title)}</div><div class="al-d">${esc(a.detail(D))}</div></div><span class="mut num">${ago(a.since)}</span></li>`).join('') || `<li><span class="t-ok">${ICON('i-check')}</span><div><div class="al-t">Zero Active Incidents</div></div></li>`;
+    alEl.innerHTML = (D.alerts || []).slice(0, 4).map(a => `<li data-go="${a.go}" tabindex="0" role="link"><span class="${a.sev === 'critical' ? 't-err' : 't-warn'}">${ICON(a.sev === 'critical' ? 'i-x' : 'i-alert')}</span><div><div class="al-t">${esc(a.title)}</div><div class="al-d">${esc(a.detail(D))}</div></div><span class="mut num" style="white-space:nowrap;font-size:11.5px">${dtFmt(a.timestamp)}</span></li>`).join('') || `<li><span class="t-ok">${ICON('i-check')}</span><div><div class="al-t">Zero Active Incidents</div></div></li>`;
   }
   const crEl = $('#certRows');
   if (crEl) {
@@ -1007,7 +1013,7 @@ function lgShell() {
       <button class="btn" id="lgPause"></button>
     </div>
     <div class="tsum" id="lgSum"></div>
-    <div class="tscroll"><table class="tbl lg-tbl"><thead><tr><th>Time</th><th>Status</th><th>Request</th><th class="hide-md">Route</th><th class="hide-md">Upstream</th><th class="num">Duration</th><th class="hide-sm">Trace</th></tr></thead><tbody id="lgBody"></tbody></table></div></section>`;
+    <div class="tscroll"><table class="tbl lg-tbl"><thead><tr><th>Time</th><th>Status</th><th>Request</th><th class="hide-sm">Source IP</th><th class="hide-md">Route</th><th class="hide-md">Upstream</th><th class="num">Duration</th><th class="hide-sm">Trace</th></tr></thead><tbody id="lgBody"></tbody></table></div></section>`;
 }
 
 function lgSync() { const b = $('#lgPause'); if (b) b.innerHTML = state.live ? `${ICON('i-pause')}Pause Tail` : `${ICON('i-play')}Resume Tail`; }
@@ -1032,11 +1038,11 @@ function lgUpdate(D, force) {
     { id: 102, ts: Date.now() - 900, method: 'POST', path: '/v1/payments/charge', route: 'payments', short: 'api /v1/payments', status: 502, ms: 210.5, up: '10.0.4.13:8080', trace: 'b9e3d1a8c7f2', ip: '192.168.1.15', bytes: 420, err: 'connect: connection refused' }
   ];
 
-  const f = logs.filter(e => state.lst.has(stCls(e.status)) && (state.lroute === 'all' || e.route === state.lroute) && (!state.lq || (e.path + e.up + e.trace + e.short).toLowerCase().includes(state.lq)));
+  const f = logs.filter(e => state.lst.has(stCls(e.status)) && (state.lroute === 'all' || e.route === state.lroute) && (!state.lq || (e.path + e.up + e.trace + (e.short || '') + (e.ip || '')).toLowerCase().includes(state.lq)));
   const sumEl = $('#lgSum');
   if (sumEl) sumEl.textContent = `Showing ${Math.min(f.length, 70)} of ${f.length} requests in live tail.` + (state.live ? '' : ' Tail is paused.');
 
-  body.innerHTML = f.slice(0, 70).map(e => `<tr class="click" tabindex="0" data-log="${e.id}"><td class="tm">${hms(new Date(e.ts))}</td><td><span class="st s${stCls(e.status)}">${e.status}</span></td><td class="path"><span class="meth">${esc(e.method)}</span>${esc(e.path)}</td><td class="hide-md">${esc(e.short || e.route)}</td><td class="hide-md"><code>${esc(e.up)}</code></td><td class="num">${fmt.ms(e.ms)}</td><td class="hide-sm"><code>${esc((e.trace || '').slice(0, 8))}</code></td></tr>`).join('') || `<tr><td colspan="7" class="empty">No requests match active filters.</td></tr>`;
+  body.innerHTML = f.slice(0, 70).map(e => `<tr class="click" tabindex="0" data-log="${e.id}"><td class="tm" style="white-space:nowrap">${dtFmt(e.ts)}</td><td><span class="st s${stCls(e.status)}">${e.status}</span></td><td class="path"><span class="meth">${esc(e.method)}</span>${esc(e.path)}</td><td class="hide-sm"><code style="font-size:11.5px">${esc(e.ip || e.client_ip || '127.0.0.1')}</code></td><td class="hide-md">${esc(e.short || e.route)}</td><td class="hide-md"><code>${esc(e.up)}</code></td><td class="num">${fmt.ms(e.ms)}</td><td class="hide-sm"><code>${esc((e.trace || '').slice(0, 8))}</code></td></tr>`).join('') || `<tr><td colspan="8" class="empty">No requests match active filters.</td></tr>`;
 }
 
 /* ---------- View 5: Certificates ---------- */
@@ -1125,6 +1131,7 @@ function alShell() {
             <tr style="border-bottom:1px solid var(--line);background:var(--surface-2)">
               <th style="padding:10px 14px">Client IP</th>
               <th style="padding:10px 14px">Ban Tier</th>
+              <th style="padding:10px 14px">Created At</th>
               <th style="padding:10px 14px">Temp Bans</th>
               <th style="padding:10px 14px">Reason / Category</th>
               <th style="padding:10px 14px">TTL / Expiry</th>
@@ -1132,7 +1139,7 @@ function alShell() {
             </tr>
           </thead>
           <tbody id="bannedIpsTable">
-            <tr><td colspan="6" style="padding:16px;text-align:center;color:var(--text-muted)">Loading threat table...</td></tr>
+            <tr><td colspan="7" style="padding:16px;text-align:center;color:var(--text-muted)">Loading threat table...</td></tr>
           </tbody>
         </table>
       </div>
@@ -1143,14 +1150,14 @@ function alShell() {
 function alUpdate(D) {
   const alEl = $('#alActive');
   if (alEl) {
-    alEl.innerHTML = D.alerts.map(a => `<li data-go="${a.go}" tabindex="0" role="link"><span class="${a.sev === 'critical' ? 't-err' : 't-warn'}">${ICON(a.sev === 'critical' ? 'i-x' : 'i-alert')}</span><div><div class="al-t">${esc(a.title)}</div><div class="al-d">${esc(a.detail(D))}</div></div><span class="mut num">${ago(a.since)}</span></li>`).join('') || `<li><span class="t-ok">${ICON('i-check')}</span><div><div class="al-t">All Systems Operational</div><div class="al-d">Zero unresolved security incidents.</div></div></li>`;
+    alEl.innerHTML = D.alerts.map(a => `<li data-go="${a.go}" tabindex="0" role="link"><span class="${a.sev === 'critical' ? 't-err' : 't-warn'}">${ICON(a.sev === 'critical' ? 'i-x' : 'i-alert')}</span><div><div class="al-t">${esc(a.title)}</div><div class="al-d">${esc(a.detail(D))}</div></div><span class="mut num" style="white-space:nowrap;font-size:12px">${dtFmt(a.timestamp)}</span></li>`).join('') || `<li><span class="t-ok">${ICON('i-check')}</span><div><div class="al-t">All Systems Operational</div><div class="al-d">Zero unresolved security incidents.</div></div></li>`;
   }
 
   const tb = $('#bannedIpsTable');
   if (tb) {
-    const bans = D.bannedIps || [];
+    const bans = (D.bannedIps || []).slice().sort((a, b) => new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime());
     if (bans.length === 0) {
-      tb.innerHTML = `<tr><td colspan="6" style="padding:20px;text-align:center;color:var(--text-muted)">${ICON('i-check')} Zero active IP bans in effect.</td></tr>`;
+      tb.innerHTML = `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--text-muted)">${ICON('i-check')} Zero active IP bans in effect.</td></tr>`;
     } else {
       tb.innerHTML = bans.map(b => {
         const isPerm = b.type === 'permanent';
@@ -1168,6 +1175,7 @@ function alUpdate(D) {
         return `<tr style="border-bottom:1px solid var(--line)">
           <td style="padding:10px 14px;font-family:var(--mono);font-weight:600">${esc(b.ip)}</td>
           <td style="padding:10px 14px">${tierBadge}</td>
+          <td style="padding:10px 14px;font-family:var(--mono);font-size:12px;white-space:nowrap">${dtFmt(b.created_at)}</td>
           <td style="padding:10px 14px;font-family:var(--mono)">${b.temp_ban_count || 0}</td>
           <td style="padding:10px 14px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.reason || '')}">${esc(b.reason || b.last_category || 'WAF violation')}</td>
           <td style="padding:10px 14px;font-size:12px;color:var(--text-muted)">${esc(ttlStr)}</td>
@@ -1316,7 +1324,7 @@ function openDrawer(kind, id) {
     ];
     const e = logs.find(x => x.id === id) || logs[0];
     $('#dwTitle').textContent = `${e.method} ${e.path}`;
-    $('#dwSub').innerHTML = `${pill(stCls(e.status) === '5' ? 'err' : 'ok', String(e.status))}<span class="mut num">${fmt.ms(e.ms)} · ${hms(new Date(e.ts))}</span>`;
+    $('#dwSub').innerHTML = `${pill(stCls(e.status) === '5' ? 'err' : 'ok', String(e.status))}<span class="mut num">${fmt.ms(e.ms)} · ${dtFmt(e.ts)}</span>`;
     const spans = e.spans || [
       { name: 'Accept & Parse', mod: 'listener.http', d: 0.2 },
       { name: 'TLS Handshake', mod: 'listener.http', d: 2.1 },

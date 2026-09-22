@@ -247,6 +247,31 @@ For performance engineers conducting raw benchmark evaluations or deploying in i
 | `max_body_bytes` | `integer` | `4194304` (4MB) | Maximum permissible request body size in bytes before HTTP 413 rejection (SEC-28) |
 | `routes` | `list` | `[]` | Transcoding rules (`http_method`, `http_path`, `grpc_method`, `upstream_url`, `field_mappings`) |
 
+## Section: `server.waf` (Web Application Firewall)
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `enabled` | `boolean` | `false` | Enable Web Application Firewall Layer 7 inspection |
+| `mode` | `string` | `"enforce"` | Operational mode: `"enforce"` (403 block) or `"detection"` (log only) |
+| `anomaly_threshold` | `integer` | `5` | Cumulative threat score threshold triggering request block |
+| `max_inspect_body_size` | `integer` | `65536` (64 KB) | Maximum payload body bytes scanned for injection patterns |
+| `disabled_rules` | `list` | `[]` | List of rule IDs to bypass globally (e.g. `["SQLI-001"]`) |
+| `allowed_ips` | `list` | `[]` | List of CIDR subnets allowed (enforces strict positive security) |
+| `denied_ips` | `list` | `[]` | List of CIDR subnets/IPs permanently blocked |
+| `custom_rules` | `list` | `[]` | User-defined regex threat signatures (`id`, `category`, `pattern`, `score`, `locations`) |
+
+## Section: `server.waf.auto_ban` (2-Stage Dynamic Auto-Ban Engine)
+
+| Parameter | Type | Default | Description |
+| --------- | ---- | ------- | ----------- |
+| `enabled` | `boolean` | `false` | Enable automated client IP banning on repeated security violations |
+| `max_violations` | `integer` | `5` | Security violation count within window triggering Stage 1 ban (`1` for instant zero-day ban) |
+| `window` | `duration` | `"1m"` | Sliding time window for tracking client strike violations |
+| `ban_duration` | `duration` | `"1h"` | Stage 1 temporary ban duration (e.g. `"24h"`, `"1h"`) |
+| `max_temporary_bans` | `integer` | `3` | Count of Stage 1 temporary bans before automatic escalation to Stage 2 Permanent Ban |
+| `persistence_file` | `string` | `"/etc/toron/banned_ips.json"` | Path to atomic JSON state file for cross-restart ban persistence |
+| `whitelist` | `list` | `["127.0.0.1/32", "::1/128"]` | CIDR subnets exempted from auto-banning |
+
 ## Section: `server.auth` / `routes[].auth`
 
 | Parameter | Type | Default | Description |

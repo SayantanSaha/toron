@@ -98,7 +98,61 @@ server:
       - "198.51.100.0/24"
     trusted_proxies:          # Optional CIDR subnets allowed to supply forwarded client IPs
       - "10.0.0.1/32"
+    auto_ban:                 # 2-Stage Native Dynamic Auto-Ban Engine
+      enabled: true           # Enable automated IP banning on repeated security violations
+      max_violations: 1       # Violations within window triggering Stage 1 temporary ban (1 for instant ban)
+      window: 60s             # Sliding time window for counting client security strikes
+      ban_duration: 24h       # Stage 1 temporary ban duration (e.g. 24h, 1h)
+      max_temporary_bans: 2   # Stage 1 bans before automatic escalation to Stage 2 Permanent Ban
+      persistence_file: "/etc/toron/banned_ips.json" # Atomic state storage file
+      whitelist:              # Exempted CIDR subnets (never banned)
+        - "127.0.0.1/32"
+        - "::1/128"
 ```
+
+## 2-Stage Dynamic Auto-Ban Engine
+
+Toron includes a high-performance **2-Stage Native Auto-Ban Engine** (`pkg/waf/auto_ban.go`) that tracks client security violations in real-time and escalates repeated malicious scanners to persistent bans.
+
+### Ban Lifecycle & Escalation Tiers
+
+1. **Strike Tracking (Sliding Window)**:
+   - When a client triggers any WAF rule, path traversal attempt, IP ACL denial, or RCE exploit, Toron logs a security violation strike.
+   - Strikes are evaluated across a configurable sliding time window (`window: 60s`).
+2. **Stage 1: Temporary Ban**:
+   - When an IP reaches `max_violations` (e.g., `1` for instant ban on zero-day probes, or `3` for rate-limited tuning), it is immediately placed in a **Stage 1 Temporary Ban**.
+   - During the ban duration (`ban_duration: 24h`), all incoming requests from the client IP are dropped at the connection entrypoint (`auto_ban_drop`) returning HTTP `403 Forbidden`.
+   - The IP accumulates `temp_ban_count` in persistent state.
+3. **Stage 2: Permanent Ban**:
+   - If a client IP accumulates `max_temporary_bans` (e.g. 2 temporary bans), the engine automatically escalates the IP to **Stage 2: Permanent Ban**.
+   - Permanent bans persist indefinitely (`expires_at: 0`) across service restarts and system reboots.
+   - Administrators can also immediately promote any IP to a Permanent Ban directly from the dashboard or management API.
+
+### Atomic Disk State Persistence
+
+- All active bans, strike histories, and expiration timestamps are written atomically to disk (`persistence_file: /etc/toron/banned_ips.json`) using temporary file staging (`banned_ips.json.tmp`) followed by atomic filesystem rename (`os.Rename`).
+- State is preserved across daemon restarts, configuration reloads (`systemctl reload toron`), power loss, and crashes without data corruption.
+
+### Management APIs
+
+Toron exposes protected RESTful endpoints on `/internal/api/security/*`:
+
+- **`GET /internal/api/security/banned-ips`**:
+  Returns the complete list of active temporary and permanent bans, remaining TTL seconds, strike counts, and ban reasons.
+- **`POST /internal/api/security/ban`**:
+  Manually applies an immediate temporary or permanent ban:
+  ```bash
+  curl -X POST https://127.0.0.1/internal/api/security/ban \
+    -H 'Content-Type: application/json' \
+    -d '{"ip":"198.51.100.25","type":"permanent","reason":"Compromised scanner node"}'
+  ```
+- **`POST /internal/api/security/unban`**:
+  Instantly lifts an active ban in memory and persists the change to disk:
+  ```bash
+  curl -X POST https://127.0.0.1/internal/api/security/unban \
+    -H 'Content-Type: application/json' \
+    -d '{"ip":"198.51.100.25"}'
+  ```
 
 ## Route-Level WAF Overrides in `routes.yaml`
 

@@ -92,14 +92,16 @@ port     = http,https,80,443
 filter   = toron-waf
 logpath  = /var/log/toron/security.log
 backend  = auto
-maxretry = 3
+maxretry = 1
 findtime = 120
-bantime  = 3600
+bantime  = 86400
 # Multi-stage progressive banning in fail2ban
 bantime.increment = true
 bantime.factor = 2
 bantime.maxtime = 604800
-action   = iptables-multiport[name=ToronWAF, port="http,https", protocol=tcp]
+# Note: On systems using firewalld, 00-firewalld.conf provides 'banaction = firewallcmd-rich-rules' automatically.
+# On Debian/Ubuntu iptables systems, action can be set explicitly:
+# action = iptables-multiport[name=ToronWAF, port="http,https", protocol=tcp]
 ```
 
 ### 2.4 Step 3: Test and Activate
@@ -110,6 +112,9 @@ fail2ban-regex /var/log/toron/security.log /etc/fail2ban/filter.d/toron-waf.conf
 # Restart and check status
 systemctl restart fail2ban
 fail2ban-client status toron-waf
+
+# To manually ban an IP immediately at the kernel layer:
+fail2ban-client set toron-waf banip 198.51.100.1
 
 # To manually unban an IP via Fail2ban:
 fail2ban-client set toron-waf unbanip 198.51.100.1

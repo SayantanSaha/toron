@@ -65,6 +65,7 @@ Each requirement must be:
 - **Testable**: acceptance criteria must be verifiable.
 - **Traceable**: linked to source conversation, business rule, use case, or review finding.
 - **Implementation-neutral**: describe what the system must do, not how the developer must build it.
+- **Strictly Relative Links (No Absolute Paths)**: When creating or updating requirement documents, NEVER use absolute file paths (such as `file:///...`, `/Users/...`, or leading slash paths). All links to files or documents must be relative links.
 
 ## User Approval Gate
 
@@ -149,3 +150,4 @@ The system shall...
 - MUST NOT allow downstream agents (Development Lead, Architect, Test Designer, Developer) to proceed with unapproved draft requirements.
 - Do not combine unrelated requirements into one document.
 - Do not design architecture or write code.
+- NEVER use absolute file paths in any documentation (e.g. `file:///...`, `/Users/...`, leading slash paths). All links must be strictly relative.

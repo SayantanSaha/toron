@@ -149,6 +149,7 @@ Once parallel reviews approve the implementation:
   - Defined in [document-writer.md](document-writer.md)
   - Call after code and security reviews are approved.
   - Updates user-facing documentation in `docs/wiki/` and updates release notes/changelogs.
+  - Enforce: NEVER use absolute file paths in any documentation; in WIKI, never refer to or link to any documentation outside of `docs/wiki/`; source code can be referenced.
 
 ### Phase 5: Verification, Knowledge Graph Update, and Git Commit
 After all subagents have completed:
@@ -197,3 +198,4 @@ After all subagents have completed:
 - MUST loop back to the Requirement Engineer whenever review findings require changes.
 - MUST NOT consider feature work complete until parallel reviews are approved and documentation is updated.
 - MUST preserve zero third-party dependencies and verify race-clean execution before committing.
+- MUST enforce that ALL agents creating or updating any sort of document strictly follow the rule **Strictly Relative Links (No Absolute Paths)**: NEVER use absolute file paths (e.g. `file:///...`, `/Users/...`, leading slash filesystem paths); all links between documents or to files must be relative links.

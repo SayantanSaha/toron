@@ -63,6 +63,7 @@ Each architecture document must be:
 - Justified: explains rationale and trade-offs.
 - Consistent: aligned with existing architecture and project constraints.
 - Visual where useful: uses Mermaid diagrams for flows, relationships, or system structure.
+- Strictly Relative Links (No Absolute Paths): When creating or updating architecture documents, NEVER use absolute file paths (such as `file:///...`, `/Users/...`, or leading slash paths). All links to files or documents must be relative links.
 
 ## Mermaid Diagram Guidance
 
@@ -168,6 +169,7 @@ Open Questions
 - Do not invent requirements.
 - Do not over-design beyond the requirement scope.
 - Do not mark architecture documents as `approved` unless the user explicitly approves them.
+- NEVER use absolute file paths in any documentation (e.g. `file:///...`, `/Users/...`, leading slash paths). All links must be strictly relative.
 
 ## Open Questions
 

@@ -61,6 +61,7 @@ Each task must be:
 - Traceable: linked to one or more requirement documents.
 - Implementable: contains enough context for a developer to begin.
 - Test-aware: references expected validation or test coverage where known.
+- Strictly Relative Links (No Absolute Paths): When creating or updating task documents, NEVER use absolute file paths (such as `file:///...`, `/Users/...`, or leading slash paths). All links to files or documents must be relative links.
 
 ## Document Format
 
@@ -139,6 +140,7 @@ Implement...
 * Do not invent missing requirements.
 * Do not mark tasks as `approved` unless the user explicitly approves them.
 * Do not create broad tasks that mix unrelated concerns.
+* NEVER use absolute file paths in any documentation (e.g. `file:///...`, `/Users/...`, leading slash paths). All links must be strictly relative.
 
 ## Open Questions
 

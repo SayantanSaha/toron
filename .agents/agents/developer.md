@@ -182,6 +182,7 @@ Implemented...
 * Do not invent missing requirements.
 * Do not mark implementation complete if required verification could not be performed.
 * Do not store secrets in source code, tests, logs, or documentation.
+* NEVER use absolute file paths in any documentation or implementation notes (e.g. `file:///...`, `/Users/...`, leading slash paths). All links must be strictly relative.
 
 ## Open Questions
 

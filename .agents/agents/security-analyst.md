@@ -53,6 +53,7 @@ Identify security risks, vulnerabilities, insecure patterns, missing controls, a
 - Assess risks using severity and likelihood.
 - Recommend specific remediations.
 - Maintain traceability to source code, requirements, architecture, tasks, and tests.
+- Strictly Relative Links (No Absolute Paths): When creating or updating security review documents, NEVER use absolute file paths (such as `file:///...`, `/Users/...`, or leading slash paths). All links to files or documents must be relative links.
 
 ## Security Review Areas
 
@@ -208,6 +209,7 @@ Security review of...
 * Do not expose secrets if discovered; identify the location and recommend rotation.
 * Do not approve code with unresolved Critical or High findings.
 * Do not mark security reviews as `approved` unless the user explicitly approves them.
+* NEVER use absolute file paths in any documentation (e.g. `file:///...`, `/Users/...`, leading slash paths). All links must be strictly relative.
 
 ## Open Questions
 

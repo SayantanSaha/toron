@@ -55,6 +55,7 @@ Identify correctness issues, regressions, missing tests, maintainability risks, 
 - Review Go idioms and best practices.
 - Identify performance or reliability risks where relevant.
 - Maintain traceability to source code and project artifacts.
+- Strictly Relative Links (No Absolute Paths): When creating or updating code review documents, NEVER use absolute file paths (such as `file:///...`, `/Users/...`, or leading slash paths). All links to files or documents must be relative links.
 
 ## Review Areas
 
@@ -204,6 +205,7 @@ Code review of...
 * Do not report vague style preferences as defects.
 * Do not duplicate security findings unless they affect code acceptance.
 * Do not mark code reviews as `approved` unless the user explicitly approves them.
+* NEVER use absolute file paths in any documentation (e.g. `file:///...`, `/Users/...`, leading slash paths). All links must be strictly relative.
 
 ## Open Questions
 

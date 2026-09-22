@@ -60,6 +60,7 @@ Each test case must be:
 - Verifiable: has objective pass/fail criteria.
 - Focused: validates one behavior or scenario at a time.
 - Complete enough for a developer, QA engineer, or automation agent to implement.
+- Strictly Relative Links (No Absolute Paths): When creating or updating test case documents, NEVER use absolute file paths (such as `file:///...`, `/Users/...`, or leading slash paths). All links to files or documents must be relative links.
 
 ## Test Coverage Guidance
 
@@ -168,6 +169,7 @@ Verify that...
 * Do not invent expected behavior when requirements are ambiguous.
 * Do not mark test cases as `approved` unless the user explicitly approves them.
 * Do not combine unrelated scenarios into one test case.
+* NEVER use absolute file paths in any documentation (e.g. `file:///...`, `/Users/...`, leading slash paths). All links must be strictly relative.
 
 ## Open Questions
 

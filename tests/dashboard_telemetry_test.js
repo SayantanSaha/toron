@@ -1138,8 +1138,197 @@ console.log('\nRunning TC-141 Verification Suite (Modular ES Architecture & Pari
     console.log('  ✔ TC-142-10: Strictly Relative Links Invariant in REQ-142, TASK-165, ADR-142, TC-142, AN-001 PASSED');
   }
 
+  // =============================================================
+  // TC-143: Dual-Pane Analytics & Time-Window Filtered Requests
+  // =============================================================
+  console.log('\nRunning TC-143 Verification Suite (Dual-Pane Analytics & Requests Redesign)...\n');
+
+  {
+    const elements = new Map();
+    function getMockEl(sel) {
+      if (!elements.has(sel)) {
+        elements.set(sel, {
+          innerHTML: '',
+          textContent: '',
+          disabled: false,
+          style: {},
+          setAttribute: () => {},
+          getAttribute: () => null,
+          classList: { add: () => {}, remove: () => {}, contains: () => false },
+          addEventListener: () => {}
+        });
+      }
+      return elements.get(sel);
+    }
+
+    const prevDoc = global.document;
+    global.document = {
+      querySelector: sel => getMockEl(sel),
+      querySelectorAll: () => []
+    };
+
+    const logsMod = await import('../public/js/views/logs.js');
+    const stateMod = await import('../public/js/state.js');
+    const apiMod = await import('../public/js/api.js');
+
+    const now = Date.now();
+    const testLogs = [
+      { id: 1, ts: now - 10000, method: 'GET', path: '/v1/orders', route: 'orders', short: 'api /v1/orders', status: 200, ms: 15, up: '10.0.1.1:8080', trace: 't1111111', ip: '1.1.1.1' },
+      { id: 2, ts: now - 30000, method: 'POST', path: '/v1/payments', route: 'payments', short: 'api /v1/payments', status: 502, ms: 250, up: '10.0.1.2:8080', trace: 't2222222', ip: '1.1.1.2' },
+      { id: 3, ts: now - 120000, method: 'GET', path: '/health', route: 'health', short: 'health', status: 200, ms: 2, up: '127.0.0.1:8080', trace: 't3333333', ip: '127.0.0.1' },
+      { id: 4, ts: now - 500000, method: 'GET', path: '/v1/users', route: 'users', short: 'api /v1/users', status: 404, ms: 40, up: '10.0.1.3:8080', trace: 't4444444', ip: '1.1.1.3' },
+      { id: 5, ts: now - 4000000, method: 'GET', path: '/v1/reports', route: 'reports', short: 'api /v1/reports', status: 200, ms: 180, up: '10.0.1.4:8080', trace: 't5555555', ip: '1.1.1.4' }
+    ];
+
+    apiMod.setRawApiLogs(testLogs);
+    stateMod.state.ltime = 'all';
+    stateMod.state.lnohealth = false;
+    stateMod.state.lslow = false;
+    stateMod.state.lroute = 'all';
+    stateMod.state.lq = '';
+    stateMod.state.lst = new Set(['2', '3', '4', '5']);
+    stateMod.state.lsort = 'ts';
+    stateMod.state.lsortDir = 'desc';
+    stateMod.state.lpage = 1;
+    stateMod.state.lpageSize = 25;
+    stateMod.state.lhover = false;
+
+    // TC-143-01: Mini-Histogram SVG Status Distribution
+    logsMod.lgUpdate(null, true);
+    const histHtml = getMockEl('#lgHist').innerHTML;
+    assert.ok(histHtml.includes('<svg'), 'Histogram should render an SVG element');
+    assert.ok(histHtml.includes('<rect'), 'Histogram SVG should contain rect elements for bars');
+    assert.equal(getMockEl('#lgHistTotal').textContent, '5 reqs', 'Histogram total should indicate 5 requests');
+    console.log('  ✔ TC-143-01: Status Distribution Mini-Histogram Generation PASSED');
+
+    // TC-143-02: Actionable Facet Cards
+    const facetsHtml = getMockEl('#lgFacets').innerHTML;
+    assert.ok(facetsHtml.includes('Top Routes'), 'Facets should display Top Routes');
+    assert.ok(facetsHtml.includes('P95 / Slowest'), 'Facets should display P95 / Slowest');
+    assert.ok(facetsHtml.includes('Error Rate'), 'Facets should display Error Rate');
+    assert.ok(facetsHtml.includes('facet-pill'), 'Facets should contain clickable facet pills');
+    assert.ok(facetsHtml.includes('40.0%'), 'Error rate should be calculated as 40.0%');
+    console.log('  ✔ TC-143-02: Actionable Facet Cards (Top Routes, P95, Error Rate) PASSED');
+
+    // TC-143-03: Predefined Time-Window Filtering (1m, 5m, 1h)
+    stateMod.state.ltime = '1m';
+    logsMod.lgUpdate(null, true);
+    assert.equal(getMockEl('#lgHistTotal').textContent, '2 reqs', 'Last 1 min should only retain 2 requests');
+    assert.ok(getMockEl('#lgSum').textContent.includes('of 2 requests'), 'Table summary should reflect 2 requests');
+
+    stateMod.state.ltime = '5m';
+    logsMod.lgUpdate(null, true);
+    assert.equal(getMockEl('#lgHistTotal').textContent, '3 reqs', 'Last 5 mins should retain 3 requests');
+
+    stateMod.state.ltime = '1h';
+    logsMod.lgUpdate(null, true);
+    assert.equal(getMockEl('#lgHistTotal').textContent, '4 reqs', 'Last 1 hour should retain 4 requests');
+    console.log('  ✔ TC-143-03: Predefined Time-Window Filtering (1m, 5m, 1h) PASSED');
+
+    // TC-143-04: Custom Timestamp Range Filtering
+    stateMod.state.ltime = 'custom';
+    stateMod.state.lfrom = now - 40000;
+    stateMod.state.lto = now - 20000;
+    logsMod.lgUpdate(null, true);
+    assert.equal(getMockEl('#lgHistTotal').textContent, '1 reqs', 'Custom range should isolate exactly 1 request');
+    assert.ok(getMockEl('#lgBody').innerHTML.includes('/v1/payments'), 'Filtered request must be /v1/payments');
+    console.log('  ✔ TC-143-04: Custom Timestamp Range Filtering (from / to) PASSED');
+
+    // TC-143-05: Noise Filter (No /health)
+    stateMod.state.ltime = 'all';
+    stateMod.state.lnohealth = true;
+    logsMod.lgUpdate(null, true);
+    assert.equal(getMockEl('#lgHistTotal').textContent, '4 reqs', 'No /health filter should omit /health');
+    assert.ok(!getMockEl('#lgBody').innerHTML.includes('/health'), 'Table body must not contain /health');
+    console.log('  ✔ TC-143-05: Exclude /health Noise Suppression PASSED');
+
+    // TC-143-06: Multi-Column Interactive Table Sorting
+    stateMod.state.lnohealth = false;
+    stateMod.state.lsort = 'ms';
+    stateMod.state.lsortDir = 'desc';
+    logsMod.lgUpdate(null, true);
+    assert.ok(getMockEl('#lgBody').innerHTML.indexOf('/v1/payments') < getMockEl('#lgBody').innerHTML.indexOf('/v1/reports'), 'Duration desc sort should place 250ms before 180ms');
+
+    stateMod.state.lsortDir = 'asc';
+    logsMod.lgUpdate(null, true);
+    assert.ok(getMockEl('#lgBody').innerHTML.indexOf('/health') < getMockEl('#lgBody').innerHTML.indexOf('/v1/payments'), 'Duration asc sort should place 2ms before 250ms');
+    console.log('  ✔ TC-143-06: Multi-Column Interactive Table Sorting PASSED');
+
+    // TC-143-07: Configurable Pagination & Row Capping
+    stateMod.state.lpageSize = 2;
+    stateMod.state.lpage = 1;
+    logsMod.lgUpdate(null, true);
+    assert.equal(getMockEl('#lgPageInd').textContent, 'Page 1/3', '5 items with pageSize=2 should yield 3 pages');
+    assert.equal(getMockEl('#lgFirst').disabled, true, 'First button must be disabled on page 1');
+    assert.equal(getMockEl('#lgPrev').disabled, true, 'Prev button must be disabled on page 1');
+    assert.equal(getMockEl('#lgNext').disabled, false, 'Next button must be enabled on page 1');
+
+    stateMod.state.lpage = 3;
+    logsMod.lgUpdate(null, true);
+    assert.equal(getMockEl('#lgNext').disabled, true, 'Next button must be disabled on last page');
+    assert.equal(getMockEl('#lgLast').disabled, true, 'Last button must be disabled on last page');
+    console.log('  ✔ TC-143-07: Configurable Pagination & Row Capping PASSED');
+
+    // TC-143-08: Interaction Freeze on Table Hover
+    stateMod.state.lpage = 1;
+    stateMod.state.lpageSize = 25;
+    logsMod.lgUpdate(null, true);
+
+    stateMod.state.lhover = true;
+    getMockEl('#lgBody').innerHTML = 'FREEZE_TEST_MARKER';
+    logsMod.lgUpdate(null, false);
+    assert.equal(getMockEl('#lgBody').innerHTML, 'FREEZE_TEST_MARKER', 'lgUpdate must not overwrite DOM when lhover is active and force is false');
+
+    logsMod.lgUpdate(null, true);
+    assert.notEqual(getMockEl('#lgBody').innerHTML, 'FREEZE_TEST_MARKER', 'Forced lgUpdate must overwrite DOM even if lhover is active');
+    console.log('  ✔ TC-143-08: Interaction Freeze on Table Hover PASSED');
+
+    // TC-143-09: Footprint Budget Invariant (<= 100 KB)
+    const jsDir = path.resolve(__dirname, '../public/js');
+    function getJsFiles(dir) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      let files = [];
+      for (const e of entries) {
+        const res = path.resolve(dir, e.name);
+        if (e.isDirectory()) files = files.concat(getJsFiles(res));
+        else if (e.name.endsWith('.js')) files.push(res);
+      }
+      return files;
+    }
+    const allFiles = getJsFiles(jsDir);
+    let totalBytes = 0;
+    for (const f of allFiles) totalBytes += fs.statSync(f).size;
+    assert.ok(totalBytes <= 100 * 1024, `Total JS size (${totalBytes} bytes) must be <= 100 KB budget`);
+    console.log(`  ✔ TC-143-09: Footprint Budget Invariant (${(totalBytes / 1024).toFixed(1)} KB) PASSED`);
+
+    // Restore previous global.document
+    global.document = prevDoc;
+  }
+
+  // -------------------------------------------------------------
+  // TC-143-10: Strictly Relative Links Invariant in REQ-143, TASK-167, ADR-143, TC-143, AN-003
+  // -------------------------------------------------------------
+  {
+    const docFiles = [
+      'docs/analysis/AN-003.md',
+      'docs/requirements/REQ-143.md',
+      'docs/tasks/TASK-167.md',
+      'docs/architecture/ADR-143.md',
+      'docs/testCases/TC-143.md'
+    ];
+    const absPathPattern = /\]\(\/(?!\/)|href="\/(?!\/)|src="\/(?!\/)|file:\/\/\//g;
+    for (const f of docFiles) {
+      const fullPath = path.resolve(__dirname, '..', f);
+      assert.ok(fs.existsSync(fullPath), `Document ${f} must exist`);
+      const content = fs.readFileSync(fullPath, 'utf8');
+      const matches = content.match(absPathPattern);
+      assert.ok(!matches || matches.length === 0, `File ${f} contains absolute links: ${matches}`);
+    }
+    console.log('  ✔ TC-143-10: Strictly Relative Links Invariant in REQ-143, TASK-167, ADR-143, TC-143, AN-003 PASSED');
+  }
+
   console.log('\n============================================================');
-  console.log('🎉 ALL TC-139, TC-140, TC-141 & TC-142 TEST CASES PASSED SUCCESSFULLY!');
+  console.log('🎉 ALL TC-139, TC-140, TC-141, TC-142 & TC-143 TEST CASES PASSED SUCCESSFULLY!');
   console.log('============================================================\n');
 })().catch(err => {
   console.error('\n❌ TEST FAILED:', err);

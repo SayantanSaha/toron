@@ -1,18 +1,10 @@
-/**
- * Toron Dashboard - Slide-out Inspector Drawer Controller
- */
 import { $, esc, fmt, dtFmt, stCls } from '../utils.js';
 import { ICON, pill, toneErr } from './icons.js';
 import { chart, histo } from './charts.js';
 import { buildDataModel } from '../model.js';
 import { rawApiLogs } from '../api.js';
 
-export const dw = {
-  el: null,
-  kind: null,
-  id: null,
-  last: null
-};
+export const dw = { el: null, kind: null, id: null, last: null };
 
 export function openDrawer(kind, id) {
   dw.el = $('#drawer');
@@ -34,7 +26,7 @@ export function openDrawer(kind, id) {
     renderDrawer();
   } else {
     const logs = (rawApiLogs && rawApiLogs.length > 0) ? rawApiLogs : [
-      { id: 101, ts: Date.now(), method: 'GET', path: '/v1/orders/8f2a91', route: 'orders', short: 'api /v1/orders', status: 200, ms: 14.2, up: '10.0.1.11:8080', trace: 'a4b1c8f0e2d4', ip: '192.168.1.10', bytes: 1240 }
+      { id: 101, ts: Date.now(), method: 'GET', path: '/v1/orders/8f2a91', route: 'orders', short: 'api /v1/orders', status: 200, ms: 14.2, up: '10.0.1.11:8080', trace: 'a4b1c8f0', ip: '127.0.0.1', bytes: 1240 }
     ];
     const e = logs.find(x => x.id === id) || logs[0];
     $('#dwTitle').textContent = `${e.method} ${e.path}`;
@@ -62,49 +54,30 @@ export function openDrawer(kind, id) {
   $('#scrim').classList.add('on');
   document.body.classList.add('lock');
   requestAnimationFrame(() => dw.el.classList.add('open'));
-  const dwClose = $('#dwClose');
-  if (dwClose) dwClose.focus();
+  $('#dwClose')?.focus();
 }
 
 export function renderDrawer() {
   if (dw.kind !== 'route') return;
   const D = buildDataModel();
   const r = D.routes.find(x => x.id === dw.id) || D.routes[0];
-  const c = r.cur;
-  const t = toneErr(c.err5);
+  const c = r.cur, t = toneErr(c.err5);
 
   $('#dwSub').innerHTML = `${pill(t, t === 'err' ? 'Degraded' : 'Healthy')}<span class="mut">${esc(r.host + r.path)}</span>`;
   $('#dwStats').innerHTML = [
-    ['Requests', fmt.n(c.rps) + '/s'],
-    ['p50', fmt.ms(c.p50)],
-    ['p95', fmt.ms(c.p95)],
-    ['p99', fmt.ms(c.p99)],
-    ['4xx rate', fmt.pct(c.err4, 2)],
-    ['5xx rate', fmt.pct(c.err5, 2)]
+    ['Requests', `${fmt.n(c.rps)}/s`], ['p50', fmt.ms(c.p50)], ['p95', fmt.ms(c.p95)],
+    ['p99', fmt.ms(c.p99)], ['4xx rate', fmt.pct(c.err4, 2)], ['5xx rate', fmt.pct(c.err5, 2)]
   ].map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('');
 
   chart($('#dwLat'), {
-    id: 'dwlat',
-    height: 170,
-    labels: D.labels,
-    fmt: fmt.ms,
-    aria: 'p95 latency curve',
+    id: 'dwlat', height: 170, labels: D.labels, fmt: fmt.ms, aria: 'p95 latency curve',
     refs: [{ y: r.slo, label: `SLO ${r.slo}ms`, color: 'var(--warn)' }],
     series: [{ key: 'p95', label: 'p95', color: 'var(--s2)', values: r.s.p95, area: true }]
   });
 
   chart($('#dwErr'), {
-    id: 'dwerr',
-    height: 150,
-    bars: true,
-    stacked: true,
-    labels: D.labels,
-    fmt: v => v.toFixed(1) + '/s',
-    aria: 'Error volume',
-    series: [
-      { key: 'e4', label: '4xx', color: 'var(--c4)', values: r.s.e4 },
-      { key: 'e5', label: '5xx', color: 'var(--c5)', values: r.s.e5 }
-    ]
+    id: 'dwerr', height: 150, bars: true, stacked: true, labels: D.labels, fmt: v => v.toFixed(1) + '/s', aria: 'Error volume',
+    series: [{ key: 'e4', label: '4xx', color: 'var(--c4)', values: r.s.e4 }, { key: 'e5', label: '5xx', color: 'var(--c5)', values: r.s.e5 }]
   });
 
   const hs = histo(c.p50, c.p95);
@@ -118,7 +91,5 @@ export function closeDrawer() {
   $('#scrim').classList.remove('on');
   document.body.classList.remove('lock');
   dw.kind = null;
-  setTimeout(() => {
-    if (!dw.kind && dw.el) dw.el.hidden = true;
-  }, 230);
+  setTimeout(() => { if (!dw.kind && dw.el) dw.el.hidden = true; }, 230);
 }

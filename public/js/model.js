@@ -1,6 +1,3 @@
-/**
- * Toron Dashboard - Telemetry Data Model & Metrics Ingestion
- */
 import { sum, avg, fmt, hms, hm } from './utils.js';
 import { N, RANGES, state, getCache, setCache } from './state.js';
 import {
@@ -16,6 +13,18 @@ export function buildDataModel() {
   if (cached) return cached;
 
   const B = (RANGES[state.range] && RANGES[state.range].bucket) ? RANGES[state.range].bucket : 60;
+  const tsA = rawApiStatus?.timeseries?.A;
+  const totalRPS = (tsA?.rps?.length > 0) ? (tsA.rps[tsA.rps.length - 1] || 0) : 0;
+  const reqByRoute = rawApiStatus?.metrics?.requests_by_route || {};
+  const totalRequests = rawApiStatus?.metrics?.total_requests || 0;
+
+  const totalExternalRequests = Object.entries(reqByRoute).reduce((acc, [k, count]) => {
+    return !k.startsWith('/internal/') ? acc + (Number(count) || 0) : acc;
+  }, 0);
+
+  const recentRpsSamples = (tsA?.rps?.length > 0) ? tsA.rps.slice(-5) : [];
+  const avgRecentRps = recentRpsSamples.length > 0 ? avg(recentRpsSamples) : 0;
+  const effectiveTotalRps = avgRecentRps > 0 ? avgRecentRps : totalRPS;
 
   // 1. Build routes list
   let routes = (rawApiRoutes && rawApiRoutes.length > 0) ? rawApiRoutes.map((r, idx) => {
@@ -26,42 +35,10 @@ export function buildDataModel() {
     const short = (r.host ? r.host + ' ' : '') + path;
     const pool = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.dir ? `static (${r.dir})` : 'in-process');
 
-    const tsA = rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A;
-    const totalRPS = (tsA && tsA.rps && tsA.rps.length > 0) ? (tsA.rps[tsA.rps.length - 1] || 0) : 0;
-    const reqByRoute = (rawApiStatus && rawApiStatus.metrics && rawApiStatus.metrics.requests_by_route) || {};
-    const totalRequests = (rawApiStatus && rawApiStatus.metrics && rawApiStatus.metrics.total_requests) || 0;
-
-    // Aggregate cumulative requests for this route prefix across all subpaths (e.g. /kite/api/v1/business under /kite/api)
     const prefix = r.prefix || path;
-    function getRouteTotalReqs(pfx) {
-      if (!pfx) return 0;
-      if (pfx === '/') {
-        return Object.entries(reqByRoute).reduce((acc, [k, count]) => {
-          if (!k.startsWith('/internal/')) return acc + (Number(count) || 0);
-          return acc;
-        }, 0);
-      }
-      return Object.entries(reqByRoute).reduce((acc, [k, count]) => {
-        if (k === pfx || k.startsWith(pfx + '/')) {
-          return acc + (Number(count) || 0);
-        }
-        return acc;
-      }, 0);
-    }
-    const routeCumulative = getRouteTotalReqs(prefix);
-
-    // Exclude internal dashboard polling requests when computing external user traffic ratio
-    const totalExternalRequests = Object.entries(reqByRoute).reduce((acc, [k, count]) => {
-      if (!k.startsWith('/internal/')) {
-        return acc + (Number(count) || 0);
-      }
-      return acc;
-    }, 0);
-
-    // Smooth instantaneous RPS via trailing 5-point moving average
-    const recentRpsSamples = (tsA && tsA.rps && tsA.rps.length > 0) ? tsA.rps.slice(-5) : [];
-    const avgRecentRps = recentRpsSamples.length > 0 ? avg(recentRpsSamples) : 0;
-    const effectiveTotalRps = avgRecentRps > 0 ? avgRecentRps : totalRPS;
+    const routeCumulative = prefix === '/'
+      ? Object.entries(reqByRoute).reduce((acc, [k, c]) => !k.startsWith('/internal/') ? acc + (Number(c) || 0) : acc, 0)
+      : Object.entries(reqByRoute).reduce((acc, [k, c]) => (k === prefix || k.startsWith(prefix + '/')) ? acc + (Number(c) || 0) : acc, 0);
 
     let curRPS = 0;
     if (totalExternalRequests > 0 && effectiveTotalRps > 0) {
@@ -70,9 +47,8 @@ export function buildDataModel() {
       curRPS = effectiveTotalRps / rawApiRoutes.length;
     }
 
-    // Find matching probes for this route: strict route match first, fallback to target address only if no route match
     let matchingUpstreams = (rawApiUpstreams || []).filter(u => {
-      if (!u || !u.route) return false;
+      if (!u?.route) return false;
       const uRt = String(u.route).toLowerCase();
       const pfx = String(r.prefix || path || '').toLowerCase();
       const srt = String(short).toLowerCase();
@@ -84,25 +60,18 @@ export function buildDataModel() {
     if (matchingUpstreams.length === 0) {
       matchingUpstreams = (rawApiUpstreams || []).filter(u => {
         if (!u) return false;
-        if (r.targets && r.targets.some(t => u.name && (t.includes(u.name) || u.name.includes(t)))) return true;
-        return false;
+        return r.targets && r.targets.some(t => u.name && (t.includes(u.name) || u.name.includes(t)));
       });
     }
 
     const probeLatencies = matchingUpstreams.map(u => u.latency_ms).filter(l => typeof l === 'number' && l > 0);
-    const tsP95 = (tsA && tsA.p95 && tsA.p95.length > 0) ? (tsA.p95[tsA.p95.length - 1] || 0) : 0;
+    const tsP95 = (tsA?.p95?.length > 0) ? (tsA.p95[tsA.p95.length - 1] || 0) : 0;
+    let lat = probeLatencies.length > 0 ? avg(probeLatencies) : (tsP95 > 0 ? tsP95 : 2.5);
 
-    let lat = 2.5;
-    if (probeLatencies.length > 0) {
-      lat = avg(probeLatencies);
-    } else if (tsP95 > 0) {
-      lat = tsP95;
-    }
-
-    const statusCounts = (rawApiStatus && rawApiStatus.metrics && rawApiStatus.metrics.requests_by_status) || {};
+    const statusCounts = rawApiStatus?.metrics?.requests_by_status || {};
     const err5xxCount = Object.entries(statusCounts).filter(([k]) => String(k).startsWith('5')).reduce((s, [, c]) => s + Number(c), 0);
     const errRateFromStatus = totalRequests > 0 ? (err5xxCount / totalRequests) : 0;
-    const tsErr = (tsA && tsA.err && tsA.err.length > 0) ? (tsA.err[tsA.err.length - 1] || 0) : 0;
+    const tsErr = (tsA?.err?.length > 0) ? (tsA.err[tsA.err.length - 1] || 0) : 0;
     const gatewayErr = tsErr > 0 ? tsErr : errRateFromStatus;
 
     let err = 0;
@@ -115,14 +84,12 @@ export function buildDataModel() {
     }
 
     const slo = Math.max(50, Math.round(lat * 2 + 20));
-    const mw = [];
-    if (r.type === 'static') mw.push('static-cache', 'gzip', 'rfc9111');
-    else mw.push('waf-guard', 'cors', 'request-id', 'keep-alive');
+    const mw = r.type === 'static' ? ['static-cache', 'gzip', 'rfc9111'] : ['waf-guard', 'cors', 'request-id', 'keep-alive'];
     if (r.algorithm) mw.push(r.algorithm);
     if (r.headers && Object.keys(r.headers).length > 0) mw.push('header-match');
 
     const s = { rps: [], p50: [], p95: [], p99: [], e3: [], e4: [], e5: [] };
-    if (rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A && rawApiStatus.timeseries.A.rps && rawApiStatus.timeseries.A.rps.length > 0) {
+    if (tsA?.rps?.length > 0) {
       const routeShare = (totalExternalRequests > 0) ? (routeCumulative / totalExternalRequests) : (1 / Math.max(1, rawApiRoutes.length));
       for (let i = 0; i < N; i++) {
         s.rps.push(((tsA.rps && tsA.rps[i]) || 0) * routeShare);
@@ -145,24 +112,10 @@ export function buildDataModel() {
       }
     }
     return {
-      id,
-      short,
-      host: r.host || '*',
-      path: r.prefix,
-      pool,
-      type: r.type || 'proxy',
-      algorithm: r.algorithm || 'Round-Robin',
-      headers: r.headers || {},
-      targets: r.targets || [],
-      dir: r.dir || '',
-      totalReqs: routeCumulative,
-      base: curRPS,
-      lat,
-      slo,
-      err,
-      mw,
-      timeout: '10 s',
-      s,
+      id, short, host: r.host || '*', path: r.prefix, pool,
+      type: r.type || 'proxy', algorithm: r.algorithm || 'Round-Robin', headers: r.headers || {},
+      targets: r.targets || [], dir: r.dir || '', totalReqs: routeCumulative,
+      base: curRPS, lat, slo, err, mw, timeout: '10 s', s,
       cur: { rps: curRPS, totalReqs: routeCumulative, p50: lat * 0.5, p95: lat, p99: lat * 1.5, e4: 0, e5: curRPS * err, err5: err, err4: 0 }
     };
   }) : [
@@ -172,20 +125,10 @@ export function buildDataModel() {
     ['payments', 'api /v1/payments', 'api.example.com', '/v1/payments/*', 'payments-svc', 95, 210, 300, .004],
     ['app', 'app /', 'app.example.com', '/*', 'web-static', 640, 14, 40, .001]
   ].map(([id, short, host, path, pool, base, lat, slo, err]) => ({
-    id, short, host, path, pool, base, lat, slo, err, mw: ['cors'], timeout: '8 s'
-  })).map(rt => {
-    const s = { rps: [], p50: [], p95: [], p99: [], e3: [], e4: [], e5: [] };
-    for (let i = 0; i < N; i++) {
-      s.rps.push(rt.base);
-      s.p50.push(rt.lat * .42);
-      s.p95.push(rt.lat);
-      s.p99.push(rt.lat * 2);
-      s.e3.push(rt.base * .02);
-      s.e4.push(rt.base * .01);
-      s.e5.push(rt.base * rt.err);
-    }
-    return { ...rt, s, cur: { rps: rt.base, p50: rt.lat * .42, p95: rt.lat, p99: rt.lat * 2, e4: rt.base * .01, e5: rt.base * rt.err, err5: rt.err, err4: .01 } };
-  });
+    id, short, host, path, pool, base, lat, slo, err, mw: ['cors'], timeout: '8 s',
+    s: { rps: Array(N).fill(base), p50: Array(N).fill(lat * .42), p95: Array(N).fill(lat), p99: Array(N).fill(lat * 2), e3: Array(N).fill(base * .02), e4: Array(N).fill(base * .01), e5: Array(N).fill(base * err) },
+    cur: { rps: base, p50: lat * .42, p95: lat, p99: lat * 2, e4: base * .01, e5: base * err, err5: err, err4: .01 }
+  }));
 
   // 2. Build time series
   const now = Date.now();
@@ -197,19 +140,16 @@ export function buildDataModel() {
   let A = { rps: [], p50: [], p95: [], p99: [], e3: [], e4: [], e5: [], e2: [], err: [] };
   let X = { conns: [], egress: [], gor: [], heap: [], gc: [], fd: [], cpu: [], ev: [] };
 
-  if (rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A && rawApiStatus.timeseries.A.rps && rawApiStatus.timeseries.A.rps.length > 0) {
-    const tsA = rawApiStatus.timeseries.A;
+  if (tsA?.rps?.length > 0) {
     const tsX = rawApiStatus.timeseries.X || {};
     const tsLabels = rawApiStatus.timeseries.labels || [];
     const len = tsA.rps.length;
-
     if (len < N) {
-      const padCount = N - len;
-      const pad = (v, d = 0) => Array(padCount).fill(v !== undefined && v !== null ? v : d);
-      ['rps', 'e2', 'e3', 'e4', 'e5', 'err'].forEach(k => { A[k] = [...pad(0), ...(tsA[k] || pad(0))]; });
-      [['p50', 1], ['p95', 2.5], ['p99', 5]].forEach(([k, d]) => { A[k] = [...pad(tsA[k] && tsA[k][0], d), ...(tsA[k] || pad(d))]; });
-      ['conns', 'egress', 'ev'].forEach(k => { X[k] = [...pad(0), ...(tsX[k] || pad(0))]; });
-      [['gor', 10], ['heap', 1.5], ['cpu', 5], ['fd', 20], ['gc', 0.12]].forEach(([k, d]) => { X[k] = [...pad(tsX[k] && tsX[k][0], d), ...(tsX[k] || pad(d))]; });
+      const p = (v, d = 0) => Array(N - len).fill(v ?? d);
+      ['rps', 'e2', 'e3', 'e4', 'e5', 'err'].forEach(k => { A[k] = [...p(0), ...(tsA[k] || p(0))]; });
+      [['p50', 1], ['p95', 2.5], ['p99', 5]].forEach(([k, d]) => { A[k] = [...p(tsA[k]?.[0], d), ...(tsA[k] || p(d))]; });
+      ['conns', 'egress', 'ev'].forEach(k => { X[k] = [...p(0), ...(tsX[k] || p(0))]; });
+      [['gor', 10], ['heap', 1.5], ['cpu', 5], ['fd', 20], ['gc', 0.12]].forEach(([k, d]) => { X[k] = [...p(tsX[k]?.[0], d), ...(tsX[k] || p(d))]; });
     } else {
       A = tsA;
       X = tsX;
@@ -217,68 +157,52 @@ export function buildDataModel() {
     }
   } else {
     for (let i = 0; i < N; i++) {
-      const R = sum(routes.map(r => r.s.rps[i]));
-      A.rps.push(R);
-      A.p50.push(avg(routes.map(r => r.s.p50[i])));
-      A.p95.push(avg(routes.map(r => r.s.p95[i])));
-      A.p99.push(avg(routes.map(r => r.s.p99[i])));
-      A.e3.push(sum(routes.map(r => r.s.e3[i])));
-      A.e4.push(sum(routes.map(r => r.s.e4[i])));
-      A.e5.push(sum(routes.map(r => r.s.e5[i])));
-      A.e2.push(R - sum(routes.map(r => r.s.e4[i] + r.s.e5[i])));
-      A.err.push(R > 0 ? sum(routes.map(r => r.s.e5[i])) / R : 0);
-
-      X.conns.push(10);
-      X.egress.push(R * 0.34);
-      X.gor.push(20);
-      X.heap.push(2);
-      X.gc.push(0.12);
-      X.fd.push(30);
-      X.cpu.push(5);
-      X.ev.push(R * 3.3);
+      let rpsSum = 0, p50Sum = 0, p95Sum = 0, p99Sum = 0, e3Sum = 0, e4Sum = 0, e5Sum = 0;
+      const rl = routes.length || 1;
+      for (const r of routes) {
+        rpsSum += r.s.rps[i]; p50Sum += r.s.p50[i]; p95Sum += r.s.p95[i]; p99Sum += r.s.p99[i];
+        e3Sum += r.s.e3[i]; e4Sum += r.s.e4[i]; e5Sum += r.s.e5[i];
+      }
+      A.rps.push(rpsSum); A.p50.push(p50Sum / rl); A.p95.push(p95Sum / rl); A.p99.push(p99Sum / rl);
+      A.e3.push(e3Sum); A.e4.push(e4Sum); A.e5.push(e5Sum);
+      A.e2.push(rpsSum - (e4Sum + e5Sum));
+      A.err.push(rpsSum > 0 ? e5Sum / rpsSum : 0);
+      X.conns.push(10); X.egress.push(rpsSum * 0.34); X.gor.push(20); X.heap.push(2); X.gc.push(0.12); X.fd.push(30); X.cpu.push(5); X.ev.push(rpsSum * 3.3);
     }
   }
 
-  // 3. Build upstream pools with rich routing combinations
+  // 3. Build upstream pools
   const poolMap = new Map();
   if (rawApiUpstreams && rawApiUpstreams.length > 0) {
     rawApiUpstreams.forEach(u => {
       let targetAddr = u.name || `target:${u.port || 80}`;
-      if (!targetAddr.includes(':') && u.port) {
-        targetAddr = `${targetAddr}:${u.port}`;
-      }
+      if (!targetAddr.includes(':') && u.port) targetAddr = `${targetAddr}:${u.port}`;
       targetAddr = targetAddr.replace(/:(\d+):\1$/, ':$1');
 
-      // 1. Strict route priority matching
       const routeMatches = routes.filter(r => {
         if (!u.route) return false;
         return r.short === u.route || r.path === u.route || (r.host + r.path) === u.route ||
                r.short.includes(u.route) || (r.host + r.path).includes(u.route) ||
                u.route.includes(r.path) || u.route.includes(r.short);
       });
-
-      // Fallback matching on target address only if routeMatches is empty
       const fallbackMatches = routeMatches.length === 0 ? routes.filter(r => {
         if (r.pool && (r.pool.includes(targetAddr) || targetAddr.includes(r.pool) || r.pool.includes(u.name))) return true;
         if (r.targets && r.targets.some(t => t.includes(targetAddr) || targetAddr.includes(t) || t.includes(u.name))) return true;
         return false;
       }) : [];
 
-      const primaryRoute = routeMatches.length > 0 ? routeMatches[0] : fallbackMatches[0];
+      const primaryRoute = routeMatches[0] || fallbackMatches[0];
       const poolKey = primaryRoute ? primaryRoute.id : (u.route ? u.route.replace(/[^a-zA-Z0-9]/g, '_') : targetAddr.replace(/[^a-zA-Z0-9]/g, '_'));
-      const host = primaryRoute ? (primaryRoute.host || '*') : '*';
+      const host = primaryRoute?.host || '*';
       const path = primaryRoute ? primaryRoute.path : (u.route ? (u.route.includes('/') ? '/' + u.route.split('/').slice(1).join('/') : u.route) : '/');
       const displayName = primaryRoute ? primaryRoute.short : (u.route || targetAddr);
 
       if (!poolMap.has(poolKey)) {
-        const headersList = (primaryRoute && primaryRoute.headers) ? Object.entries(primaryRoute.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
+        const headersList = primaryRoute?.headers ? Object.entries(primaryRoute.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
         poolMap.set(poolKey, {
-          id: poolKey,
-          displayName,
-          host,
-          path,
+          id: poolKey, displayName, host, path,
           type: primaryRoute ? primaryRoute.type : 'proxy',
-          algo: u.algo || (primaryRoute ? primaryRoute.algorithm : 'Round-Robin') || 'Round-Robin',
+          algo: u.algo || primaryRoute?.algorithm || 'Round-Robin',
           hc: `HTTP probe on port ${u.port || 80}`,
           headersSummary: headersList,
           insts: [],
@@ -290,12 +214,9 @@ export function buildDataModel() {
       if (primaryRoute) {
         if (!pool.routes.some(r => r.id === primaryRoute.id)) pool.routes.push(primaryRoute);
       } else {
-        fallbackMatches.forEach(mr => {
-          if (!pool.routes.some(r => r.id === mr.id)) pool.routes.push(mr);
-        });
+        fallbackMatches.forEach(mr => { if (!pool.routes.some(r => r.id === mr.id)) pool.routes.push(mr); });
       }
 
-      // Instance health state classification
       const isDown = u.status === 'UNREACHABLE' || u.status === 'DOWN' || (u.http_code && u.http_code >= 500);
       const isUp = (u.status === 'HEALTHY' || u.status === 'UP') && (!u.http_code || u.http_code < 400);
       const instState = isDown ? 'down' : (isUp ? 'up' : 'warn');
@@ -303,7 +224,7 @@ export function buildDataModel() {
       if (!pool.insts.some(i => i.a === targetAddr)) {
         pool.insts.push({
           a: targetAddr,
-          route: u.route || (primaryRoute ? primaryRoute.short : ''),
+          route: u.route || primaryRoute?.short || '',
           state: instState,
           httpCode: u.http_code,
           latency: (u.latency_ms !== undefined && u.latency_ms !== null) ? u.latency_ms : 0,
@@ -312,18 +233,12 @@ export function buildDataModel() {
       }
     });
 
-    // 4. Exhaustive Fallback Route Loop
     const addDefaultPool = (r, key) => {
       const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
       const targetAddr = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.pool || 'in-process');
       poolMap.set(key, {
-        id: key,
-        displayName: r.short || key,
-        host: r.host || '*',
-        path: r.path || '/',
-        type: r.type || 'proxy',
-        algo: r.algorithm || 'Round-Robin',
-        hc: 'Passive health check',
+        id: key, displayName: r.short || key, host: r.host || '*', path: r.path || '/',
+        type: r.type || 'proxy', algo: r.algorithm || 'Round-Robin', hc: 'Passive health check',
         headersSummary: headersList,
         insts: [{ a: targetAddr, route: r.short, state: 'up', history: Array(48).fill(true) }],
         routes: [r]
@@ -336,17 +251,11 @@ export function buildDataModel() {
     });
   } else {
     routes.forEach(r => {
-      const key = r.id || r.short;
       const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
       const targetAddr = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.pool || 'in-process');
-      poolMap.set(key, {
-        id: key,
-        displayName: r.short || key,
-        host: r.host || '*',
-        path: r.path || '/',
-        type: r.type || 'proxy',
-        algo: r.algorithm || 'Round-Robin',
-        hc: 'Passive health check',
+      poolMap.set(r.id || r.short, {
+        id: r.id || r.short, displayName: r.short || r.id, host: r.host || '*', path: r.path || '/',
+        type: r.type || 'proxy', algo: r.algorithm || 'Round-Robin', hc: 'Passive health check',
         headersSummary: headersList,
         insts: [{ a: targetAddr, route: r.short, state: 'up', history: Array(48).fill(true) }],
         routes: [r]
@@ -357,21 +266,13 @@ export function buildDataModel() {
   const pools = Array.from(poolMap.values()).map(p => {
     const rs = p.routes;
     const rps = sum(rs.map(r => r.cur.rps));
-    const totalReqs = sum(rs.map(r => r.totalReqs || (r.cur && r.cur.totalReqs) || 0));
+    const totalReqs = sum(rs.map(r => r.totalReqs || r.cur?.totalReqs || 0));
+    const insts = (p.insts && p.insts.length > 0) ? p.insts : [{ a: `${p.id}`, state: 'up', history: Array(48).fill(true) }];
 
-    const insts = (p.insts && p.insts.length > 0) ? p.insts : [
-      { a: `${p.id}`, state: 'up', history: Array(48).fill(true) }
-    ];
-
-    // Derive p95 from active instance probe latencies, or route p95, or gateway time-series
     const activeProbeLats = insts.map(i => i.latency).filter(l => typeof l === 'number' && l > 0);
-    const tsA = rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A;
-    const tsP95 = (tsA && tsA.p95 && tsA.p95.length > 0) ? (tsA.p95[tsA.p95.length - 1] || 0) : 0;
-    const p95 = activeProbeLats.length > 0
-      ? Math.max(...activeProbeLats)
-      : (rs.length > 0 ? avg(rs.map(r => r.cur.p95)) : (tsP95 || 2.5));
+    const tsP95 = (tsA?.p95?.length > 0) ? (tsA.p95[tsA.p95.length - 1] || 0) : 0;
+    const p95 = activeProbeLats.length > 0 ? Math.max(...activeProbeLats) : (rs.length > 0 ? avg(rs.map(r => r.cur.p95)) : (tsP95 || 2.5));
 
-    // Derive 5xx error rate and state
     const up = insts.filter(i => i.state === 'up').length;
     const down = insts.filter(i => i.state === 'down').length;
     const warn = insts.filter(i => i.state === 'warn').length;
@@ -387,8 +288,8 @@ export function buildDataModel() {
   });
 
   const total = sum(routes.map(r => r.cur.rps));
-  const certs = (rawApiStatus && rawApiStatus.certs) || ['sayantansaha.in', 'toron.in'].map(d => ({ id: d.split('.')[0], domain: d, chal: 'HTTP-01', days: 85, state: 'valid' }));
-  const modules = (rawApiStatus && rawApiStatus.modules) || [
+  const certs = rawApiStatus?.certs || ['sayantansaha.in', 'toron.in'].map(d => ({ id: d.split('.')[0], domain: d, chal: 'HTTP-01', days: 85, state: 'valid' }));
+  const modules = rawApiStatus?.modules || [
     ['listener.http', 'Listener', .18, 'Listening on :443 / :80'],
     ['router', 'Routing', .18, `${routes.length} routes active`],
     ['waf.owasp', 'Security', .09, 'OWASP Core Rules active'],
@@ -396,89 +297,25 @@ export function buildDataModel() {
   ].map(([id, kind, w, note]) => ({ id, kind, w, state: 'running', note }));
 
   const alerts = [];
-
-  // 1. Upstream pool health alerts
   pools.forEach(p => {
-    if (p.down > 0) {
-      alerts.push({
-        id: `upstream_${p.id}`,
-        sev: 'critical',
-        title: `Upstream Degradation: ${p.displayName || p.id}`,
-        timestamp: Date.now() - 60000,
-        ip: '',
-        go: 'upstreams',
-        detail: () => `${p.down} of ${p.insts.length} instances are failing health checks.`
-      });
-    }
+    if (p.down > 0) alerts.push({ id: `upstream_${p.id}`, sev: 'critical', title: `Upstream Degradation: ${p.displayName || p.id}`, timestamp: now - 60000, ip: '', go: 'upstreams', detail: () => `${p.down} of ${p.insts.length} instances are failing health checks.` });
   });
-
-  // 2. High error rate route alerts
   routes.forEach(r => {
-    if (r.cur.err5 >= 0.02) {
-      alerts.push({
-        id: `route_${r.id}`,
-        sev: 'critical',
-        title: `High 5xx Error Rate: ${r.short}`,
-        timestamp: Date.now() - 60000,
-        ip: '',
-        go: 'routes',
-        detail: () => `5xx error rate (${fmt.pct(r.cur.err5, 1)}) exceeds 2% threshold.`
-      });
-    }
+    if (r.cur.err5 >= 0.02) alerts.push({ id: `route_${r.id}`, sev: 'critical', title: `High 5xx Error Rate: ${r.short}`, timestamp: now - 60000, ip: '', go: 'routes', detail: () => `5xx error rate (${fmt.pct(r.cur.err5, 1)}) exceeds 2% threshold.` });
   });
-
-  // 3. Certificate renewal alerts
   certs.forEach(c => {
-    if (c.state === 'failing') {
-      alerts.push({
-        id: `cert_${c.id}`,
-        sev: 'critical',
-        title: `Certificate Renewal Failed: ${c.domain}`,
-        timestamp: Date.now() - 300000,
-        ip: '',
-        go: 'certs',
-        detail: () => `Automated Let's Encrypt renewal failed for domain ${c.domain}.`
-      });
-    }
+    if (c.state === 'failing') alerts.push({ id: `cert_${c.id}`, sev: 'critical', title: `Certificate Renewal Failed: ${c.domain}`, timestamp: now - 300000, ip: '', go: 'certs', detail: () => `Automated Let's Encrypt renewal failed for domain ${c.domain}.` });
+  });
+  (rawApiIncidents || []).forEach((inc, i) => {
+    alerts.push({ id: `inc_${i}`, sev: 'warning', title: `WAF Security Anomaly: ${inc.category || inc.rule_id || 'Threat'} on ${inc.path}`, timestamp: inc.timestamp ? new Date(inc.timestamp).getTime() : now, ip: inc.client_ip || '', go: 'alerts', detail: () => `Blocked malicious threat from client IP ${inc.client_ip || 'unknown'}` });
+  });
+  (rawApiBannedIps || []).forEach((ban, i) => {
+    alerts.push({ id: `ban_${i}`, sev: ban.type === 'permanent' ? 'critical' : 'warning', title: `Banned Threat Actor: ${ban.ip} (${ban.type})`, timestamp: ban.created_at ? new Date(ban.created_at).getTime() : now, ip: ban.ip || '', go: 'alerts', detail: () => ban.reason || 'IP address has been banned due to repeated security violations' });
   });
 
-  // 4. WAF Security Incidents
-  if (rawApiIncidents && rawApiIncidents.length > 0) {
-    rawApiIncidents.forEach((inc, i) => {
-      const incTs = inc.timestamp ? new Date(inc.timestamp).getTime() : Date.now();
-      alerts.push({
-        id: `inc_${i}`,
-        sev: 'warning',
-        title: `WAF Security Anomaly: ${inc.category || inc.rule_id || 'Threat'} on ${inc.path}`,
-        timestamp: incTs,
-        ip: inc.client_ip || '',
-        go: 'alerts',
-        detail: () => `Blocked malicious threat from client IP ${inc.client_ip || 'unknown'}`
-      });
-    });
-  }
-
-  // 5. Active Banned Threat Actors
-  if (rawApiBannedIps && rawApiBannedIps.length > 0) {
-    rawApiBannedIps.forEach((ban, i) => {
-      const banTs = ban.created_at ? new Date(ban.created_at).getTime() : Date.now();
-      alerts.push({
-        id: `ban_${i}`,
-        sev: ban.type === 'permanent' ? 'critical' : 'warning',
-        title: `Banned Threat Actor: ${ban.ip} (${ban.type})`,
-        timestamp: banTs,
-        ip: ban.ip || '',
-        go: 'alerts',
-        detail: () => ban.reason || `IP address has been banned due to repeated security violations`
-      });
-    });
-  }
-
-  // Multi-level sort alerts: 1) timestamp descending (latest first), 2) client IP ascending
   alerts.sort((a, b) => {
     const dt = (b.timestamp || 0) - (a.timestamp || 0);
-    if (dt !== 0) return dt;
-    return (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true });
+    return dt !== 0 ? dt : (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true });
   });
 
   const computed = {

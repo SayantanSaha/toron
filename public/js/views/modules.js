@@ -1,6 +1,3 @@
-/**
- * Toron Dashboard - View 6: Modules & Runtime Internals
- */
 import { $, esc, fmt, avg } from '../utils.js';
 import { pill } from '../components/icons.js';
 import { chart } from '../components/charts.js';
@@ -21,34 +18,25 @@ export function mdShell() {
 }
 
 export function mdUpdate(D) {
-  const X = D.X;
-  const last = a => (a && a.length) ? a[a.length - 1] : 0;
-  const ev = avg(X.ev);
-  const mBody = $('#mdBody');
+  const X = D.X, last = a => a?.length ? a[a.length - 1] : 0, ev = avg(X.ev), mBody = $('#mdBody');
   if (mBody) {
     mBody.innerHTML = D.modules.map(m => `<tr><td><div class="rt"><b>${esc(m.id)}</b><span class="mut">${esc(m.kind)}</span></div></td><td>${m.state === 'running' ? pill('ok', 'Running') : pill('warn', 'Degraded')}</td><td class="num">${fmt.n(ev * (m.w || 0.1))}/s</td><td class="hide-md mut">${esc(m.note)}</td></tr>`).join('');
   }
   const one = (id, key, vals, f, extra = {}) => chart($('#' + id), {
-    id,
-    height: extra.h || 160,
-    ml: extra.ml || 44,
-    labels: D.labels,
-    fmt: f,
-    aria: key,
+    id, height: extra.h || 160, ml: extra.ml || 44, labels: D.labels, fmt: f, aria: key,
     series: [{ key, label: key, color: extra.c || 'var(--s2)', values: vals, area: true }]
   });
 
-  if ($('#cvEv')) $('#cvEv').textContent = fmt.n(ev) + '/s';
-  if ($('#cvCpu')) $('#cvCpu').textContent = last(X.cpu).toFixed(0) + '%';
-  if ($('#cvGor')) $('#cvGor').textContent = Math.round(last(X.gor)).toLocaleString('en-US');
-  if ($('#cvHeap')) $('#cvHeap').textContent = Math.round(last(X.heap)) + ' MB';
-  if ($('#cvGc')) $('#cvGc').textContent = last(X.gc).toFixed(2) + ' ms';
-  if ($('#cvFd')) $('#cvFd').textContent = Math.round(last(X.fd)).toLocaleString('en-US');
-
-  one('chEv', 'Events/s', X.ev, v => fmt.n(v) + '/s', { h: 200 });
-  one('chCpu', 'CPU', X.cpu, v => v.toFixed(0) + '%', { h: 200, c: 'var(--s1)' });
-  one('chGor', 'Goroutines', X.gor, v => Math.round(v).toLocaleString('en-US'));
-  one('chHeap', 'Heap', X.heap, v => Math.round(v) + ' MB');
-  one('chGc', 'GC', X.gc, v => v.toFixed(2) + ' ms');
-  one('chFd', 'FDs', X.fd, v => Math.round(v).toLocaleString('en-US'));
+  const sets = [
+    ['cvEv', `${fmt.n(ev)}/s`, 'chEv', 'Events/s', X.ev, v => `${fmt.n(v)}/s`, { h: 200 }],
+    ['cvCpu', `${last(X.cpu).toFixed(0)}%`, 'chCpu', 'CPU', X.cpu, v => `${v.toFixed(0)}%`, { h: 200, c: 'var(--s1)' }],
+    ['cvGor', Math.round(last(X.gor)).toLocaleString('en-US'), 'chGor', 'Goroutines', X.gor, v => Math.round(v).toLocaleString('en-US')],
+    ['cvHeap', `${Math.round(last(X.heap))} MB`, 'chHeap', 'Heap', X.heap, v => `${Math.round(v)} MB`],
+    ['cvGc', `${last(X.gc).toFixed(2)} ms`, 'chGc', 'GC', X.gc, v => `${v.toFixed(2)} ms`],
+    ['cvFd', Math.round(last(X.fd)).toLocaleString('en-US'), 'chFd', 'FDs', X.fd, v => Math.round(v).toLocaleString('en-US')]
+  ];
+  for (const [cvId, cvTxt, chId, k, vals, f, opt] of sets) {
+    const el = $('#' + cvId); if (el) el.textContent = cvTxt;
+    one(chId, k, vals, f, opt);
+  }
 }

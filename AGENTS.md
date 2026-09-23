@@ -28,9 +28,23 @@
 | SR | Security Analyst |
 | WIKI | Document Writer |
 
+## Agents Directory
+
+| ID | Agent | Specification | Primary Artifact / Output |
+|---|---|---|---|
+| AGENT-001 | Project Manager | [.agents/project-manager.md](./.agents/project-manager.md) | Pipeline coordination, verification & commit |
+| AGENT-002 | Requirement Engineer | [.agents/requirement-engineer.md](./.agents/requirement-engineer.md) | `docs/requirements/REQ-XXX.md` |
+| AGENT-003 | Development Lead | [.agents/development-lead.md](./.agents/development-lead.md) | `docs/tasks/TASK-XXX.md` |
+| AGENT-004 | Architect | [.agents/architect.md](./.agents/architect.md) | `docs/architecture/ADR-XXX.md` |
+| AGENT-005 | Test Designer | [.agents/test-designer.md](./.agents/test-designer.md) | `docs/testCases/TC-XXX.md` |
+| AGENT-006 | Developer | [.agents/developer.md](./.agents/developer.md) | Source code & unit/integration tests |
+| AGENT-007 | Security Analyst | [.agents/security-analyst.md](./.agents/security-analyst.md) | `docs/securityReview/SR-XXX.md` |
+| AGENT-008 | Code Reviewer | [.agents/code-reviewer.md](./.agents/code-reviewer.md) | `docs/codeReview/CR-XXX.md` |
+| AGENT-009 | Document Writer | [.agents/document-writer.md](./.agents/document-writer.md) | `docs/wiki/*` |
+
 ## Execution Principle
 
 **Artifact = detailed persistent knowledge.  
 Handoff = minimal execution state.**
 
-Agents should communicate using `.agents/agent-protocol.md`.
+Agents should communicate using [.agents/agent-protocol.md](./.agents/agent-protocol.md).

@@ -62,7 +62,7 @@ Do not report vague style preferences as defects.
 
 ## Review Result
 
-At the end of CR-XXX.md include the compact `review_result` defined in `.agents/agent-protocol.md`.
+At the end of CR-XXX.md include the compact `review_result` defined in [agent-protocol.md](./agent-protocol.md).
 
 `CR-XXX.md` is the authoritative review. The result is only a routing signal.
 

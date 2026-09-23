@@ -67,7 +67,7 @@ Critical, High, Medium, Low, Informational.
 
 ## Review Result
 
-At the end of SR-XXX.md include the compact `review_result` defined in `.agents/agent-protocol.md`.
+At the end of SR-XXX.md include the compact `review_result` defined in [agent-protocol.md](./agent-protocol.md).
 
 `SR-XXX.md` is the authoritative review. The result is only a routing signal.
 

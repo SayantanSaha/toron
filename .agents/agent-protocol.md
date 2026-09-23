@@ -19,6 +19,7 @@ handoff:
     architecture: []
     tests: []
     reviews: []
+    analysis: []
 
   scope:
     include: []
@@ -32,6 +33,19 @@ handoff:
 ```
 
 Only populate fields that matter.
+
+## Agent Routing Vocabulary
+
+```text
+ANALYSIS      = system-level investigation before implementation
+FRONTEND      = frontend implementation/maintenance
+BACKEND       = backend implementation
+ARCHITECTURE  = architecture/design decision
+REQUIREMENT   = requirement or acceptance-criteria change
+TEST          = test design/coverage work
+SECURITY      = security-specific investigation/remediation
+DOCUMENTATION = user-facing documentation
+```
 
 ## Result
 

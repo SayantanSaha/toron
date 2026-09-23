@@ -1,50 +1,346 @@
-# Agent System Rules
+# AGENTS.md
+
+## Purpose
+
+This repository uses specialized agents for software engineering.
+
+`AGENTS.md` defines only global policy, ownership, routing, context, and completion rules.
+
+Detailed agent behavior belongs in `.agents/*.md`.
+Detailed project knowledge belongs in project artifacts.
+
+---
 
 ## Global Rules
 
-1. Read `PRD.md` and only the project artifacts relevant to the current task.
-2. Use the agents defined in `.agents/` for software changes.
-3. Preserve artifact ownership and traceability.
-4. Never invent requirements, acceptance criteria, architecture decisions, or expected behavior.
-5. Use relative links only. Never use absolute filesystem paths in project documentation.
-6. Reference existing artifacts by ID/path; do not reproduce their contents in agent handoffs.
-7. Persistent artifacts are the source of truth. Agent handoffs are compact execution state.
-8. Start with minimal context and retrieve additional context only when ambiguity or risk requires it.
-9. Do not modify artifacts owned by another agent unless explicitly authorized by the workflow.
-10. Keep user-facing output concise; return detailed reasoning in the artifact when the task requires a persistent record.
-11. For questions requiring project knowledge, use the project knowledge graph where appropriate.
-12. Never mark an artifact approved unless the workflow explicitly permits it and the required approval exists.
+1. Read `PRD.md` before project work when it exists.
+2. Use the appropriate agent from `.agents/`.
+3. Start with minimum required context; expand only when necessary.
+4. Never invent requirements, acceptance criteria, API contracts, architecture decisions, evidence, tests, or project conventions.
+5. Persistent artifacts are authoritative; handoffs contain only execution/routing state.
+6. Preserve artifact ownership and traceability.
+7. Use relative links for project documents.
+8. Respect required approval gates.
+9. Keep changes within approved scope.
+10. Distinguish facts, observations, hypotheses, decisions, and unknowns.
+11. Record uncertainty rather than presenting assumptions as facts.
+12. Do not claim completion when required work remains.
+13. Use Graphify/knowledge-graph processing where required by the project workflow.
+
+---
+
+## Agent Registry
+
+| ID | Agent | Responsibility |
+|---|---|---|
+| AGENT-001 | Project Manager | Orchestration, routing, approvals |
+| AGENT-002 | Requirement Engineer | Requirements, acceptance criteria |
+| AGENT-003 | Development Lead | Task decomposition |
+| AGENT-004 | Architect | Architecture, ADRs |
+| AGENT-005 | Test Designer | Test strategy, test cases |
+| AGENT-006 | Developer | Backend/general implementation |
+| AGENT-007 | Code Reviewer | Code review |
+| AGENT-008 | Security Analyst | Security analysis/review |
+| AGENT-009 | Document Writer | Project/release documentation |
+| AGENT-010 | System Analyst | Investigation, analysis, root cause, impact |
+| AGENT-011 | Frontend Developer | Frontend implementation and maintenance |
+
+Agent instructions:
+
+`.agents/<agent-name>.md`
+
+---
 
 ## Artifact Ownership
 
 | Artifact | Owner |
 |---|---|
 | REQ | Requirement Engineer |
+| AN | System Analyst |
 | TASK | Development Lead |
 | ADR | Architect |
 | TC | Test Designer |
-| Source/Test Code | Developer |
+| Source/Test Code | Developer / Frontend Developer |
 | CR | Code Reviewer |
 | SR | Security Analyst |
-| WIKI | Document Writer |
+| WIKI / Release Docs | Document Writer |
 
-## Agents Directory
+Substantial System Analyst work should normally be persisted as:
 
-| ID | Agent | Specification | Primary Artifact / Output |
-|---|---|---|---|
-| AGENT-001 | Project Manager | [.agents/project-manager.md](./.agents/project-manager.md) | Pipeline coordination, verification & commit |
-| AGENT-002 | Requirement Engineer | [.agents/requirement-engineer.md](./.agents/requirement-engineer.md) | `docs/requirements/REQ-XXX.md` |
-| AGENT-003 | Development Lead | [.agents/development-lead.md](./.agents/development-lead.md) | `docs/tasks/TASK-XXX.md` |
-| AGENT-004 | Architect | [.agents/architect.md](./.agents/architect.md) | `docs/architecture/ADR-XXX.md` |
-| AGENT-005 | Test Designer | [.agents/test-designer.md](./.agents/test-designer.md) | `docs/testCases/TC-XXX.md` |
-| AGENT-006 | Developer | [.agents/developer.md](./.agents/developer.md) | Source code & unit/integration tests |
-| AGENT-007 | Security Analyst | [.agents/security-analyst.md](./.agents/security-analyst.md) | `docs/securityReview/SR-XXX.md` |
-| AGENT-008 | Code Reviewer | [.agents/code-reviewer.md](./.agents/code-reviewer.md) | `docs/codeReview/CR-XXX.md` |
-| AGENT-009 | Document Writer | [.agents/document-writer.md](./.agents/document-writer.md) | `docs/wiki/*` |
+`docs/analysis/AN-XXX.md`
 
-## Execution Principle
+Simple analysis may remain inline when no durable artifact is required.
 
-**Artifact = detailed persistent knowledge.  
-Handoff = minimal execution state.**
+---
 
-Agents should communicate using [.agents/agent-protocol.md](./.agents/agent-protocol.md).
+## Routing
+
+The Project Manager owns workflow routing.
+
+### Primary routing
+
+```text
+Investigation / unexplained problem
+    → AGENT-010 System Analyst
+
+Requirements / scope
+    → AGENT-002 Requirement Engineer
+
+Task decomposition
+    → AGENT-003 Development Lead
+
+Architecture / technical decision
+    → AGENT-004 Architect
+
+Test strategy / test cases
+    → AGENT-005 Test Designer
+
+Backend / general implementation
+    → AGENT-006 Developer
+
+Frontend implementation
+    → AGENT-011 Frontend Developer
+
+Code review
+    → AGENT-007 Code Reviewer
+
+Security review
+    → AGENT-008 Security Analyst
+
+Documentation
+    → AGENT-009 Document Writer
+```
+
+### System Analysis Gate
+
+Use **AGENT-010 System Analyst** when the request requires investigation or analysis, including:
+
+- bugs or unexplained failures,
+- ambiguous/intermittent behavior,
+- observations requiring investigation,
+- root-cause analysis,
+- cross-component impact analysis,
+- feature/change impact analysis,
+- performance/reliability problems,
+- architecture/integration questions,
+- configuration/environment differences,
+- incidents or operational problems,
+- determining what is happening or what should change.
+
+System Analyst does not replace Requirement Engineer, Architect, Test Designer, Developer, Frontend Developer, or Security Analyst.
+
+If scope and desired behavior are already clear, PM may route directly to Requirement Engineer or the appropriate specialist.
+
+### Cross-domain work
+
+For changes spanning frontend and backend:
+
+```text
+Frontend → AGENT-011
+Backend  → AGENT-006
+```
+
+Invoke both when required.
+
+Do not invent or alter API contracts outside the appropriate ownership.
+
+---
+
+## Review Routing
+
+Run Code Reviewer and Security Analyst in parallel when both apply.
+
+Detailed findings remain in:
+
+```text
+CR-XXX.md
+SR-XXX.md
+```
+
+`review_result` is only a routing signal. It must not replace the detailed review artifact.
+
+Route findings according to resolution type:
+
+```text
+implementation → Developer / Frontend Developer
+test           → Test Designer and/or implementation agent
+architecture   → Architect → implementation
+requirement    → Requirement Engineer
+analysis       → System Analyst
+security       → Security Analyst / implementation agent
+documentation  → Document Writer
+accepted_risk  → record decision → continue
+```
+
+---
+
+## Context Policy
+
+Use progressive disclosure.
+
+### Start with
+
+```text
+PRD.md
+user request
+assigned artifact/task
+directly related requirements
+directly relevant source/configuration
+```
+
+### Expand only when required by
+
+```text
+ambiguity
+dependency
+architecture impact
+security risk
+regression risk
+missing API contract
+missing evidence
+review finding
+test dependency
+```
+
+Do not load the entire repository or project documentation by default.
+
+---
+
+## Handoff Protocol
+
+Use:
+
+`.agents/agent-protocol.md`
+
+A handoff should contain only what the next agent needs to continue:
+
+```text
+status
+artifact IDs/paths
+blockers
+required action
+next agent
+```
+
+Do not copy large artifact contents into handoffs.
+
+### Artifact vs Handoff
+
+```text
+Artifact  = durable project knowledge/evidence
+Handoff   = minimal execution/routing state
+```
+
+### Analysis
+
+When persisted:
+
+```text
+AN-XXX.md = complete analysis
+result     = routing/status summary
+```
+
+### Reviews
+
+```text
+CR-XXX.md = complete code-review findings
+SR-XXX.md = complete security findings
+review_result = routing/status summary
+```
+
+---
+
+## Approval and Ownership
+
+- Requirement Engineer owns formal requirements and acceptance criteria.
+- Architect owns architecture decisions and ADRs.
+- Test Designer owns test-case design.
+- Developer/Frontend Developer own implementation within their domains.
+- Code Reviewer owns code-review findings.
+- Security Analyst owns security-review findings.
+- Document Writer owns project documentation.
+- System Analyst owns persistent system-analysis artifacts.
+- Project Manager owns orchestration and routing.
+
+An agent may identify or propose a change to another domain but must not silently make that domain's authoritative decision.
+
+---
+
+## Scope Discipline
+
+Agents must not:
+
+- invent scope,
+- perform unrelated refactoring,
+- bypass approval gates,
+- silently rewrite another agent's authoritative artifact,
+- introduce unnecessary dependencies,
+- hide failed or skipped checks,
+- claim unverified behavior,
+- convert hypotheses into facts.
+
+Prefer the smallest coherent change satisfying the approved scope.
+
+---
+
+## Completion Criteria
+
+Before declaring work complete:
+
+```text
+✓ Acceptance criteria addressed
+✓ Required implementation completed
+✓ Required tests/checks executed or explicitly reported as not run
+✓ Review findings resolved, accepted, or explicitly left open
+✓ Security implications addressed where applicable
+✓ Required documentation updated
+✓ Traceability preserved
+✓ No known required action remains unreported
+```
+
+---
+
+## Default Lifecycle
+
+The normal lifecycle is:
+
+```text
+User
+  ↓
+System Analyst*
+  ↓
+Requirement Engineer
+  ↓
+Approval
+  ↓
+Development Lead
+  ↓
+Architect
+  ↓
+Test Designer
+  ↓
+Developer / Frontend Developer
+  ↓
+Code Reviewer + Security Analyst*
+  ↓
+Review Routing*
+  ↓
+Document Writer*
+  ↓
+Regression Test + Graphify
+  ↓
+Commit
+```
+
+`*` Conditional.
+
+The Project Manager may skip any agent whose responsibility is demonstrably irrelevant.
+
+---
+
+## Final Rule
+
+**Project Manager orchestrates.  
+Specialists execute.  
+Artifacts preserve knowledge.  
+Handoffs preserve efficiency.**

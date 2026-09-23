@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-09-21
-updated: 2026-09-22
+updated: 2026-09-23
 
 documents:
   - OBSERVABILITY-DASHBOARD
@@ -39,7 +39,8 @@ The dashboard client engine (`public/app.js`) polls Toron's internal management 
 - Clicking any route opens the **Route Detail Drawer** displaying latency vs. SLO target reference curves, error breakdowns, latency distribution histograms, and configured middlewares.
 
 ### 3. Upstreams & Node Health Histories
-- Grouped into distinct upstream pool cards by route identity, showing load-balancing algorithms, summary RPS, p95 latency, and error rates.
+- Grouped into distinct upstream pool cards by route identity, showing load-balancing algorithms, summary RPS alongside cumulative traffic volume, p95 latency, and error rates.
+- Requests tile renders dual metrics: real-time rate alongside cumulative total requests (e.g. `0.0/s (1.7k total)`).
 - Per-instance cards featuring **48-tick visual health check history strips** (green = passing, red = failed).
 - Instance rows display real-time probe round-trip latency (`latency_ms`), HTTP response code status, and circuit-breaker warnings.
 
@@ -120,27 +121,87 @@ The dashboard client engine dynamically derives throughput, latency percentiles,
 
 ### 1. Telemetry Schema Alignment
 The data model directly binds to the following backend telemetry fields:
-- `rawApiStatus.metrics.requests_by_route`: Cumulative request counter map keyed by route prefix.
+- `rawApiStatus.metrics.requests_by_route`: Cumulative request counter map keyed by individual route paths and subpaths.
 - `rawApiStatus.metrics.total_requests`: Cumulative total request counter across all routes.
 - `rawApiStatus.timeseries.A.rps`: Rolling requests-per-second array from the 60-bucket ring buffer.
 - `rawApiStatus.timeseries.A.p95`: Rolling p95 latency percentiles from the 60-bucket ring buffer.
 - `rawApiStatus.timeseries.A.err`: Rolling 5xx error rate from the 60-bucket ring buffer.
 - `/internal/api/upstreams/health`: Active probe measurements including `latency_ms`, `http_code`, `status`, and `history`.
 
-### 2. Proportional Requests/s (RPS) Derivation
-Instantaneous throughput for route $r$ is derived by scaling the latest gateway total RPS by the route's cumulative request share:
+### 2. Hierarchical Subpath Rollup in `requests_by_route`
+In API gateways, clients query deep hierarchical endpoints (e.g., `/kite/api/v1/business`, `/kite/api/v2/orders`, or `/kite/auth/refresh`), which are recorded as granular path keys in `requests_by_route`.
 
-$$\text{curRPS}(r) = \begin{cases} \text{total\_rps} \times \left(\dfrac{\text{requests\_by\_route}[r.\text{prefix}]}{\max(1, \text{total\_requests})}\right) & \text{if } \text{total\_requests} > 0 \\ \dfrac{\text{total\_rps}}{|R|} & \text{if } \text{total\_requests} = 0 \land \text{total\_rps} > 0 \\ 0.0 & \text{otherwise} \end{cases}$$
+To ensure child API requests are attributed to their configured parent route prefix (`r.prefix`), `buildDataModel()` executes a hierarchical subpath aggregation:
 
-where $\text{total\_rps} = \text{tsA.rps}[\text{len} - 1]$. If a route has handled zero requests, `curRPS` evaluates cleanly to `0.0/s`.
+```javascript
+function getRouteTotalReqs(pfx) {
+  if (!pfx) return 0;
+  if (pfx === '/') {
+    return Object.entries(reqByRoute).reduce((acc, [k, count]) => {
+      if (!k.startsWith('/internal/')) return acc + (Number(count) || 0);
+      return acc;
+    }, 0);
+  }
+  return Object.entries(reqByRoute).reduce((acc, [k, count]) => {
+    if (k === pfx || k.startsWith(pfx + '/')) {
+      return acc + (Number(count) || 0);
+    }
+    return acc;
+  }, 0);
+}
+const routeCumulative = getRouteTotalReqs(prefix);
+```
 
-The pool summary Requests metric is computed as the sum across all routes associated with that pool:
+This ensures that any subpath falling under a configured prefix is automatically rolled up into that route's cumulative volume (`routeCumulative`).
 
-$$\text{pool.rps} = \sum_{r \in \text{pool.routes}} \text{curRPS}(r)$$
+### 3. Internal Telemetry Polling Isolation
+The dashboard client polls internal management endpoints (`/internal/api/status`, `/internal/api/routes`, `/internal/api/upstreams/health`, etc.) every second. Without filtering, these background management calls accumulate in `requests_by_route` under `/internal/*` and artificially inflate total gateway counts, thereby diluting the calculated traffic share of external user routes.
 
-and formatted in the pool card header (e.g. `12.4/s`).
+To eliminate this measurement distortion, the engine computes `totalExternalRequests` by explicitly excluding all `/internal/` keys from the denominator:
 
-### 3. Dynamic Health Probe Latency & p95 Percentile
+```javascript
+const totalExternalRequests = Object.entries(reqByRoute).reduce((acc, [k, count]) => {
+  if (!k.startsWith('/internal/')) {
+    return acc + (Number(count) || 0);
+  }
+  return acc;
+}, 0);
+```
+
+External traffic ratios are then evaluated against `totalExternalRequests`, isolating internal diagnostic polling from user-facing throughput statistics.
+
+### 4. Moving Average Temporal Smoothing for Gateway RPS
+Instantaneous throughput values from single-second telemetry snapshots can exhibit high variance or sampling discretisation spikes. To produce smooth and stable rate indications without sacrificing responsiveness to sustained traffic changes, `buildDataModel()` computes a trailing 5-point moving average over recent gateway RPS samples:
+
+```javascript
+const recentRpsSamples = (tsA && tsA.rps && tsA.rps.length > 0) ? tsA.rps.slice(-5) : [];
+const avgRecentRps = recentRpsSamples.length > 0 ? avg(recentRpsSamples) : 0;
+const effectiveTotalRps = avgRecentRps > 0 ? avgRecentRps : totalRPS;
+```
+
+The resulting `effectiveTotalRps` is used to compute instantaneous route throughput:
+
+$$\text{curRPS}(r) = \begin{cases} \text{effectiveTotalRps} \times \left(\dfrac{\text{routeCumulative}(r)}{\max(1, \text{totalExternalRequests})}\right) & \text{if } \text{totalExternalRequests} > 0 \\ \dfrac{\text{effectiveTotalRps}}{|R|} & \text{if } \text{totalExternalRequests} = 0 \land \text{effectiveTotalRps} > 0 \\ 0.0 & \text{otherwise} \end{cases}$$
+
+### 5. Dual Rate and Cumulative Volume Display in Upstream Pool Cards
+In `#/upstreams`, operators need to immediately differentiate between routes that are temporarily idle but have handled substantial traffic versus routes that are inactive or have never received requests.
+
+Each upstream pool card aggregates cumulative request counts across its member routes (`p.totalReqs = sum(rs.map(r => r.totalReqs))`) and displays both real-time throughput and cumulative volume in the Requests KPI tile:
+
+```html
+<dl class="pool-sum">
+  <div>
+    <dt>Requests</dt>
+    <dd>${fmt.n(p.rps)}/s ${p.totalReqs > 0 ? `<span class="mut">(${fmt.n(p.totalReqs)} total)</span>` : ''}</dd>
+  </div>
+  <div><dt>p95 Latency</dt><dd>${fmt.ms(p.p95)}</dd></div>
+  <div><dt>5xx Error Rate</dt><dd class="${p.err5 >= .02 ? 't-err' : ''}">${fmt.pct(p.err5, 1)}</dd></div>
+</dl>
+```
+
+For example, a pool card with historical traffic that is currently quiescent displays `0.0/s (1.7k total)`, providing clear dual-dimension operational context.
+
+### 6. Dynamic Health Probe Latency & p95 Percentile
 Instance latency in `poolCard(p)` is bound directly to `i.latency` (from `/internal/api/upstreams/health` `latency_ms`).
 
 The pool card header p95 latency (`p.p95`) is derived dynamically:
@@ -149,7 +210,7 @@ $$\text{pool.p95} = \begin{cases} \max_{i \in \text{insts}, i.\text{lat} > 0}(i.
 
 This ensures pool cards reflect real probe round-trip measurements rather than static initial fallbacks.
 
-### 4. Multidimensional Health Classification & Error Rate
+### 7. Multidimensional Health Classification & Error Rate
 Each upstream instance is classified into a tri-state health status:
 
 $$\text{state}(i) = \begin{cases} \text{"down"} & \text{if } u.\text{status} \in \{\text{"UNREACHABLE"}, \text{"DOWN"}\} \lor u.\text{http\_code} \ge 500 \\ \text{"up"} & \text{if } u.\text{status} \in \{\text{"HEALTHY"}, \text{"UP"}\} \land (u.\text{http\_code} < 400 \lor u.\text{http\_code} = \text{null}) \\ \text{"warn"} & \text{otherwise (e.g. 4xx responses or degraded state)} \end{cases}$$
@@ -160,7 +221,7 @@ $$\text{pool.err5} = \max\left( \text{avg}_{r \in \text{routes}}(r.\text{cur.err
 
 where $\text{failed\_ticks}$ is the count of failing checks in the 48-tick history strips.
 
-### 5. Deterministic Visual Tone Escalation
+### 8. Deterministic Visual Tone Escalation
 Pool card tone is automatically escalated to alert operators to degradation:
 
 $$\text{tone} = \begin{cases} \text{"err"} & \text{if } \text{down\_count} > 0 \lor \text{pool.err5} \ge 0.02 \\ \text{"warn"} & \text{if } \text{warn\_count} > 0 \lor \text{pool.err5} > 0 \\ \text{"ok"} & \text{otherwise} \end{cases}$$

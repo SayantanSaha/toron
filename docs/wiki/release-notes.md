@@ -1,6 +1,6 @@
 # Release Notes
 
-## 2026-09-22 - Toron v1.5.35 Milestone (Disaggregated Upstream Route Pool Rendering & Live Telemetry Metric Derivations in Control Center Dashboard)
+## 2026-09-23 - Toron v1.5.35 Milestone (Disaggregated Upstream Route Pool Rendering, Hierarchical Subpath Rollup & Live Telemetry Metric Derivations in Control Center Dashboard)
 
 ### Milestone Summary
 - **Distinct Upstream Route Pool Disaggregation**:
@@ -9,9 +9,17 @@
   - Established deterministic route-scoped pool keys (`poolKey = primaryRoute.id`), ensuring that every configured upstream route generates an independent pool card with its own metrics, load-balancing algorithm, and instance strips.
   - Guaranteed 100% upstream route coverage in `#/upstreams` via an exhaustive secondary fallback loop registering all remaining configured proxy routes with target endpoints.
   - Enforced full visual topology consistency across the Overview SVG Sankey traffic flow diagram (`flow()`) and the Routes table (`rtUpdate()`), ensuring discrete route ribbons connect to distinct upstream pool nodes.
+- **Hierarchical Subpath Rollup in `requests_by_route`**:
+  - Implemented `getRouteTotalReqs(pfx)` aggregating cumulative request counters across child subpaths (e.g. `/kite/api/v1/business` under `/kite/api`), ensuring granular endpoint traffic accurately rolls up to parent route prefixes.
+- **Internal Telemetry Polling Isolation**:
+  - Computed `totalExternalRequests` by explicitly filtering out `/internal/*` routes from the traffic denominator, preventing 1-second background dashboard health and metrics polling from diluting external user route throughput shares.
+- **Moving Average Temporal Smoothing for Instantaneous RPS**:
+  - Applied a trailing 5-point moving average over `timeseries.A.rps` (`effectiveTotalRps`) to smooth 1-second sampling discretisation jitter and transient spikes across route throughput distributions.
+- **Dual Rate and Cumulative Volume Display in Upstream Pool Cards**:
+  - Enhanced `poolCard()` to render both real-time throughput rate and cumulative request volume in the Requests KPI tile (e.g. `0.0/s (1.7k total)`), providing operators with immediate dual-dimension operational context distinguishing dormant routes from unexercised ones.
 - **Live Telemetry Schema Alignment & Proportional RPS Derivation**:
   - Replaced obsolete and non-existent property lookups in `public/app.js` with active backend fields exported by `pkg/metrics/metrics.go` and `pkg/server/internal_api.go` (`requests_by_route`, `total_requests`, `timeseries.A.rps`, `timeseries.A.p95`, `timeseries.A.err`, and `/internal/api/upstreams/health` `latency_ms`, `http_code`, `status`, `history`).
-  - Derived instantaneous route-level throughput (`curRPS`) proportionally from the latest 60-bucket rolling ring buffer rate (`tsA.rps[last]`) scaled by route cumulative request share ($\text{requests\_by\_route}[r.\text{prefix}] / \text{total\_requests}$), displaying live requests/s rather than static `0.0/s`.
+  - Derived instantaneous route-level throughput (`curRPS`) proportionally from the smoothed rolling ring buffer rate (`effectiveTotalRps`) scaled by route cumulative request share ($\text{routeCumulative} / \text{totalExternalRequests}$), displaying live requests/s rather than static `0.0/s`.
   - Aggregated pool-level Requests metric as the sum of instantaneous RPS across all routes assigned to the pool.
 - **Dynamic Probe Latency & Percentile Derivation**:
   - Bound instance card latency directly to real probe round-trip measurements (`latency_ms`) returned by `/internal/api/upstreams/health`.
@@ -22,8 +30,8 @@
   - Automated visual tone escalation (`err`, `warn`, `ok`) to immediately signal failing nodes and circuit breaker activations.
 
 ### Changed
-- **`public/app.js`**: Refactored `buildDataModel()`, `poolCard()`, `flow()`, and `rtUpdate()` to implement route-first probe matching, distinct pool key generation, exhaustive proxy route instantiation, proportional RPS calculation, live probe latency extraction, dynamic p95 derivation, and multi-tier health tone classification.
-- **`docs/wiki/features/observability-dashboard.md`**: Updated user documentation with detailed architectural sections on disaggregated upstream route pool rendering, route-first matching logic, live telemetry derivations, and probe health evaluation formulas.
+- **`public/app.js`**: Refactored `buildDataModel()`, `poolCard()`, `flow()`, and `rtUpdate()` to implement route-first probe matching, distinct pool key generation, exhaustive proxy route instantiation, hierarchical subpath rollup, internal telemetry polling isolation, trailing 5-point moving average RPS smoothing, dual rate and cumulative volume display, live probe latency extraction, dynamic p95 derivation, and multi-tier health tone classification.
+- **`docs/wiki/features/observability-dashboard.md`**: Updated user documentation with detailed architectural sections on disaggregated upstream route pool rendering, hierarchical subpath rollup, telemetry polling isolation, moving average rate smoothing, dual rate/volume metrics, and probe health evaluation formulas.
 
 ---
 

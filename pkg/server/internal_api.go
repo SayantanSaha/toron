@@ -700,6 +700,19 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		_, _ = res.Write(data)
 	}))
 
+	proxyTestClient := &http.Client{
+		Transport: &http.Transport{
+			TLSClientConfig:     &tls.Config{InsecureSkipVerify: true},
+			MaxIdleConns:        100,
+			MaxIdleConnsPerHost: 20,
+			IdleConnTimeout:     90 * time.Second,
+		},
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+		Timeout: 5 * time.Second,
+	}
+
 	// 4. POST /internal/api/proxy-test
 	r.POST("/internal/api/proxy-test", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
@@ -828,15 +841,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			}
 		}
 
-		client := &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-			},
-			CheckRedirect: func(req *http.Request, via []*http.Request) error {
-				return http.ErrUseLastResponse
-			},
-			Timeout: 5 * time.Second,
-		}
+		client := proxyTestClient
 		start := time.Now()
 		httpResp, err := client.Do(httpReq)
 		latency := float64(time.Since(start).Microseconds()) / 1000.0

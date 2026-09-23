@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-22
+updated: 2026-09-23
 
 depends_on:
   - REQ-001

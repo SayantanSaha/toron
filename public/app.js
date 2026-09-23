@@ -18,7 +18,7 @@ const dtFmt=d=>{if(!d)return'';const t=(d instanceof Date)?d:new Date(d);if(isNa
 const ago=s=>s<90?`${Math.round(s)} s`:s<5400?`${Math.round(s/60)} min`:s<129600?`${Math.round(s/3600)} h`:`${Math.round(s/86400)} d`;
 const fmt={
   n:v=>v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e4?(v/1e3).toFixed(1)+'k':v>=1e3?(v/1e3).toFixed(2)+'k':v>=100?String(Math.round(v)):v>=10?v.toFixed(0):v.toFixed(1),
-  ms:v=>v>=1000?(v/1000).toFixed(2)+' s':v>=100?Math.round(v)+' ms':v>=10?v.toFixed(0)+' ms':v.toFixed(1)+' ms',
+  ms:v=>v>=1000?(v/1000).toFixed(2)+' s':v>=100?Math.round(v)+' ms':v.toFixed(1)+' ms',
   pct:(v,d=2)=>(v*100).toFixed(d)+'%',
   bytes:b=>b>=1048576?(b/1048576).toFixed(1)+' MB':b>=1024?(b/1024).toFixed(1)+' KB':Math.round(b)+' B'
 };
@@ -121,14 +121,46 @@ function buildDataModel() {
     const tsA = rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A;
     const totalRPS = (tsA && tsA.rps && tsA.rps.length > 0) ? (tsA.rps[tsA.rps.length - 1] || 0) : 0;
     const reqByRoute = (rawApiStatus && rawApiStatus.metrics && rawApiStatus.metrics.requests_by_route) || {};
-    const routeCumulative = (reqByRoute[r.prefix] !== undefined) ? reqByRoute[r.prefix] : ((reqByRoute[path] !== undefined) ? reqByRoute[path] : 0);
     const totalRequests = (rawApiStatus && rawApiStatus.metrics && rawApiStatus.metrics.total_requests) || 0;
 
+    // Aggregate cumulative requests for this route prefix across all subpaths (e.g. /kite/api/v1/business under /kite/api)
+    const prefix = r.prefix || path;
+    function getRouteTotalReqs(pfx) {
+      if (!pfx) return 0;
+      if (pfx === '/') {
+        return Object.entries(reqByRoute).reduce((acc, [k, count]) => {
+          if (!k.startsWith('/internal/')) return acc + (Number(count) || 0);
+          return acc;
+        }, 0);
+      }
+      return Object.entries(reqByRoute).reduce((acc, [k, count]) => {
+        if (k === pfx || k.startsWith(pfx + '/')) {
+          return acc + (Number(count) || 0);
+        }
+        return acc;
+      }, 0);
+    }
+    const routeCumulative = getRouteTotalReqs(prefix);
+
+    // Exclude internal dashboard polling requests when computing external user traffic ratio
+    const totalExternalRequests = Object.entries(reqByRoute).reduce((acc, [k, count]) => {
+      if (!k.startsWith('/internal/')) {
+        return acc + (Number(count) || 0);
+      }
+      return acc;
+    }, 0);
+    const denomRequests = totalExternalRequests > 0 ? totalExternalRequests : (totalRequests || 1);
+
+    // Smooth instantaneous RPS via trailing 5-point moving average
+    const recentRpsSamples = (tsA && tsA.rps && tsA.rps.length > 0) ? tsA.rps.slice(-5) : [];
+    const avgRecentRps = recentRpsSamples.length > 0 ? avg(recentRpsSamples) : 0;
+    const effectiveTotalRps = avgRecentRps > 0 ? avgRecentRps : totalRPS;
+
     let curRPS = 0;
-    if (totalRequests > 0 && totalRPS > 0) {
-      curRPS = totalRPS * (routeCumulative / totalRequests);
-    } else if (totalRPS > 0 && rawApiRoutes.length > 0) {
-      curRPS = totalRPS / rawApiRoutes.length;
+    if (totalExternalRequests > 0 && effectiveTotalRps > 0) {
+      curRPS = effectiveTotalRps * (routeCumulative / totalExternalRequests);
+    } else if (effectiveTotalRps > 0 && rawApiRoutes.length > 0) {
+      curRPS = effectiveTotalRps / rawApiRoutes.length;
     }
 
     // Find matching probes for this route: strict route match first, fallback to target address only if no route match
@@ -184,7 +216,7 @@ function buildDataModel() {
 
     const s = { rps: [], p50: [], p95: [], p99: [], e3: [], e4: [], e5: [] };
     if (rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A && rawApiStatus.timeseries.A.rps && rawApiStatus.timeseries.A.rps.length > 0) {
-      const routeShare = (totalRequests > 0) ? (routeCumulative / totalRequests) : (1 / Math.max(1, rawApiRoutes.length));
+      const routeShare = (totalExternalRequests > 0) ? (routeCumulative / totalExternalRequests) : (1 / Math.max(1, rawApiRoutes.length));
       for (let i = 0; i < N; i++) {
         s.rps.push(((tsA.rps && tsA.rps[i]) || 0) * routeShare);
         s.p50.push((tsA.p50 && tsA.p50[i]) || lat * 0.5);
@@ -216,6 +248,7 @@ function buildDataModel() {
       headers: r.headers || {},
       targets: r.targets || [],
       dir: r.dir || '',
+      totalReqs: routeCumulative,
       base: curRPS,
       lat,
       slo,
@@ -223,7 +256,7 @@ function buildDataModel() {
       mw,
       timeout: '10 s',
       s,
-      cur: { rps: curRPS, p50: lat * 0.5, p95: lat, p99: lat * 1.5, e4: 0, e5: curRPS * err, err5: err, err4: 0 }
+      cur: { rps: curRPS, totalReqs: routeCumulative, p50: lat * 0.5, p95: lat, p99: lat * 1.5, e4: 0, e5: curRPS * err, err5: err, err4: 0 }
     };
   }) : [
     { id: 'orders', short: 'api /v1/orders', host: 'api.example.com', path: '/v1/orders/*', pool: 'orders-svc', base: 420, lat: 62, slo: 120, err: .004, mw: ['jwt', 'rate-limit 600/min', 'cors', 'request-id'], timeout: '8 s' },
@@ -438,6 +471,7 @@ function buildDataModel() {
   const pools = Array.from(poolMap.values()).map(p => {
     const rs = p.routes;
     const rps = sum(rs.map(r => r.cur.rps));
+    const totalReqs = sum(rs.map(r => r.totalReqs || (r.cur && r.cur.totalReqs) || 0));
 
     const insts = (p.insts && p.insts.length > 0) ? p.insts : [
       { a: `${p.id}`, state: 'up', history: Array(48).fill(true) }
@@ -463,7 +497,7 @@ function buildDataModel() {
     const err5 = Math.max(routeErrAvg, probeFailureRate);
     const tone = (down > 0 || err5 >= 0.02) ? 'err' : (warn > 0 || err5 > 0 ? 'warn' : 'ok');
 
-    return { ...p, insts, rps, p95, err5, up, down, warn, tone };
+    return { ...p, insts, rps, totalReqs, p95, err5, up, down, warn, tone };
   });
 
   const total = sum(routes.map(r => r.cur.rps));
@@ -1075,7 +1109,7 @@ function poolCard(p) {
       </div>
       ${mwList.length > 0 ? `<div class="chips">${mwList.slice(0, 3).map(m => `<span class="chipx">${esc(m)}</span>`).join('')}</div>` : ''}
     </div>
-    <dl class="pool-sum"><div><dt>Requests</dt><dd>${fmt.n(p.rps)}/s</dd></div><div><dt>p95 Latency</dt><dd>${fmt.ms(p.p95)}</dd></div><div><dt>5xx Error Rate</dt><dd class="${p.err5 >= .02 ? 't-err' : ''}">${fmt.pct(p.err5, 1)}</dd></div></dl>
+    <dl class="pool-sum"><div><dt>Requests</dt><dd>${fmt.n(p.rps)}/s ${p.totalReqs > 0 ? `<span class="mut" style="font-size:11px;font-weight:400">(${fmt.n(p.totalReqs)} total)</span>` : ''}</dd></div><div><dt>p95 Latency</dt><dd>${fmt.ms(p.p95)}</dd></div><div><dt>5xx Error Rate</dt><dd class="${p.err5 >= .02 ? 't-err' : ''}">${fmt.pct(p.err5, 1)}</dd></div></dl>
     <div style="margin-top:4px">${rows}</div></section>`;
 }
 

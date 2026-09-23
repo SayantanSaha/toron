@@ -710,7 +710,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
-		Timeout: 5 * time.Second,
+		Timeout: 15 * time.Second,
 	}
 
 	// 4. POST /internal/api/proxy-test
@@ -865,7 +865,19 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			maxResponseBytes = 1024 * 1024 // 1 MB default
 		}
 
-		respBodyBytes, _ := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes+1))
+		respBodyBytes, readErr := io.ReadAll(io.LimitReader(httpResp.Body, maxResponseBytes+1))
+		if readErr != nil && readErr != io.EOF {
+			resOut := ProxyTestResponse{
+				StatusCode: 504,
+				StatusText: "Gateway Timeout",
+				LatencyMS:  float64(time.Since(start).Microseconds()) / 1000.0,
+				Headers:    map[string]string{"Content-Type": "application/json"},
+				Body:       fmt.Sprintf(`{"error":"Reading response body failed: %s"}`, readErr.Error()),
+			}
+			data, _ := json.Marshal(resOut)
+			_, _ = res.Write(data)
+			return
+		}
 		truncated := false
 		if int64(len(respBodyBytes)) > maxResponseBytes {
 			respBodyBytes = respBodyBytes[:maxResponseBytes]

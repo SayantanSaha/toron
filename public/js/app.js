@@ -3,11 +3,12 @@
  * Router, View Registry, Chrome Coordinator & Event Dispatcher
  */
 import { $, $$, esc, hms } from './utils.js';
-import { state, invalidate, isForce, setForce, setLive, setOnLiveChange, themeIcon, toggleTheme } from './state.js';
+import { state, invalidate, isForce, setForce, setLive, setOnLiveChange, themeIcon, toggleTheme, clearAuth } from './state.js';
 import { ICON } from './components/icons.js';
 import { fetchBackendData, setUpdateCallback } from './api.js';
 import { buildDataModel } from './model.js';
 import { dw, openDrawer, closeDrawer, renderDrawer } from './components/drawer.js';
+import { showAuthModal, hideAuthModal, initAuthModal } from './components/authModal.js';
 
 import { ovShell, ovUpdate } from './views/overview.js';
 import { rtShell, rtInit, rtUpdate } from './views/routes.js';
@@ -89,17 +90,32 @@ export function mountView() {
   refresh(true);
 }
 
+export function updateAuthIcon() {
+  if (typeof document === 'undefined') return;
+  const isAuthed = state.auth && state.auth.authenticated;
+  const iconHref = isAuthed ? '#i-unlock' : '#i-lock';
+  const title = isAuthed ? 'Authenticated as Admin (Click to Lock)' : 'Lock / Authenticate Admin';
+  $$('#authLockBtn use, #authLockBtn2 use').forEach(u => u.setAttribute('href', iconHref));
+  const b1 = $('#authLockBtn');
+  if (b1) b1.setAttribute('title', title);
+  const b2 = $('#authLockBtn2');
+  if (b2) b2.setAttribute('title', title);
+}
+
 export function chrome() {
+  if (typeof document === 'undefined') return;
   const stamp = $('#stamp');
   if (stamp) stamp.textContent = state.live ? `Updated ${hms(new Date())}` : 'Paused';
   const b = $('#liveBtn');
   if (b) b.setAttribute('aria-pressed', String(state.live));
   const lt = $('#liveTxt');
   if (lt) lt.textContent = state.live ? 'Live' : 'Paused';
+  updateAuthIcon();
   lgSync();
 }
 
 export function refresh(force) {
+  if (typeof document === 'undefined') return;
   setForce(!!force);
   try {
     const D = buildDataModel();
@@ -197,6 +213,16 @@ if (typeof document !== 'undefined') {
   const tBtn2 = $('#themeBtn2');
   if (tBtn2) tBtn2.addEventListener('click', toggleTheme);
 
+  const handleLockClick = () => {
+    clearAuth();
+    updateAuthIcon();
+    showAuthModal();
+  };
+  const lkBtn = $('#authLockBtn');
+  if (lkBtn) lkBtn.addEventListener('click', handleLockClick);
+  const lkBtn2 = $('#authLockBtn2');
+  if (lkBtn2) lkBtn2.addEventListener('click', handleLockClick);
+
   const lBtn = $('#liveBtn');
   if (lBtn) lBtn.addEventListener('click', () => setLive(!state.live));
 
@@ -228,6 +254,8 @@ export function boot() {
     if (m && VIEWS[m[1]]) state.view = m[1];
   }
   themeIcon();
+  initAuthModal();
+  updateAuthIcon();
   mountView();
   fetchBackendData();
   if (typeof setInterval !== 'undefined') {

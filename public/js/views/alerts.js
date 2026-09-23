@@ -3,7 +3,7 @@
  */
 import { $, esc, dtFmt } from '../utils.js';
 import { ICON } from '../components/icons.js';
-import { fetchBackendData } from '../api.js';
+import { fetchBackendData, authenticatedFetch } from '../api.js';
 
 export function alShell() {
   return `<div class="stack">
@@ -33,20 +33,20 @@ export function alShell() {
         </div>
       </div>
       <div class="card-b" style="padding:0;overflow-x:auto">
-        <table class="tbl" style="width:100%;text-align:left;border-collapse:collapse;font-size:13px">
+        <table class="tbl">
           <thead>
-            <tr style="border-bottom:1px solid var(--line);background:var(--surface-2)">
-              <th style="padding:10px 14px">Client IP</th>
-              <th style="padding:10px 14px">Ban Tier</th>
-              <th style="padding:10px 14px">Created At</th>
-              <th style="padding:10px 14px">Temp Bans</th>
-              <th style="padding:10px 14px">Reason / Category</th>
-              <th style="padding:10px 14px">TTL / Expiry</th>
-              <th style="padding:10px 14px;text-align:right">Action</th>
+            <tr style="background:var(--surface-2)">
+              <th>Client IP</th>
+              <th>Ban Tier</th>
+              <th>Created At</th>
+              <th>Temp Bans</th>
+              <th>Reason / Category</th>
+              <th>TTL / Expiry</th>
+              <th style="text-align:right">Action</th>
             </tr>
           </thead>
           <tbody id="bannedIpsTable">
-            <tr><td colspan="7" style="padding:16px;text-align:center;color:var(--text-muted)">Loading threat table...</td></tr>
+            <tr><td colspan="7" style="padding:16px;text-align:center;color:var(--ink-2)">Loading threat table...</td></tr>
           </tbody>
         </table>
       </div>
@@ -57,7 +57,7 @@ export function alShell() {
 export async function unbanIpAddress(ip) {
   if (typeof confirm === 'function' && !confirm(`Are you sure you want to unban IP ${ip}?`)) return;
   try {
-    const res = await fetch('/internal/api/security/unban', {
+    const res = await authenticatedFetch('/internal/api/security/unban', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ip })
@@ -106,14 +106,14 @@ export function alUpdate(D) {
           ttlStr = `${m}m ${s}s remaining`;
         }
 
-        return `<tr style="border-bottom:1px solid var(--line)">
-          <td style="padding:10px 14px;font-family:var(--mono);font-weight:600">${esc(b.ip)}</td>
-          <td style="padding:10px 14px">${tierBadge}</td>
-          <td style="padding:10px 14px;font-family:var(--mono);font-size:12px;white-space:nowrap">${dtFmt(b.created_at)}</td>
-          <td style="padding:10px 14px;font-family:var(--mono)">${b.temp_ban_count || 0}</td>
-          <td style="padding:10px 14px;max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.reason || '')}">${esc(b.reason || b.last_category || 'WAF violation')}</td>
-          <td style="padding:10px 14px;font-size:12px;color:var(--text-muted)">${esc(ttlStr)}</td>
-          <td style="padding:10px 14px;text-align:right">
+        return `<tr>
+          <td style="font-family:var(--mono);font-weight:600">${esc(b.ip)}</td>
+          <td>${tierBadge}</td>
+          <td style="font-family:var(--mono);font-size:12px;white-space:nowrap">${dtFmt(b.created_at)}</td>
+          <td style="font-family:var(--mono)">${b.temp_ban_count || 0}</td>
+          <td style="max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(b.reason || '')}">${esc(b.reason || b.last_category || 'WAF violation')}</td>
+          <td style="font-size:12px;color:var(--ink-2)">${esc(ttlStr)}</td>
+          <td style="text-align:right">
             <button class="btn" style="padding:2px 8px;font-size:11px" onclick="unbanIpAddress('${esc(b.ip)}')">Unban</button>
           </td>
         </tr>`;
@@ -131,7 +131,7 @@ export function alUpdate(D) {
       const ip = ipIn.value.trim();
       const type = typeIn ? typeIn.value : 'temporary';
       try {
-        const res = await fetch('/internal/api/security/ban', {
+        const res = await authenticatedFetch('/internal/api/security/ban', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ ip, type, reason: 'Manually banned via dashboard' })

@@ -3,6 +3,7 @@
  */
 import { $ } from '../utils.js';
 import { buildDataModel } from '../model.js';
+import { authenticatedFetch } from '../api.js';
 
 export function consoleShell() {
   const routes = buildDataModel().routes;
@@ -43,7 +44,7 @@ export function consoleInit() {
       try {
         const headers = {};
         if (host) headers['Host'] = host;
-        const res = await fetch('/internal/api/proxy-test', {
+        const res = await authenticatedFetch('/internal/api/proxy-test', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ path, method, headers })

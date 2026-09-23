@@ -257,13 +257,14 @@ public/js/
 ├── app.js                    # Router, navigation, event dispatch & bootstrap entrypoint
 ├── state.js                  # Central reactive state store, time ranges & theme engine
 ├── utils.js                  # Core DOM helpers, HTML sanitizers & math/time formatters
-├── api.js                    # Telemetry background polling adapter (Promise.allSettled)
+├── api.js                    # Telemetry background polling adapter & authenticatedFetch interceptor
 ├── model.js                  # Telemetry data model builder, rollups & rate smoothing
 ├── components/
 │   ├── icons.js              # Vector SVG icon renderers & status tone badges
 │   ├── charts.js             # SVG sparklines, timeseries graphs & latency histograms
 │   ├── sankey.js             # Vector SVG Sankey traffic flow diagram generator
-│   └── drawer.js             # Slide-over inspector drawer controller
+│   ├── drawer.js             # Slide-over inspector drawer controller
+│   └── authModal.js          # Interactive in-page admin authentication modal & probe validator
 └── views/
     ├── overview.js           # View 1: Gateway health, Sankey flow & signal cards
     ├── routes.js             # View 2: Route table, filtering, sorting & RPS sparklines
@@ -276,15 +277,22 @@ public/js/
 ```
 
 ### Key Architectural Invariants
-1. **Zero External Dependencies**: The client requires zero npm runtime libraries and zero build tools (no Webpack, Vite, or Rollup). The total uncompressed script footprint is ~94 KB.
+1. **Zero External Dependencies**: The client requires zero npm runtime libraries and zero build tools (no Webpack, Vite, or Rollup). The total uncompressed script footprint is under 100 KB.
 2. **Strictly Relative Specifiers**: All internal imports utilize relative paths (`./utils.js`, `../components/icons.js`) with explicit `.js` extensions, ensuring native compatibility across all modern browser module loaders.
 3. **Unidirectional Data Flow**: The background poller in `public/js/api.js` updates shared raw state and invalidates `public/js/model.js`. The active view controller's `update()` method re-renders the DOM using pure string templates and SVG elements.
 
 ---
 
-## Administrative Access & Security
+## Administrative Access & Defense-in-Depth Security
 
-Access to `/internal/dashboard/` and all backing APIs (`/internal/api/*`) can be protected using token, API key, Basic auth, and CIDR subnet restrictions configured in `config.yaml`:
+Control Center access and backing management endpoints (`/internal/api/*`) are secured via a hybrid defense-in-depth architecture:
+
+### 1. Multi-Scheme Backend Access Controls
+When administrative authentication is enabled via `config.yaml` or the `TORON_ADMIN_KEY` environment variable:
+- **Admin Token**: Evaluated against `X-Toron-Admin-Key: <token>` and `Authorization: Bearer <token>` using constant-time comparison (`crypto/subtle.ConstantTimeCompare`).
+- **Basic Authentication**: Evaluated against standard `Authorization: Basic <base64(user:pass)>` headers for configured administrative operators.
+- **CIDR Subnet Filtering**: Requests originating from client IPs outside configured `admin_subnets` receive HTTP `403 Forbidden`.
+- **Standardized 401 Challenges**: Missing or rejected credentials return HTTP `401 Unauthorized` with `WWW-Authenticate: Bearer realm="Toron Management", Basic realm="Toron Management"`.
 
 ```yaml
 admin_auth_enabled: true
@@ -293,5 +301,12 @@ admin_subnets:
   - "127.0.0.1/32"
   - "10.0.0.0/8"
 ```
+
+### 2. Client Authentication Lifecycle & Interactive Modal
+When an operator accesses `/internal/dashboard/` against a secured gateway:
+1. **401 Response Interception**: The HTTP client interceptor (`authenticatedFetch` in `public/js/api.js`) pauses background polling and presents the in-page **Admin Authentication Modal** (`public/js/components/authModal.js`).
+2. **Direct Verification Probe**: Submitting credentials triggers an immediate probe to `GET /internal/api/status`. If valid, the modal dismisses and polling resumes. Invalid credentials render inline error feedback.
+3. **Session Scoping**: Active credentials reside exclusively in volatile browser `sessionStorage` (scoped to the active tab) and are never stored in persistent `localStorage`.
+4. **Session Lock Action**: The top navigation toolbar contains a lock action button (`#authLockBtn`), enabling instant session revocation and manual re-authentication.
 
 For endpoint schemas and REST response structures, see the [HTTP API Reference](../reference/api.md). For gateway configuration directives, see the [Configuration Guide](../configuration.md).

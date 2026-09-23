@@ -1,8 +1,8 @@
 /**
- * Toron Dashboard - Backend Data Polling Adapter
+ * Toron Dashboard - Backend Data Polling Adapter & HTTP Security Interceptor
  */
 import { $ } from './utils.js';
-import { invalidate } from './state.js';
+import { state, invalidate, getAuthHeaders, setLive } from './state.js';
 
 export let rawApiStatus = null;
 export let rawApiRoutes = [];
@@ -21,16 +21,54 @@ export function setRawApiBannedIps(val) { rawApiBannedIps = val; }
 let updateCallback = null;
 export function setUpdateCallback(fn) { updateCallback = fn; }
 
+let authRequiredCallback = null;
+export function setOnAuthRequired(fn) { authRequiredCallback = fn; }
+export function getOnAuthRequired() { return authRequiredCallback; }
+
+/**
+ * Executes a fetch request with automatic authentication headers,
+ * same-origin credentials for HTTP Basic auth, and HTTP 401 interception.
+ */
+export async function authenticatedFetch(url, options = {}) {
+  const headers = Object.assign({}, getAuthHeaders(), options.headers || {});
+  const fetchOpts = Object.assign({}, options, {
+    headers,
+    credentials: options.credentials || 'same-origin'
+  });
+
+  const res = await fetch(url, fetchOpts);
+  if (res.status === 401) {
+    if (typeof authRequiredCallback === 'function') {
+      authRequiredCallback(url, res);
+    }
+  }
+  return res;
+}
+
 export async function fetchBackendData(onSuccess) {
+  // If operator chose demo mode, skip polling backend
+  if (state.auth && state.auth.mode === 'demo') {
+    if (typeof onSuccess === 'function') onSuccess();
+    return;
+  }
+
   try {
     const [statusRes, routesRes, upstreamsRes, incidentsRes, logsRes, bansRes] = await Promise.allSettled([
-      fetch('/internal/api/status'),
-      fetch('/internal/api/routes'),
-      fetch('/internal/api/upstreams/health'),
-      fetch('/internal/api/security/incidents'),
-      fetch('/internal/api/logs'),
-      fetch('/internal/api/security/banned-ips')
+      authenticatedFetch('/internal/api/status'),
+      authenticatedFetch('/internal/api/routes'),
+      authenticatedFetch('/internal/api/upstreams/health'),
+      authenticatedFetch('/internal/api/security/incidents'),
+      authenticatedFetch('/internal/api/logs'),
+      authenticatedFetch('/internal/api/security/banned-ips')
     ]);
+
+    // Check if any request returned 401
+    const results = [statusRes, routesRes, upstreamsRes, incidentsRes, logsRes, bansRes];
+    const isUnauthorized = results.some(r => r.status === 'fulfilled' && r.value && r.value.status === 401);
+    if (isUnauthorized) {
+      setLive(false);
+      return;
+    }
 
     if (statusRes.status === 'fulfilled' && statusRes.value.ok) {
       rawApiStatus = await statusRes.value.json();
@@ -69,3 +107,4 @@ export async function fetchBackendData(onSuccess) {
     console.warn('Backend polling error:', err);
   }
 }
+

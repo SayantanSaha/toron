@@ -166,12 +166,14 @@ export function buildDataModel() {
       cur: { rps: curRPS, totalReqs: routeCumulative, p50: lat * 0.5, p95: lat, p99: lat * 1.5, e4: 0, e5: curRPS * err, err5: err, err4: 0 }
     };
   }) : [
-    { id: 'orders', short: 'api /v1/orders', host: 'api.example.com', path: '/v1/orders/*', pool: 'orders-svc', base: 420, lat: 62, slo: 120, err: .004, mw: ['jwt', 'rate-limit 600/min', 'cors', 'request-id'], timeout: '8 s' },
-    { id: 'auth', short: 'api /v1/auth', host: 'api.example.com', path: '/v1/auth/*', pool: 'auth-svc', base: 310, lat: 34, slo: 80, err: .002, mw: ['rate-limit 120/min', 'cors', 'request-id'], timeout: '4 s' },
-    { id: 'search', short: 'api /v1/search', host: 'api.example.com', path: '/v1/search/*', pool: 'search-svc', base: 260, lat: 140, slo: 250, err: .009, mw: ['jwt', 'cache 30 s', 'cors'], timeout: '10 s' },
-    { id: 'payments', short: 'api /v1/payments', host: 'api.example.com', path: '/v1/payments/*', pool: 'payments-svc', base: 95, lat: 210, slo: 300, err: .004, mw: ['jwt', 'rate-limit 60/min', 'retry ×1', 'request-id'], timeout: '12 s' },
-    { id: 'app', short: 'app /', host: 'app.example.com', path: '/*', pool: 'web-static', base: 640, lat: 14, slo: 40, err: .001, mw: ['gzip', 'cache 5 min', 'security-headers'], timeout: '5 s' }
-  ].map(rt => {
+    ['orders', 'api /v1/orders', 'api.example.com', '/v1/orders/*', 'orders-svc', 420, 62, 120, .004],
+    ['auth', 'api /v1/auth', 'api.example.com', '/v1/auth/*', 'auth-svc', 310, 34, 80, .002],
+    ['search', 'api /v1/search', 'api.example.com', '/v1/search/*', 'search-svc', 260, 140, 250, .009],
+    ['payments', 'api /v1/payments', 'api.example.com', '/v1/payments/*', 'payments-svc', 95, 210, 300, .004],
+    ['app', 'app /', 'app.example.com', '/*', 'web-static', 640, 14, 40, .001]
+  ].map(([id, short, host, path, pool, base, lat, slo, err]) => ({
+    id, short, host, path, pool, base, lat, slo, err, mw: ['cors'], timeout: '8 s'
+  })).map(rt => {
     const s = { rps: [], p50: [], p95: [], p99: [], e3: [], e4: [], e5: [] };
     for (let i = 0; i < N; i++) {
       s.rps.push(rt.base);
@@ -203,34 +205,11 @@ export function buildDataModel() {
 
     if (len < N) {
       const padCount = N - len;
-      const padZeros = Array(padCount).fill(0);
-      const padP50 = Array(padCount).fill((tsA.p50 && tsA.p50[0]) || 1);
-      const padP95 = Array(padCount).fill((tsA.p95 && tsA.p95[0]) || 2.5);
-      const padP99 = Array(padCount).fill((tsA.p99 && tsA.p99[0]) || 5);
-      const padGor = Array(padCount).fill(tsX.gor ? tsX.gor[0] : 10);
-      const padHeap = Array(padCount).fill(tsX.heap ? tsX.heap[0] : 1.5);
-      const padCpu = Array(padCount).fill(tsX.cpu ? tsX.cpu[0] : 5);
-      const padFd = Array(padCount).fill(tsX.fd ? tsX.fd[0] : 20);
-      const padGc = Array(padCount).fill(tsX.gc ? tsX.gc[0] : 0.12);
-
-      A.rps = [...padZeros, ...tsA.rps];
-      A.p50 = [...padP50, ...(tsA.p50 || padP50)];
-      A.p95 = [...padP95, ...(tsA.p95 || padP95)];
-      A.p99 = [...padP99, ...(tsA.p99 || padP99)];
-      A.e2 = [...padZeros, ...(tsA.e2 || padZeros)];
-      A.e3 = [...padZeros, ...(tsA.e3 || padZeros)];
-      A.e4 = [...padZeros, ...(tsA.e4 || padZeros)];
-      A.e5 = [...padZeros, ...(tsA.e5 || padZeros)];
-      A.err = [...padZeros, ...(tsA.err || padZeros)];
-
-      X.conns = [...padZeros, ...(tsX.conns || padZeros)];
-      X.egress = [...padZeros, ...(tsX.egress || padZeros)];
-      X.gor = [...padGor, ...(tsX.gor || padGor)];
-      X.heap = [...padHeap, ...(tsX.heap || padHeap)];
-      X.gc = [...padGc, ...(tsX.gc || padGc)];
-      X.cpu = [...padCpu, ...(tsX.cpu || padCpu)];
-      X.fd = [...padFd, ...(tsX.fd || padFd)];
-      X.ev = [...padZeros, ...(tsX.ev || padZeros)];
+      const pad = (v, d = 0) => Array(padCount).fill(v !== undefined && v !== null ? v : d);
+      ['rps', 'e2', 'e3', 'e4', 'e5', 'err'].forEach(k => { A[k] = [...pad(0), ...(tsA[k] || pad(0))]; });
+      [['p50', 1], ['p95', 2.5], ['p99', 5]].forEach(([k, d]) => { A[k] = [...pad(tsA[k] && tsA[k][0], d), ...(tsA[k] || pad(d))]; });
+      ['conns', 'egress', 'ev'].forEach(k => { X[k] = [...pad(0), ...(tsX[k] || pad(0))]; });
+      [['gor', 10], ['heap', 1.5], ['cpu', 5], ['fd', 20], ['gc', 0.12]].forEach(([k, d]) => { X[k] = [...pad(tsX[k] && tsX[k][0], d), ...(tsX[k] || pad(d))]; });
     } else {
       A = tsA;
       X = tsX;
@@ -334,34 +313,35 @@ export function buildDataModel() {
     });
 
     // 4. Exhaustive Fallback Route Loop
+    const addDefaultPool = (r, key) => {
+      const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
+      const targetAddr = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.pool || 'in-process');
+      poolMap.set(key, {
+        id: key,
+        displayName: r.short || key,
+        host: r.host || '*',
+        path: r.path || '/',
+        type: r.type || 'proxy',
+        algo: r.algorithm || 'Round-Robin',
+        hc: 'Passive health check',
+        headersSummary: headersList,
+        insts: [{ a: targetAddr, route: r.short, state: 'up', history: Array(48).fill(true) }],
+        routes: [r]
+      });
+    };
+
     routes.forEach(r => {
       if (r.type === 'static' && (!r.targets || r.targets.length === 0)) return;
-      if (!poolMap.has(r.id)) {
-        const poolKey = r.id;
-        const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
-        const targetAddr = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.pool || 'in-process');
-        poolMap.set(poolKey, {
-          id: poolKey,
-          displayName: r.short || poolKey,
-          host: r.host || '*',
-          path: r.path || '/',
-          type: r.type || 'proxy',
-          algo: r.algorithm || 'Round-Robin',
-          hc: 'Passive health check',
-          headersSummary: headersList,
-          insts: [{ a: targetAddr, route: r.short, state: 'up', history: Array(48).fill(true) }],
-          routes: [r]
-        });
-      }
+      if (!poolMap.has(r.id)) addDefaultPool(r, r.id);
     });
   } else {
     routes.forEach(r => {
-      const poolKey = r.id || r.short;
+      const key = r.id || r.short;
       const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
       const targetAddr = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.pool || 'in-process');
-      poolMap.set(poolKey, {
-        id: poolKey,
-        displayName: r.short || poolKey,
+      poolMap.set(key, {
+        id: key,
+        displayName: r.short || key,
         host: r.host || '*',
         path: r.path || '/',
         type: r.type || 'proxy',
@@ -407,17 +387,13 @@ export function buildDataModel() {
   });
 
   const total = sum(routes.map(r => r.cur.rps));
-  const certs = (rawApiStatus && rawApiStatus.certs) || [
-    { id: 'sayantansaha', domain: 'sayantansaha.in', chal: 'HTTP-01', days: 85, state: 'valid' },
-    { id: 'toron', domain: 'toron.in', chal: 'HTTP-01', days: 85, state: 'valid' }
-  ];
-
+  const certs = (rawApiStatus && rawApiStatus.certs) || ['sayantansaha.in', 'toron.in'].map(d => ({ id: d.split('.')[0], domain: d, chal: 'HTTP-01', days: 85, state: 'valid' }));
   const modules = (rawApiStatus && rawApiStatus.modules) || [
-    { id: 'listener.http', kind: 'Listener', w: .18, state: 'running', note: 'Listening on :443 / :80' },
-    { id: 'router', kind: 'Routing', w: .18, state: 'running', note: `${routes.length} routes active` },
-    { id: 'waf.owasp', kind: 'Security', w: .09, state: 'running', note: 'OWASP Core Rules active' },
-    { id: 'proxy.reverse', kind: 'Proxy', w: .2, state: 'running', note: 'Zero-allocation reverse proxy' }
-  ];
+    ['listener.http', 'Listener', .18, 'Listening on :443 / :80'],
+    ['router', 'Routing', .18, `${routes.length} routes active`],
+    ['waf.owasp', 'Security', .09, 'OWASP Core Rules active'],
+    ['proxy.reverse', 'Proxy', .2, 'Zero-allocation reverse proxy']
+  ].map(([id, kind, w, note]) => ({ id, kind, w, state: 'running', note }));
 
   const alerts = [];
 

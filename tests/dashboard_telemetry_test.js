@@ -986,10 +986,163 @@ console.log('\nRunning TC-141 Verification Suite (Modular ES Architecture & Pari
     console.log('  ✔ TC-141-10: Strictly Relative Links Invariant in REQ-141 Docs PASSED');
   }
 
+  // =============================================================
+  // TC-142: Dashboard Security, Authentication & Access Controls
+  // =============================================================
+  console.log('\nRunning TC-142 Verification Suite (Dashboard Security & Access Controls)...\n');
+
+  // -------------------------------------------------------------
+  // TC-142-06: Frontend 401 Interception & Auth Callback
+  // -------------------------------------------------------------
+  {
+    const api = await import('../public/js/api.js');
+    const stateMod = await import('../public/js/state.js');
+
+    let authPrompted = false;
+    let authUrl = '';
+    api.setOnAuthRequired((url) => {
+      authPrompted = true;
+      authUrl = url;
+    });
+
+    const originalFetch = global.fetch;
+    global.fetch = async () => ({
+      status: 401,
+      ok: false,
+      json: async () => ({ error: '401 Unauthorized', message: 'Authentication required' })
+    });
+
+    stateMod.setLive(true);
+    await api.fetchBackendData();
+
+    assert.ok(authPrompted, '401 Unauthorized response must trigger onAuthRequired callback');
+    assert.equal(stateMod.state.live, false, 'Polling must pause upon 401 response');
+
+    global.fetch = originalFetch;
+    console.log('  ✔ TC-142-06: Frontend 401 Interception & Polling Pause PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-142-07: Automated Credential Header Injection in authenticatedFetch
+  // -------------------------------------------------------------
+  {
+    const api = await import('../public/js/api.js');
+    const stateMod = await import('../public/js/state.js');
+
+    stateMod.setAuthToken('test-secret-token-xyz');
+    assert.equal(stateMod.state.auth.authenticated, true, 'State must record authenticated status');
+
+    let interceptedHeaders = null;
+    let interceptedCredentials = null;
+    const originalFetch = global.fetch;
+    global.fetch = async (url, opts) => {
+      interceptedHeaders = opts.headers;
+      interceptedCredentials = opts.credentials;
+      return {
+        status: 200,
+        ok: true,
+        json: async () => ({ status: 'ok' })
+      };
+    };
+
+    await api.authenticatedFetch('/internal/api/status');
+
+    assert.ok(interceptedHeaders, 'Headers must be provided to fetch');
+    assert.equal(interceptedHeaders['X-Toron-Admin-Key'], 'test-secret-token-xyz', 'X-Toron-Admin-Key must be injected');
+    assert.equal(interceptedHeaders['Authorization'], 'Bearer test-secret-token-xyz', 'Authorization Bearer must be injected');
+    assert.equal(interceptedCredentials, 'same-origin', 'Credentials must default to same-origin for Basic Auth');
+
+    global.fetch = originalFetch;
+    console.log('  ✔ TC-142-07: Automated Credential Header & same-origin Injection PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-142-08: Session Storage Scoping & Logout Clearing
+  // -------------------------------------------------------------
+  {
+    const stateMod = await import('../public/js/state.js');
+
+    const mockSessionStore = {};
+    const mockLocalStore = {};
+    global.sessionStorage = {
+      getItem: k => mockSessionStore[k] || null,
+      setItem: (k, v) => { mockSessionStore[k] = String(v); },
+      removeItem: k => { delete mockSessionStore[k]; }
+    };
+    global.localStorage = {
+      getItem: k => mockLocalStore[k] || null,
+      setItem: (k, v) => { mockLocalStore[k] = String(v); },
+      removeItem: k => { delete mockLocalStore[k]; }
+    };
+
+    stateMod.setAuthToken('session-scoped-token-456');
+    assert.equal(mockSessionStore['toron_admin_key'], 'session-scoped-token-456', 'Token must be stored in sessionStorage');
+    assert.equal(mockLocalStore['toron_admin_key'], undefined, 'Token must NEVER be persisted in localStorage (CWE-312)');
+
+    // Logout / Lock
+    stateMod.clearAuth();
+    assert.equal(mockSessionStore['toron_admin_key'], undefined, 'Token must be removed from sessionStorage on logout');
+    assert.equal(stateMod.state.auth.authenticated, false, 'Auth state must be reset to unauthenticated');
+    assert.equal(stateMod.state.auth.token, null, 'Token must be null after logout');
+
+    console.log('  ✔ TC-142-08: Session Storage Scoping & Lockout Clearing PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-142-09: Unauthenticated Dev Mode Compatibility
+  // -------------------------------------------------------------
+  {
+    const api = await import('../public/js/api.js');
+    const stateMod = await import('../public/js/state.js');
+
+    stateMod.clearAuth();
+    let authTriggered = false;
+    api.setOnAuthRequired(() => { authTriggered = true; });
+
+    const originalFetch = global.fetch;
+    global.fetch = async () => ({
+      status: 200,
+      ok: true,
+      json: async () => ({ version: '1.5.30', metrics: {}, timeseries: { A: { rps: [] } } })
+    });
+
+    stateMod.setLive(true);
+    await api.fetchBackendData();
+
+    assert.equal(authTriggered, false, 'Dev mode (200 OK without token) must not trigger authentication modal');
+    assert.equal(stateMod.state.live, true, 'Live polling must remain active when server is unauthenticated');
+
+    global.fetch = originalFetch;
+    console.log('  ✔ TC-142-09: Unauthenticated Dev Mode Compatibility PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-142-10: Strictly Relative Links Invariant in REQ-142, TASK-165, ADR-142, TC-142, AN-001
+  // -------------------------------------------------------------
+  {
+    const docFiles = [
+      'docs/analysis/AN-001.md',
+      'docs/requirements/REQ-142.md',
+      'docs/tasks/TASK-165.md',
+      'docs/architecture/ADR-142.md',
+      'docs/testCases/TC-142.md'
+    ];
+    const absPathPattern = /\]\(\/(?!\/)|href="\/(?!\/)|src="\/(?!\/)|file:\/\/\//g;
+    for (const f of docFiles) {
+      const fullPath = path.resolve(__dirname, '..', f);
+      assert.ok(fs.existsSync(fullPath), `Document ${f} must exist`);
+      const content = fs.readFileSync(fullPath, 'utf8');
+      const matches = content.match(absPathPattern);
+      assert.ok(!matches || matches.length === 0, `File ${f} contains absolute links: ${matches}`);
+    }
+    console.log('  ✔ TC-142-10: Strictly Relative Links Invariant in REQ-142, TASK-165, ADR-142, TC-142, AN-001 PASSED');
+  }
+
   console.log('\n============================================================');
-  console.log('🎉 ALL TC-139, TC-140 & TC-141 TEST CASES PASSED SUCCESSFULLY!');
+  console.log('🎉 ALL TC-139, TC-140, TC-141 & TC-142 TEST CASES PASSED SUCCESSFULLY!');
   console.log('============================================================\n');
 })().catch(err => {
-  console.error('\n❌ TC-141 TEST FAILED:', err);
+  console.error('\n❌ TEST FAILED:', err);
   process.exit(1);
 });
+

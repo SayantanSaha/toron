@@ -1,8 +1,8 @@
 /**
  * Toron Dashboard - Core DOM, String & Mathematical Utilities
  */
-export const $ = (s, r = document) => r.querySelector(s);
-export const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+export const $ = (s, r = (typeof document !== 'undefined' ? document : null)) => r ? r.querySelector(s) : null;
+export const $$ = (s, r = (typeof document !== 'undefined' ? document : null)) => r ? [...r.querySelectorAll(s)] : [];
 
 export const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
   '&': '&amp;',

@@ -23,8 +23,78 @@ export const state = {
   lq: '',
   lst: new Set(['2', '3', '4', '5']),
   lroute: 'all',
-  lslow: false
+  lslow: false,
+  auth: {
+    token: null,
+    authenticated: false,
+    mode: 'live' // 'live' | 'demo'
+  }
 };
+
+/* ---------- Authentication & Credential Store ---------- */
+const AUTH_STORAGE_KEY = 'toron_admin_key';
+
+export function getAuthToken() {
+  return state.auth.token;
+}
+
+export function isAuth() {
+  return state.auth.authenticated;
+}
+
+export function initAuth() {
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      const stored = sessionStorage.getItem(AUTH_STORAGE_KEY);
+      if (stored) {
+        state.auth.token = stored;
+        state.auth.authenticated = true;
+      }
+    } catch (e) {}
+  }
+}
+
+export function setAuthToken(token) {
+  state.auth.token = token || null;
+  state.auth.authenticated = !!token;
+  state.auth.mode = 'live';
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      if (token) {
+        sessionStorage.setItem(AUTH_STORAGE_KEY, token);
+      } else {
+        sessionStorage.removeItem(AUTH_STORAGE_KEY);
+      }
+    } catch (e) {}
+  }
+}
+
+export function clearAuth() {
+  state.auth.token = null;
+  state.auth.authenticated = false;
+  if (typeof sessionStorage !== 'undefined') {
+    try {
+      sessionStorage.removeItem(AUTH_STORAGE_KEY);
+    } catch (e) {}
+  }
+}
+
+export function setAuthDemoMode() {
+  state.auth.mode = 'demo';
+}
+
+export function getAuthHeaders() {
+  const headers = {};
+  if (state.auth.token) {
+    headers['X-Toron-Admin-Key'] = state.auth.token;
+    headers['Authorization'] = `Bearer ${state.auth.token}`;
+  }
+  return headers;
+}
+
+// Hydrate auth state on initial module load
+initAuth();
+
 
 let cache = null;
 let FORCE = false;

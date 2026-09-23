@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-08-11
-updated: 2026-09-17
+updated: 2026-09-22
 
 depends_on:
   - REQ-001
@@ -66,7 +66,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.32 Milestone)
+# Toron Documentation Wiki (v1.5.35 Milestone)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -85,6 +85,7 @@ Toron is an event-driven, high-performance web server, reverse proxy, API gatewa
 
 ### 🚀 Getting Started & Operations
 - [Getting Started](./getting-started.md) – Quickstart guide for building and running Toron.
+- [High-Density Gateway Observability Dashboard](./features/observability-dashboard.md) – Pure vector SVG real-time control plane, disaggregated upstream route pool rendering, and live telemetry metric derivations.
 - [Universal Installer & Service Manager](./features/installation-guide.md) – Auto-installer script (`install.sh`), systemd (Linux) & launchd (macOS) service setup.
 - [Docker Containerization Guide](./features/docker-container.md) – Multi-stage Dockerfile packaging, image creation, and Docker Compose configuration.
 - [Configuration Guide](./configuration.md) – Dual-file YAML configuration guide (`config.yaml` & `routes.yaml`).
@@ -135,5 +136,5 @@ Toron is an event-driven, high-performance web server, reverse proxy, API gatewa
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.32).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.35).
 

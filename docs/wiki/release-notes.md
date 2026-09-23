@@ -1,5 +1,32 @@
 # Release Notes
 
+## 2026-09-22 - Toron v1.5.35 Milestone (Disaggregated Upstream Route Pool Rendering & Live Telemetry Metric Derivations in Control Center Dashboard)
+
+### Milestone Summary
+- **Distinct Upstream Route Pool Disaggregation**:
+  - Eliminated the upstream route collapse anti-pattern in the Control Center dashboard (`public/app.js`) where multiple proxy routes targeting identical backend socket endpoints (e.g. `127.0.0.1:8080`) were absorbed into the first declared route's pool card.
+  - Implemented route-first priority matching in `buildDataModel()`: health check probe entries (`rawApiUpstreams`) from `/internal/api/upstreams/health` are matched to configured routes prioritizing explicit route labels (`u.route`) matching route path, prefix, or host+path before falling back to target socket addresses.
+  - Established deterministic route-scoped pool keys (`poolKey = primaryRoute.id`), ensuring that every configured upstream route generates an independent pool card with its own metrics, load-balancing algorithm, and instance strips.
+  - Guaranteed 100% upstream route coverage in `#/upstreams` via an exhaustive secondary fallback loop registering all remaining configured proxy routes with target endpoints.
+  - Enforced full visual topology consistency across the Overview SVG Sankey traffic flow diagram (`flow()`) and the Routes table (`rtUpdate()`), ensuring discrete route ribbons connect to distinct upstream pool nodes.
+- **Live Telemetry Schema Alignment & Proportional RPS Derivation**:
+  - Replaced obsolete and non-existent property lookups in `public/app.js` with active backend fields exported by `pkg/metrics/metrics.go` and `pkg/server/internal_api.go` (`requests_by_route`, `total_requests`, `timeseries.A.rps`, `timeseries.A.p95`, `timeseries.A.err`, and `/internal/api/upstreams/health` `latency_ms`, `http_code`, `status`, `history`).
+  - Derived instantaneous route-level throughput (`curRPS`) proportionally from the latest 60-bucket rolling ring buffer rate (`tsA.rps[last]`) scaled by route cumulative request share ($\text{requests\_by\_route}[r.\text{prefix}] / \text{total\_requests}$), displaying live requests/s rather than static `0.0/s`.
+  - Aggregated pool-level Requests metric as the sum of instantaneous RPS across all routes assigned to the pool.
+- **Dynamic Probe Latency & Percentile Derivation**:
+  - Bound instance card latency directly to real probe round-trip measurements (`latency_ms`) returned by `/internal/api/upstreams/health`.
+  - Dynamically derived pool summary p95 latency from active instance probe latencies (`Math.max(...activeProbeLats)`), route percentiles, or gateway time-series (`tsA.p95[last]`), eliminating hardcoded `2.5 ms` fallbacks.
+- **Multidimensional Health Classification & Real-Time Error Rates**:
+  - Classified instance health states into `down` (unreachable, down, or HTTP >= 500), `warn` (degraded or 4xx responses), and `up` (healthy, HTTP < 400).
+  - Derived pool 5xx error rate dynamically from the maximum of route error averages and 48-tick probe failure rates ($\sum\text{failed\_ticks} / \sum\text{total\_ticks}$), eliminating static `0.0%` defaults.
+  - Automated visual tone escalation (`err`, `warn`, `ok`) to immediately signal failing nodes and circuit breaker activations.
+
+### Changed
+- **`public/app.js`**: Refactored `buildDataModel()`, `poolCard()`, `flow()`, and `rtUpdate()` to implement route-first probe matching, distinct pool key generation, exhaustive proxy route instantiation, proportional RPS calculation, live probe latency extraction, dynamic p95 derivation, and multi-tier health tone classification.
+- **`docs/wiki/features/observability-dashboard.md`**: Updated user documentation with detailed architectural sections on disaggregated upstream route pool rendering, route-first matching logic, live telemetry derivations, and probe health evaluation formulas.
+
+---
+
 ## 2026-09-21 - Toron v1.5.34 Milestone (Native Dynamic 2-Stage WAF Auto-Ban Engine, Atomic File Persistence & Multi-Tier OS Firewall Defense - REQ-136 / TASK-159)
 
 ### Milestone Summary

@@ -111,22 +111,68 @@ function buildDataModel() {
 
   // 1. Build routes list
   let routes = (rawApiRoutes && rawApiRoutes.length > 0) ? rawApiRoutes.map((r, idx) => {
-    const id = (r.prefix || '/').replace(/[^a-zA-Z0-9]/g, '_') || `route_${idx}`;
-    const short = (r.host ? r.host + ' ' : '') + r.prefix;
+    const rawId = r.id || r.prefix || `route_${idx}`;
+    const id = String(rawId).replace(/[^a-zA-Z0-9]/g, '_') || `route_${idx}`;
+    const path = r.prefix || r.path || '/';
+    const host = r.host || '*';
+    const short = (r.host ? r.host + ' ' : '') + path;
     const pool = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.dir ? `static (${r.dir})` : 'in-process');
 
+    const tsA = rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A;
+    const totalRPS = (tsA && tsA.rps && tsA.rps.length > 0) ? (tsA.rps[tsA.rps.length - 1] || 0) : 0;
+    const reqByRoute = (rawApiStatus && rawApiStatus.metrics && rawApiStatus.metrics.requests_by_route) || {};
+    const routeCumulative = (reqByRoute[r.prefix] !== undefined) ? reqByRoute[r.prefix] : ((reqByRoute[path] !== undefined) ? reqByRoute[path] : 0);
+    const totalRequests = (rawApiStatus && rawApiStatus.metrics && rawApiStatus.metrics.total_requests) || 0;
+
     let curRPS = 0;
+    if (totalRequests > 0 && totalRPS > 0) {
+      curRPS = totalRPS * (routeCumulative / totalRequests);
+    } else if (totalRPS > 0 && rawApiRoutes.length > 0) {
+      curRPS = totalRPS / rawApiRoutes.length;
+    }
+
+    // Find matching probes for this route: strict route match first, fallback to target address only if no route match
+    let matchingUpstreams = (rawApiUpstreams || []).filter(u => {
+      if (!u || !u.route) return false;
+      const uRt = String(u.route).toLowerCase();
+      const pfx = String(r.prefix || path || '').toLowerCase();
+      const srt = String(short).toLowerCase();
+      const hostPath = String((r.host || '') + path).toLowerCase();
+      return (pfx && (uRt === pfx || uRt.includes(pfx) || pfx.includes(uRt))) ||
+             (srt && (uRt === srt || uRt.includes(srt) || srt.includes(uRt))) ||
+             (hostPath && (uRt === hostPath || uRt.includes(hostPath) || hostPath.includes(uRt)));
+    });
+    if (matchingUpstreams.length === 0) {
+      matchingUpstreams = (rawApiUpstreams || []).filter(u => {
+        if (!u) return false;
+        if (r.targets && r.targets.some(t => u.name && (t.includes(u.name) || u.name.includes(t)))) return true;
+        return false;
+      });
+    }
+
+    const probeLatencies = matchingUpstreams.map(u => u.latency_ms).filter(l => typeof l === 'number' && l > 0);
+    const tsP95 = (tsA && tsA.p95 && tsA.p95.length > 0) ? (tsA.p95[tsA.p95.length - 1] || 0) : 0;
+
     let lat = 2.5;
+    if (probeLatencies.length > 0) {
+      lat = avg(probeLatencies);
+    } else if (tsP95 > 0) {
+      lat = tsP95;
+    }
+
+    const statusCounts = (rawApiStatus && rawApiStatus.metrics && rawApiStatus.metrics.requests_by_status) || {};
+    const err5xxCount = Object.entries(statusCounts).filter(([k]) => String(k).startsWith('5')).reduce((s, [, c]) => s + Number(c), 0);
+    const errRateFromStatus = totalRequests > 0 ? (err5xxCount / totalRequests) : 0;
+    const tsErr = (tsA && tsA.err && tsA.err.length > 0) ? (tsA.err[tsA.err.length - 1] || 0) : 0;
+    const gatewayErr = tsErr > 0 ? tsErr : errRateFromStatus;
+
     let err = 0;
-    if (rawApiStatus && rawApiStatus.metrics) {
-      const m = rawApiStatus.metrics;
-      if (m.by_route && m.by_route[r.prefix]) {
-        curRPS = m.by_route[r.prefix];
-      } else if (m.rate_per_sec) {
-        curRPS = Math.round(m.rate_per_sec / rawApiRoutes.length);
-      }
-      if (m.latency_p95_ms > 0) lat = m.latency_p95_ms;
-      if (m.err_rate > 0) err = m.err_rate;
+    if (matchingUpstreams.length > 0) {
+      const failedTicks = matchingUpstreams.reduce((acc, u) => acc + (u.history ? u.history.filter(h => !h).length : (u.status === 'UNREACHABLE' || u.status === 'DOWN' || (u.http_code && u.http_code >= 500) ? 48 : 0)), 0);
+      const totalTicks = matchingUpstreams.reduce((acc, u) => acc + (u.history ? u.history.length : 48), 0) || 1;
+      err = failedTicks / totalTicks;
+    } else {
+      err = gatewayErr;
     }
 
     const slo = Math.max(50, Math.round(lat * 2 + 20));
@@ -138,16 +184,15 @@ function buildDataModel() {
 
     const s = { rps: [], p50: [], p95: [], p99: [], e3: [], e4: [], e5: [] };
     if (rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A && rawApiStatus.timeseries.A.rps && rawApiStatus.timeseries.A.rps.length > 0) {
-      const tsA = rawApiStatus.timeseries.A;
-      const routeFactor = 1 / Math.max(1, rawApiRoutes.length);
+      const routeShare = (totalRequests > 0) ? (routeCumulative / totalRequests) : (1 / Math.max(1, rawApiRoutes.length));
       for (let i = 0; i < N; i++) {
-        s.rps.push((tsA.rps[i] || 0) * routeFactor);
-        s.p50.push(tsA.p50[i] || lat * 0.5);
-        s.p95.push(tsA.p95[i] || lat);
-        s.p99.push(tsA.p99[i] || lat * 1.5);
-        s.e3.push((tsA.e3[i] || 0) * routeFactor);
-        s.e4.push((tsA.e4[i] || 0) * routeFactor);
-        s.e5.push((tsA.e5[i] || 0) * routeFactor);
+        s.rps.push(((tsA.rps && tsA.rps[i]) || 0) * routeShare);
+        s.p50.push((tsA.p50 && tsA.p50[i]) || lat * 0.5);
+        s.p95.push((tsA.p95 && tsA.p95[i]) || lat);
+        s.p99.push((tsA.p99 && tsA.p99[i]) || lat * 1.5);
+        s.e3.push(((tsA.e3 && tsA.e3[i]) || 0) * routeShare);
+        s.e4.push(((tsA.e4 && tsA.e4[i]) || 0) * routeShare);
+        s.e5.push(((tsA.e5 && tsA.e5[i]) || 0) * routeShare);
       }
     } else {
       for (let i = 0; i < N; i++) {
@@ -157,7 +202,7 @@ function buildDataModel() {
         s.p99.push(lat * 1.5);
         s.e3.push(0);
         s.e4.push(0);
-        s.e5.push(0);
+        s.e5.push(curRPS * err);
       }
     }
     return {
@@ -178,7 +223,7 @@ function buildDataModel() {
       mw,
       timeout: '10 s',
       s,
-      cur: { rps: curRPS, p50: lat * 0.5, p95: lat, p99: lat * 1.5, e4: 0, e5: 0, err5: err, err4: 0 }
+      cur: { rps: curRPS, p50: lat * 0.5, p95: lat, p99: lat * 1.5, e4: 0, e5: curRPS * err, err5: err, err4: 0 }
     };
   }) : [
     { id: 'orders', short: 'api /v1/orders', host: 'api.example.com', path: '/v1/orders/*', pool: 'orders-svc', base: 420, lat: 62, slo: 120, err: .004, mw: ['jwt', 'rate-limit 600/min', 'cors', 'request-id'], timeout: '8 s' },
@@ -219,9 +264,9 @@ function buildDataModel() {
     if (len < N) {
       const padCount = N - len;
       const padZeros = Array(padCount).fill(0);
-      const padP50 = Array(padCount).fill(tsA.p50[0] || 1);
-      const padP95 = Array(padCount).fill(tsA.p95[0] || 2.5);
-      const padP99 = Array(padCount).fill(tsA.p99[0] || 5);
+      const padP50 = Array(padCount).fill((tsA.p50 && tsA.p50[0]) || 1);
+      const padP95 = Array(padCount).fill((tsA.p95 && tsA.p95[0]) || 2.5);
+      const padP99 = Array(padCount).fill((tsA.p99 && tsA.p99[0]) || 5);
       const padGor = Array(padCount).fill(tsX.gor ? tsX.gor[0] : 10);
       const padHeap = Array(padCount).fill(tsX.heap ? tsX.heap[0] : 1.5);
       const padCpu = Array(padCount).fill(tsX.cpu ? tsX.cpu[0] : 5);
@@ -229,9 +274,9 @@ function buildDataModel() {
       const padGc = Array(padCount).fill(tsX.gc ? tsX.gc[0] : 0.12);
 
       A.rps = [...padZeros, ...tsA.rps];
-      A.p50 = [...padP50, ...tsA.p50];
-      A.p95 = [...padP95, ...tsA.p95];
-      A.p99 = [...padP99, ...tsA.p99];
+      A.p50 = [...padP50, ...(tsA.p50 || padP50)];
+      A.p95 = [...padP95, ...(tsA.p95 || padP95)];
+      A.p99 = [...padP99, ...(tsA.p99 || padP99)];
       A.e2 = [...padZeros, ...(tsA.e2 || padZeros)];
       A.e3 = [...padZeros, ...(tsA.e3 || padZeros)];
       A.e4 = [...padZeros, ...(tsA.e4 || padZeros)];
@@ -285,19 +330,26 @@ function buildDataModel() {
       }
       targetAddr = targetAddr.replace(/:(\d+):\1$/, ':$1');
 
-      // Find matching routes for this upstream node
-      const matchingRoutes = routes.filter(r => {
-        if (u.route && (r.short.includes(u.route) || (r.host + r.path).includes(u.route) || u.route.includes(r.path) || u.route.includes(r.short))) return true;
+      // 1. Strict route priority matching
+      const routeMatches = routes.filter(r => {
+        if (!u.route) return false;
+        return r.short === u.route || r.path === u.route || (r.host + r.path) === u.route ||
+               r.short.includes(u.route) || (r.host + r.path).includes(u.route) ||
+               u.route.includes(r.path) || u.route.includes(r.short);
+      });
+
+      // Fallback matching on target address only if routeMatches is empty
+      const fallbackMatches = routeMatches.length === 0 ? routes.filter(r => {
         if (r.pool && (r.pool.includes(targetAddr) || targetAddr.includes(r.pool) || r.pool.includes(u.name))) return true;
         if (r.targets && r.targets.some(t => t.includes(targetAddr) || targetAddr.includes(t) || t.includes(u.name))) return true;
         return false;
-      });
+      }) : [];
 
-      const primaryRoute = matchingRoutes[0];
+      const primaryRoute = routeMatches.length > 0 ? routeMatches[0] : fallbackMatches[0];
+      const poolKey = primaryRoute ? primaryRoute.id : (u.route ? u.route.replace(/[^a-zA-Z0-9]/g, '_') : targetAddr.replace(/[^a-zA-Z0-9]/g, '_'));
       const host = primaryRoute ? (primaryRoute.host || '*') : '*';
       const path = primaryRoute ? primaryRoute.path : (u.route ? (u.route.includes('/') ? '/' + u.route.split('/').slice(1).join('/') : u.route) : '/');
       const displayName = primaryRoute ? primaryRoute.short : (u.route || targetAddr);
-      const poolKey = primaryRoute ? primaryRoute.id : (u.route || targetAddr);
 
       if (!poolMap.has(poolKey)) {
         const headersList = (primaryRoute && primaryRoute.headers) ? Object.entries(primaryRoute.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
@@ -311,39 +363,44 @@ function buildDataModel() {
           hc: `HTTP probe on port ${u.port || 80}`,
           headersSummary: headersList,
           insts: [],
-          routes: matchingRoutes.length > 0 ? matchingRoutes : (primaryRoute ? [primaryRoute] : [])
+          routes: primaryRoute ? [primaryRoute] : (fallbackMatches.length > 0 ? fallbackMatches : [])
         });
       }
 
       const pool = poolMap.get(poolKey);
-      matchingRoutes.forEach(mr => {
-        if (!pool.routes.some(r => r.id === mr.id)) pool.routes.push(mr);
-      });
+      if (primaryRoute) {
+        if (!pool.routes.some(r => r.id === primaryRoute.id)) pool.routes.push(primaryRoute);
+      } else {
+        fallbackMatches.forEach(mr => {
+          if (!pool.routes.some(r => r.id === mr.id)) pool.routes.push(mr);
+        });
+      }
+
+      // Instance health state classification
+      const isDown = u.status === 'UNREACHABLE' || u.status === 'DOWN' || (u.http_code && u.http_code >= 500);
+      const isUp = (u.status === 'HEALTHY' || u.status === 'UP') && (!u.http_code || u.http_code < 400);
+      const instState = isDown ? 'down' : (isUp ? 'up' : 'warn');
 
       if (!pool.insts.some(i => i.a === targetAddr)) {
         pool.insts.push({
           a: targetAddr,
           route: u.route || (primaryRoute ? primaryRoute.short : ''),
-          state: (u.status === 'HEALTHY' || u.status === 'UP') ? 'up' : 'down',
+          state: instState,
           httpCode: u.http_code,
-          latency: u.latency_ms,
-          history: u.history && u.history.length ? u.history : Array(48).fill(u.status === 'HEALTHY' || u.status === 'UP')
+          latency: (u.latency_ms !== undefined && u.latency_ms !== null) ? u.latency_ms : 0,
+          history: (u.history && u.history.length) ? u.history : Array(48).fill(instState !== 'down')
         });
       }
     });
 
-    // Also register any configured routes not directly mapped
+    // 4. Exhaustive Fallback Route Loop:
+    // Register any proxy route not yet present in poolMap
     routes.forEach(r => {
-      let found = false;
-      for (const p of poolMap.values()) {
-        if (p.routes.some(pr => pr.id === r.id) || p.insts.some(i => r.pool.includes(i.a) || i.a.includes(r.pool))) {
-          if (!p.routes.some(pr => pr.id === r.id)) p.routes.push(r);
-          found = true;
-        }
-      }
-      if (!found) {
-        const poolKey = r.id || r.short;
+      if (r.type === 'static' && (!r.targets || r.targets.length === 0)) return;
+      if (!poolMap.has(r.id)) {
+        const poolKey = r.id;
         const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
+        const targetAddr = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.pool || 'in-process');
         poolMap.set(poolKey, {
           id: poolKey,
           displayName: r.short || poolKey,
@@ -353,7 +410,7 @@ function buildDataModel() {
           algo: r.algorithm || 'Round-Robin',
           hc: 'Passive health check',
           headersSummary: headersList,
-          insts: [{ a: r.pool, route: r.short, state: 'up', history: Array(48).fill(true) }],
+          insts: [{ a: targetAddr, route: r.short, state: 'up', history: Array(48).fill(true) }],
           routes: [r]
         });
       }
@@ -362,16 +419,17 @@ function buildDataModel() {
     routes.forEach(r => {
       const poolKey = r.id || r.short;
       const headersList = r.headers ? Object.entries(r.headers).map(([k, v]) => `${k}=${v}`).join(', ') : '';
+      const targetAddr = (r.targets && r.targets.length > 0) ? r.targets[0] : (r.pool || 'in-process');
       poolMap.set(poolKey, {
         id: poolKey,
         displayName: r.short || poolKey,
         host: r.host || '*',
         path: r.path || '/',
         type: r.type || 'proxy',
-        algo: r.algorithm || 'Least connections',
-        hc: 'GET /healthz every 5 s',
+        algo: r.algorithm || 'Round-Robin',
+        hc: 'Passive health check',
         headersSummary: headersList,
-        insts: [{ a: r.pool, route: r.short, state: 'up', history: Array(48).fill(true) }],
+        insts: [{ a: targetAddr, route: r.short, state: 'up', history: Array(48).fill(true) }],
         routes: [r]
       });
     });
@@ -380,16 +438,32 @@ function buildDataModel() {
   const pools = Array.from(poolMap.values()).map(p => {
     const rs = p.routes;
     const rps = sum(rs.map(r => r.cur.rps));
-    const p95 = avg(rs.map(r => r.cur.p95));
-    const err5 = avg(rs.map(r => r.cur.err5));
+
     const insts = (p.insts && p.insts.length > 0) ? p.insts : [
       { a: `${p.id}`, state: 'up', history: Array(48).fill(true) }
     ];
 
+    // Derive p95 from active instance probe latencies, or route p95, or gateway time-series
+    const activeProbeLats = insts.map(i => i.latency).filter(l => typeof l === 'number' && l > 0);
+    const tsA = rawApiStatus && rawApiStatus.timeseries && rawApiStatus.timeseries.A;
+    const tsP95 = (tsA && tsA.p95 && tsA.p95.length > 0) ? (tsA.p95[tsA.p95.length - 1] || 0) : 0;
+    const p95 = activeProbeLats.length > 0
+      ? Math.max(...activeProbeLats)
+      : (rs.length > 0 ? avg(rs.map(r => r.cur.p95)) : (tsP95 || 2.5));
+
+    // Derive 5xx error rate and state
     const up = insts.filter(i => i.state === 'up').length;
     const down = insts.filter(i => i.state === 'down').length;
-    const tone = err5 >= 0.02 ? 'err' : (down ? 'warn' : 'ok');
-    return { ...p, insts, rps, p95, err5, up, down, tone };
+    const warn = insts.filter(i => i.state === 'warn').length;
+
+    const failedTicks = insts.reduce((acc, i) => acc + (i.history ? i.history.filter(h => !h).length : 0), 0);
+    const totalTicks = insts.reduce((acc, i) => acc + (i.history ? i.history.length : 0), 0) || 1;
+    const probeFailureRate = failedTicks / totalTicks;
+    const routeErrAvg = rs.length > 0 ? avg(rs.map(r => r.cur.err5)) : 0;
+    const err5 = Math.max(routeErrAvg, probeFailureRate);
+    const tone = (down > 0 || err5 >= 0.02) ? 'err' : (warn > 0 || err5 > 0 ? 'warn' : 'ok');
+
+    return { ...p, insts, rps, p95, err5, up, down, warn, tone };
   });
 
   const total = sum(routes.map(r => r.cur.rps));
@@ -677,13 +751,13 @@ function flow(host, D) {
   const poolMap = new Map();
   const rawPools = (D.pools && D.pools.length > 0) ? D.pools : [{ id: 'in-process', rps: 0, tone: 'ok', routes: [] }];
   const poolNodes = rawPools.map(p => {
-    const matchingRoutes = routeNodes.filter(r => r.pool && (r.pool.includes(p.id) || p.id.includes(r.pool) || (r.pool === p.id)));
-    const rps = sum(matchingRoutes.map(r => r.v)) || p.rps || 0;
-    const tone = matchingRoutes.some(r => r.tone === 'err') ? 'err' : (p.tone || 'ok');
+    const matchingRoutes = routeNodes.filter(r => r.id === p.id || (p.routes && p.routes.some(pr => pr.id === r.id)) || (r.pool && (r.pool === p.id || r.pool.includes(p.id) || p.id.includes(r.pool))));
+    const rps = (p.rps !== undefined && p.rps > 0) ? p.rps : (sum(matchingRoutes.map(r => r.v)) || 0);
+    const tone = (p.tone && p.tone !== 'ok') ? p.tone : (matchingRoutes.some(r => r.tone === 'err') ? 'err' : (matchingRoutes.some(r => r.tone === 'warn') ? 'warn' : 'ok'));
     const rids = matchingRoutes.map(r => r.id);
     return {
       id: p.id,
-      label: p.id,
+      label: p.displayName || p.id,
       v: rps,
       routes: matchingRoutes,
       rids: rids.length > 0 ? rids : [p.id],
@@ -744,7 +818,7 @@ function flow(host, D) {
 
   // 2. Routes -> Upstream Pools
   routeNodes.forEach(r => {
-    let targetPool = poolMap.get(r.pool) || poolNodes.find(p => r.pool && (r.pool.includes(p.id) || p.id.includes(r.pool))) || poolNodes[0];
+    let targetPool = poolMap.get(r.id) || poolMap.get(r.pool) || poolNodes.find(p => p.id === r.id || (p.routes && p.routes.some(pr => pr.id === r.id)) || (r.pool && (r.pool.includes(p.id) || p.id.includes(r.pool)))) || poolNodes[0];
     if (!targetPool && poolNodes.length > 0) targetPool = poolNodes[0];
     if (targetPool) {
       const poolRoutes = targetPool.routes || [];
@@ -963,8 +1037,8 @@ function rtUpdate(D) {
 /* ---------- View 3: Upstreams ---------- */
 function poolCard(p) {
   const rows = p.insts.map(i => {
-    const st = i.state || 'up', tone = st === 'down' ? 'err' : st === 'draining' ? 'mute' : 'ok';
-    const label = st === 'down' ? 'Down' : st === 'draining' ? 'Draining' : (i.httpCode ? `Healthy (HTTP ${i.httpCode})` : 'Healthy');
+    const st = i.state || 'up', tone = st === 'down' ? 'err' : st === 'draining' ? 'mute' : (st === 'warn' ? 'warn' : 'ok');
+    const label = st === 'down' ? 'Down' : st === 'draining' ? 'Draining' : (st === 'warn' ? (i.httpCode ? `Degraded (HTTP ${i.httpCode})` : 'Degraded') : (i.httpCode ? `Healthy (HTTP ${i.httpCode})` : 'Healthy'));
     const history = i.history && i.history.length ? i.history : Array(48).fill(st !== 'down');
     const fails = history.filter(v => !v).length;
     const strip = `<svg class="hc" viewBox="0 0 96 12" preserveAspectRatio="none" role="img" aria-label="Last 48 health checks, ${fails} failed">${history.map((ok, k) => `<rect class="${ok ? 'g' : 'b'}" x="${k * 2}" y="0" width="1.4" height="12" rx=".5"/>`).join('')}</svg>`;
@@ -976,8 +1050,8 @@ function poolCard(p) {
       </div>
       ${pill(tone, label)}</div>
       <div class="inst-m">
-        <span>Latency: <b>${i.latency ? i.latency.toFixed(1) + ' ms' : fmt.ms(p.p95)}</b></span>
-        <span>Probe Status: ${st === 'down' ? '<b style="color:var(--err)">Unreachable</b>' : '<b style="color:var(--ok)">HTTP 200 OK</b>'}</span>
+        <span>Latency: <b>${(i.latency && i.latency > 0) ? i.latency.toFixed(1) + ' ms' : fmt.ms(p.p95)}</b></span>
+        <span>Probe Status: ${st === 'down' ? '<b style="color:var(--err)">Unreachable</b>' : (st === 'warn' ? '<b style="color:var(--warn)">Degraded</b>' : '<b style="color:var(--ok)">HTTP 200 OK</b>')}</span>
       </div>${strip}
       ${st === 'down' ? `<p class="note err">Circuit breaker open. Connections routed away from failing node.</p>` : ''}
       ${st === 'draining' ? `<p class="note mute">Node is draining connections for deployment.</p>` : ''}</div>`;

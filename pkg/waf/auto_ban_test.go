@@ -251,3 +251,63 @@ func TestAutoBan_ConcurrencyRaceFree(t *testing.T) {
 
 	wg.Wait()
 }
+
+func TestAutoBanManager_UpdateConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	persistPath := filepath.Join(tmpDir, "banned_ips.json")
+
+	cfg := AutoBanConfig{
+		Enabled:          true,
+		MaxViolations:    3,
+		Window:           1 * time.Minute,
+		BanDuration:      1 * time.Hour,
+		MaxTemporaryBans: 2,
+		PersistenceFile:  persistPath,
+		Whitelist:        []string{"10.0.0.1"},
+	}
+
+	mgr, err := NewAutoBanManager(cfg, nil)
+	if err != nil {
+		t.Fatalf("failed to create manager: %v", err)
+	}
+	defer mgr.Close()
+
+	// Ban an IP
+	err = mgr.Ban("198.51.100.50", BanTypeTemporary, 1*time.Hour, "testing initial ban")
+	if err != nil {
+		t.Fatalf("failed to ban: %v", err)
+	}
+
+	// Update config in place
+	newCfg := AutoBanConfig{
+		Enabled:          true,
+		MaxViolations:    1,
+		Window:           30 * time.Second,
+		BanDuration:      2 * time.Hour,
+		MaxTemporaryBans: 1,
+		PersistenceFile:  persistPath,
+		Whitelist:        []string{"10.0.0.1", "10.0.0.2"},
+	}
+	mgr.UpdateConfig(newCfg, nil)
+
+	// Verify pre-existing ban is preserved
+	isBanned, entry := mgr.IsBanned("198.51.100.50")
+	if !isBanned || entry == nil || entry.Reason != "testing initial ban" {
+		t.Fatalf("expected pre-existing ban to be preserved across UpdateConfig, got %v", isBanned)
+	}
+
+	// Verify updated whitelist is active
+	if !mgr.IsWhitelisted("10.0.0.2") {
+		t.Fatalf("expected 10.0.0.2 to be whitelisted after UpdateConfig")
+	}
+
+	// Verify unban works on the same manager
+	if err := mgr.Unban("198.51.100.50"); err != nil {
+		t.Fatalf("failed to unban: %v", err)
+	}
+	isBanned, _ = mgr.IsBanned("198.51.100.50")
+	if isBanned {
+		t.Fatalf("expected 198.51.100.50 to be unbanned")
+	}
+}
+

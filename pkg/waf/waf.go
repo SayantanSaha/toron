@@ -260,19 +260,24 @@ func (e *WAFEngine) Reload(cfg WAFConfig) error {
 		}
 	}
 
-	var autoBan *AutoBanManager
-	if cfg.AutoBan.Enabled {
-		autoBan, err = NewAutoBanManager(cfg.AutoBan, logger)
-		if err != nil {
-			return fmt.Errorf("failed to reload WAF auto-ban engine: %w", err)
-		}
-	}
-
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	if e.autoBanMgr != nil {
-		_ = e.autoBanMgr.Close()
+	if cfg.AutoBan.Enabled {
+		if e.autoBanMgr != nil {
+			e.autoBanMgr.UpdateConfig(cfg.AutoBan, logger)
+		} else {
+			autoBan, err := NewAutoBanManager(cfg.AutoBan, logger)
+			if err != nil {
+				return fmt.Errorf("failed to reload WAF auto-ban engine: %w", err)
+			}
+			e.autoBanMgr = autoBan
+		}
+	} else {
+		if e.autoBanMgr != nil {
+			_ = e.autoBanMgr.Close()
+			e.autoBanMgr = nil
+		}
 	}
 
 	e.config = cfg
@@ -281,7 +286,6 @@ func (e *WAFEngine) Reload(cfg WAFConfig) error {
 	if cfg.AuditLog.Enabled {
 		e.auditLogger = logger
 	}
-	e.autoBanMgr = autoBan
 
 	return nil
 }

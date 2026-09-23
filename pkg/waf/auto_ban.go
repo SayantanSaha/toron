@@ -134,6 +134,41 @@ func NewAutoBanManager(cfg AutoBanConfig, logger *AuditLogger) (*AutoBanManager,
 	return mgr, nil
 }
 
+// UpdateConfig dynamically updates the auto-ban configuration in place (thresholds, window, whitelist, logger)
+// while safely retaining all active in-memory bans, strike history, and running background sweeper.
+func (m *AutoBanManager) UpdateConfig(cfg AutoBanConfig, logger *AuditLogger) {
+	if m == nil {
+		return
+	}
+	if cfg.MaxViolations <= 0 {
+		cfg.MaxViolations = 5
+	}
+	if cfg.Window <= 0 {
+		cfg.Window = 1 * time.Minute
+	}
+	if cfg.BanDuration <= 0 {
+		cfg.BanDuration = 1 * time.Hour
+	}
+	if cfg.MaxTemporaryBans <= 0 {
+		cfg.MaxTemporaryBans = 3
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.cfg = cfg
+	if logger != nil {
+		m.auditLogger = logger
+	}
+	m.compileWhitelist(cfg.Whitelist)
+
+	newPersistence := strings.TrimSpace(cfg.PersistenceFile)
+	if newPersistence != "" && newPersistence != m.persistencePath {
+		m.persistencePath = newPersistence
+		_ = m.loadStateLocked()
+	}
+}
+
 func (m *AutoBanManager) compileWhitelist(whitelist []string) {
 	var nets []*net.IPNet
 	var ips []net.IP
@@ -538,7 +573,10 @@ func (m *AutoBanManager) saveStateLocked() error {
 func (m *AutoBanManager) loadState() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.loadStateLocked()
+}
 
+func (m *AutoBanManager) loadStateLocked() error {
 	if _, err := os.Stat(m.persistencePath); os.IsNotExist(err) {
 		return nil
 	}

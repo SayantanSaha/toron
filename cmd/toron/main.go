@@ -358,12 +358,12 @@ func main() {
 			return res
 		},
 		AuditLogger: auditLogger,
-		AutoBanManager: func() *waf.AutoBanManager {
+		AutoBanManagerFunc: func() *waf.AutoBanManager {
 			if globalWafEngine != nil {
 				return globalWafEngine.AutoBanManager()
 			}
 			return nil
-		}(),
+		},
 		AdminAuthEnabled: appCfg.Server.AdminAuth.Enabled ||
 			os.Getenv("TORON_ADMIN_KEY") != "" ||
 			appCfg.Server.AdminAuth.Token != "" ||

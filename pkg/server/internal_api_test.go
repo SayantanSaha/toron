@@ -288,6 +288,88 @@ func TestInternalAPIRoutes(t *testing.T) {
 			t.Fatalf("expected 0 banned IPs after unban, got %d", emptyPayload.Total)
 		}
 	})
+
+	t.Run("Auto-Ban Dynamic Provider Across Reload", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		persistFile := filepath.Join(tmpDir, "banned_ips.json")
+
+		mgr1, err := waf.NewAutoBanManager(waf.AutoBanConfig{
+			Enabled:          true,
+			MaxViolations:    3,
+			Window:           time.Minute,
+			BanDuration:      time.Hour,
+			MaxTemporaryBans: 2,
+			PersistenceFile:  persistFile,
+		}, nil)
+		if err != nil {
+			t.Fatalf("failed to create manager: %v", err)
+		}
+		defer mgr1.Close()
+
+		var currentMgr *waf.AutoBanManager = mgr1
+		var mu sync.Mutex
+
+		dynamicRouter := router.New()
+		cfg := InternalAPIConfig{
+			AutoBanManagerFunc: func() *waf.AutoBanManager {
+				mu.Lock()
+				defer mu.Unlock()
+				return currentMgr
+			},
+		}
+		RegisterInternalAPIRoutes(dynamicRouter, cfg)
+
+		// 1. Ban an IP on mgr1
+		_ = mgr1.Ban("198.51.100.11", waf.BanTypeTemporary, time.Hour, "testing dynamic provider")
+
+		// 2. Simulate engine reload switching to mgr2
+		mgr2, err := waf.NewAutoBanManager(waf.AutoBanConfig{
+			Enabled:          true,
+			MaxViolations:    1,
+			Window:           time.Minute,
+			BanDuration:      time.Hour,
+			MaxTemporaryBans: 1,
+			PersistenceFile:  persistFile,
+		}, nil)
+		if err != nil {
+			t.Fatalf("failed to create manager 2: %v", err)
+		}
+		defer mgr2.Close()
+
+		mu.Lock()
+		currentMgr = mgr2
+		mu.Unlock()
+
+		// 3. Ban on mgr2
+		_ = mgr2.Ban("198.51.100.22", waf.BanTypeTemporary, time.Hour, "banned on mgr2")
+
+		// 4. Verify GET /internal/api/security/banned-ips reflects mgr2
+		reqList, _ := httpparser.NewRequest("GET", "/internal/api/security/banned-ips", "HTTP/1.1")
+		resList := httpparser.NewResponse()
+		dynamicRouter.ServeHTTP(reqList, resList)
+		if resList.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", resList.StatusCode)
+		}
+		if !strings.Contains(resList.Body.String(), "198.51.100.22") {
+			t.Fatalf("expected mgr2 ban to be listed via dynamic provider: %s", resList.Body.String())
+		}
+
+		// 5. Unban via API
+		unbanBody := `{"ip":"198.51.100.22"}`
+		reqUnban, _ := httpparser.NewRequest("POST", "/internal/api/security/unban", "HTTP/1.1")
+		reqUnban.Body = io.NopCloser(strings.NewReader(unbanBody))
+		resUnban := httpparser.NewResponse()
+		dynamicRouter.ServeHTTP(reqUnban, resUnban)
+		if resUnban.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 for unban, got %d: %s", resUnban.StatusCode, resUnban.Body.String())
+		}
+
+		// 6. Verify unbanned on mgr2
+		isBanned, _ := mgr2.IsBanned("198.51.100.22")
+		if isBanned {
+			t.Fatalf("expected IP to be unbanned on active manager mgr2")
+		}
+	})
 }
 
 type mockAddr struct {

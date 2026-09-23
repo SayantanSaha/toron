@@ -56,10 +56,11 @@ type InternalAPIConfig struct {
 	SecurityHeadersEnabled    bool               `json:"security_headers_enabled"`
 	MTLSEnabled               bool               `json:"mtls_enabled"`
 	DiscoveryEnabled          bool               `json:"discovery_enabled"`
-	DiscoveryFunc             func() []RouteInfo `json:"-"`
-	AuditLogger               *waf.AuditLogger   `json:"-"`
-	AutoBanManager            *waf.AutoBanManager `json:"-"`
-	AdminAuthEnabled          bool               `json:"admin_auth_enabled"`
+	DiscoveryFunc             func() []RouteInfo         `json:"-"`
+	AuditLogger               *waf.AuditLogger           `json:"-"`
+	AutoBanManager            *waf.AutoBanManager        `json:"-"`
+	AutoBanManagerFunc        func() *waf.AutoBanManager `json:"-"`
+	AdminAuthEnabled          bool                       `json:"admin_auth_enabled"`
 	AdminToken                string             `json:"admin_token"`
 	AdminAPIKeys              []string           `json:"admin_api_keys"`
 	AdminUsername             string             `json:"admin_username"`
@@ -71,6 +72,17 @@ type InternalAPIConfig struct {
 	MaxProxyTestResponseBytes int64              `json:"max_proxy_test_response_bytes,omitempty"`
 	ACMEDomains               []string           `json:"acme_domains,omitempty"`
 	ACMEChallengeType         string             `json:"acme_challenge_type,omitempty"`
+}
+
+// GetAutoBanManager dynamically resolves the active auto-ban manager, preferring the dynamic provider function if set.
+func (c *InternalAPIConfig) GetAutoBanManager() *waf.AutoBanManager {
+	if c == nil {
+		return nil
+	}
+	if c.AutoBanManagerFunc != nil {
+		return c.AutoBanManagerFunc()
+	}
+	return c.AutoBanManager
 }
 
 // UpstreamNodeHealth describes the health state of an individual upstream service node.
@@ -927,9 +939,10 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	// 6. GET /internal/api/security/banned-ips
 	r.GET("/internal/api/security/banned-ips", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
+		autoBanMgr := cfg.GetAutoBanManager()
 		var bans []waf.BanEntry
-		if cfg.AutoBanManager != nil {
-			bans = cfg.AutoBanManager.ListBanned()
+		if autoBanMgr != nil {
+			bans = autoBanMgr.ListBanned()
 		}
 		if bans == nil {
 			bans = make([]waf.BanEntry, 0)
@@ -968,7 +981,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		}
 		payload := map[string]interface{}{
 			"timestamp":  time.Now().UTC().Format(time.RFC3339),
-			"enabled":    cfg.AutoBanManager != nil && cfg.AutoBanManager.IsEnabled(),
+			"enabled":    autoBanMgr != nil && autoBanMgr.IsEnabled(),
 			"total":      len(items),
 			"banned_ips": items,
 		}
@@ -979,7 +992,8 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	// 7. POST /internal/api/security/unban
 	r.POST("/internal/api/security/unban", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
-		if cfg.AutoBanManager == nil {
+		autoBanMgr := cfg.GetAutoBanManager()
+		if autoBanMgr == nil {
 			res.SetStatus(http.StatusBadRequest)
 			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Auto-ban manager is not enabled"}`)
 			return
@@ -998,7 +1012,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Invalid or missing ip"}`)
 			return
 		}
-		if err := cfg.AutoBanManager.Unban(strings.TrimSpace(unbanReq.IP)); err != nil {
+		if err := autoBanMgr.Unban(strings.TrimSpace(unbanReq.IP)); err != nil {
 			res.SetStatus(http.StatusInternalServerError)
 			_, _ = res.WriteString(fmt.Sprintf(`{"error":"500 Internal Server Error","message":%q}`, err.Error()))
 			return
@@ -1009,7 +1023,8 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 	// 8. POST /internal/api/security/ban
 	r.POST("/internal/api/security/ban", wrapHandler(func(req *httpparser.Request, res *httpparser.Response) {
 		res.Header.Set("Content-Type", "application/json")
-		if cfg.AutoBanManager == nil {
+		autoBanMgr := cfg.GetAutoBanManager()
+		if autoBanMgr == nil {
 			res.SetStatus(http.StatusBadRequest)
 			_, _ = res.WriteString(`{"error":"400 Bad Request","message":"Auto-ban manager is not enabled"}`)
 			return
@@ -1043,7 +1058,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 		if reason == "" {
 			reason = "Manually banned by administrator"
 		}
-		if err := cfg.AutoBanManager.Ban(strings.TrimSpace(banReq.IP), bType, dur, reason); err != nil {
+		if err := autoBanMgr.Ban(strings.TrimSpace(banReq.IP), bType, dur, reason); err != nil {
 			res.SetStatus(http.StatusBadRequest)
 			_, _ = res.WriteString(fmt.Sprintf(`{"error":"400 Bad Request","message":%q}`, err.Error()))
 			return

@@ -3,6 +3,7 @@ package waf
 import (
 	"fmt"
 	"net/http/httptest"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -117,3 +118,60 @@ func TestWAF_AtomicReload_Concurrent(t *testing.T) {
 	atomic.StoreInt32(&stopFlag, 1)
 	wg.Wait()
 }
+
+func TestWAFEngine_Reload_PreservesAutoBanManager(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	cfg.AutoBan.Enabled = true
+	cfg.AutoBan.MaxViolations = 3
+	cfg.AutoBan.Window = 1 * time.Minute
+	cfg.AutoBan.BanDuration = 1 * time.Hour
+	cfg.AutoBan.PersistenceFile = filepath.Join(t.TempDir(), "banned_ips.json")
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	initialMgr := engine.AutoBanManager()
+	if initialMgr == nil {
+		t.Fatalf("expected non-nil AutoBanManager")
+	}
+
+	// Manually ban an IP
+	if err := initialMgr.Ban("198.51.100.99", BanTypeTemporary, 1*time.Hour, "testing reload preservation"); err != nil {
+		t.Fatalf("failed to ban: %v", err)
+	}
+
+	// Trigger engine reload with modified custom rules
+	newCfg := cfg
+	newCfg.CustomRules = []CustomRuleConfig{
+		{
+			ID:        "CUSTOM-001",
+			Category:  "bot",
+			Pattern:   `(?i)scanner`,
+			Score:     10,
+			Locations: []string{"headers"},
+		},
+	}
+	if err := engine.Reload(newCfg); err != nil {
+		t.Fatalf("failed to reload engine: %v", err)
+	}
+
+	reloadedMgr := engine.AutoBanManager()
+	if reloadedMgr == nil {
+		t.Fatalf("expected non-nil AutoBanManager after reload")
+	}
+
+	// Verify the pointer is identical (preserved in place)
+	if initialMgr != reloadedMgr {
+		t.Fatalf("expected identical AutoBanManager instance after reload, got %p vs %p", initialMgr, reloadedMgr)
+	}
+
+	// Verify active ban remains in memory and enforced
+	banned, entry := reloadedMgr.IsBanned("198.51.100.99")
+	if !banned || entry == nil || entry.Reason != "testing reload preservation" {
+		t.Fatalf("expected active ban to remain present after reload")
+	}
+}
+

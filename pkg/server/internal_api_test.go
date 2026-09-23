@@ -325,8 +325,8 @@ func TestInternalAPI_Authentication(t *testing.T) {
 		if res.StatusCode != http.StatusUnauthorized {
 			t.Fatalf("expected 401 Unauthorized, got %d", res.StatusCode)
 		}
-		if res.Header.Get("WWW-Authenticate") == "" {
-			t.Error("expected WWW-Authenticate header in 401 response")
+		if wwwAuth := res.Header.Get("WWW-Authenticate"); wwwAuth != `Bearer realm="Toron Management"` {
+			t.Errorf("expected WWW-Authenticate 'Bearer realm=\"Toron Management\"', got %q", wwwAuth)
 		}
 	})
 

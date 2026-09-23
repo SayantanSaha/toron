@@ -382,7 +382,7 @@ func RegisterInternalAPIRoutes(r *router.Router, cfg InternalAPIConfig) {
 				if !validateAdminAuth(req, cfg) {
 					res.SetStatus(http.StatusUnauthorized)
 					res.Header.Set("Content-Type", "application/json")
-					res.Header.Set("WWW-Authenticate", `Bearer realm="Toron Management", Basic realm="Toron Management"`)
+					res.Header.Set("WWW-Authenticate", `Bearer realm="Toron Management"`)
 					_, _ = res.WriteString(`{"error":"401 Unauthorized","message":"Authentication required for internal management API"}`)
 					return
 				}

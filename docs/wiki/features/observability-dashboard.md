@@ -19,9 +19,9 @@ related_to:
 
 ## Overview
 
-Toron provides a high-density, real-time observability control plane served directly from `/internal/dashboard/`. Designed with pure vector SVG graphics and zero external JavaScript dependencies, it delivers instant visibility into traffic topologies, routing distributions, latency percentiles, upstream node health histories, and live request trace waterfalls.
+Toron provides a high-density, real-time observability control plane served directly from `/internal/dashboard/`. Designed with pure vector SVG graphics, native ECMAScript Modules (`ESM`), and zero external JavaScript dependencies, it delivers instant visibility into traffic topologies, routing distributions, latency percentiles, upstream node health histories, and live request trace waterfalls.
 
-The dashboard client engine (`public/app.js`) polls Toron's internal management APIs (`/internal/api/status`, `/internal/api/routes`, and `/internal/api/upstreams/health`) on a 1-second interval, constructing an in-memory client data model with sub-millisecond execution overhead.
+The dashboard client engine (`public/js/app.js`) polls Toron's internal management APIs (`/internal/api/status`, `/internal/api/routes`, and `/internal/api/upstreams/health`) on a 2-second interval, constructing an in-memory client data model with sub-millisecond execution overhead.
 
 ---
 
@@ -245,6 +245,40 @@ In `public/app.js`, the route dropdown filter (`#lgRoute`) matches both the cano
 
 ### 3. Trace Waterfall & Security Isolation
 Opening a request row renders execution spans across listener, router, WAF, and proxy phases. The resolved upstream node is displayed in the inspector drawer. In accordance with CWE-200 security requirements, internal upstream network sockets are recorded strictly within in-memory telemetry buffers and are never leaked to external client response headers.
+
+---
+
+## Native ECMAScript Modules Architecture
+
+The dashboard is structured into a clean hierarchy of native browser ECMAScript Modules (`ESM`) under `public/js/`, delivering zero-build modularity, instantaneous development updates, and zero supply-chain vulnerabilities:
+
+```text
+public/js/
+├── app.js                    # Router, navigation, event dispatch & bootstrap entrypoint
+├── state.js                  # Central reactive state store, time ranges & theme engine
+├── utils.js                  # Core DOM helpers, HTML sanitizers & math/time formatters
+├── api.js                    # Telemetry background polling adapter (Promise.allSettled)
+├── model.js                  # Telemetry data model builder, rollups & rate smoothing
+├── components/
+│   ├── icons.js              # Vector SVG icon renderers & status tone badges
+│   ├── charts.js             # SVG sparklines, timeseries graphs & latency histograms
+│   ├── sankey.js             # Vector SVG Sankey traffic flow diagram generator
+│   └── drawer.js             # Slide-over inspector drawer controller
+└── views/
+    ├── overview.js           # View 1: Gateway health, Sankey flow & signal cards
+    ├── routes.js             # View 2: Route table, filtering, sorting & RPS sparklines
+    ├── upstreams.js          # View 3: Upstream pool cards & 48-tick probe strips
+    ├── logs.js               # View 4: Live request stream & tail pause controls
+    ├── certs.js              # View 5: ACME zero-touch TLS certificates & expiration
+    ├── modules.js            # View 6: Compiled engine reactors & Go runtime internals
+    ├── alerts.js             # View 7: WAF security incidents & dynamic auto-ban table
+    └── console.js            # View 8: Interactive API endpoint probe debugger
+```
+
+### Key Architectural Invariants
+1. **Zero External Dependencies**: The client requires zero npm runtime libraries and zero build tools (no Webpack, Vite, or Rollup). The total uncompressed script footprint is ~94 KB.
+2. **Strictly Relative Specifiers**: All internal imports utilize relative paths (`./utils.js`, `../components/icons.js`) with explicit `.js` extensions, ensuring native compatibility across all modern browser module loaders.
+3. **Unidirectional Data Flow**: The background poller in `public/js/api.js` updates shared raw state and invalidates `public/js/model.js`. The active view controller's `update()` method re-renders the DOM using pure string templates and SVG elements.
 
 ---
 

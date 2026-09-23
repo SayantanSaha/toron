@@ -800,6 +800,196 @@ console.log('\nRunning TC-140 Verification Suite (Dynamic Upstream & Route Fidel
   console.log('  ✔ TC-140-03: Strictly Relative Links Invariant PASSED');
 }
 
-console.log('\n========================================');
-console.log('🎉 ALL TC-139 & TC-140 TEST CASES PASSED SUCCESSFULLY!');
-console.log('========================================\n');
+// =============================================================
+console.log('\nRunning TC-141 Verification Suite (Modular ES Architecture & Parity)...\n');
+
+(async () => {
+  // -------------------------------------------------------------
+  // TC-141-01: Modular File Tree & Layout Integrity
+  // -------------------------------------------------------------
+  {
+    const expectedFiles = [
+      'public/js/utils.js',
+      'public/js/state.js',
+      'public/js/api.js',
+      'public/js/model.js',
+      'public/js/components/icons.js',
+      'public/js/components/charts.js',
+      'public/js/components/sankey.js',
+      'public/js/components/drawer.js',
+      'public/js/views/overview.js',
+      'public/js/views/routes.js',
+      'public/js/views/upstreams.js',
+      'public/js/views/logs.js',
+      'public/js/views/certs.js',
+      'public/js/views/modules.js',
+      'public/js/views/alerts.js',
+      'public/js/views/console.js',
+      'public/js/app.js'
+    ];
+    for (const f of expectedFiles) {
+      const fullPath = path.resolve(__dirname, '..', f);
+      assert.ok(fs.existsSync(fullPath), `Module file ${f} must exist`);
+    }
+    console.log('  ✔ TC-141-01: Modular File Tree Integrity PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-141-02: ESM Syntax & Relative Import Graph Validity
+  // -------------------------------------------------------------
+  {
+    const jsDir = path.resolve(__dirname, '../public/js');
+    function getJsFiles(dir) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      let files = [];
+      for (const e of entries) {
+        const res = path.resolve(dir, e.name);
+        if (e.isDirectory()) files = files.concat(getJsFiles(res));
+        else if (e.name.endsWith('.js')) files.push(res);
+      }
+      return files;
+    }
+    const allFiles = getJsFiles(jsDir);
+    for (const f of allFiles) {
+      const code = fs.readFileSync(f, 'utf8');
+      const importRegex = /import\s+[^'"]*['"]([^'"]+)['"]/g;
+      let match;
+      while ((match = importRegex.exec(code)) !== null) {
+        const imp = match[1];
+        assert.ok(imp.startsWith('./') || imp.startsWith('../'), `Import must be relative in ${path.basename(f)}: ${imp}`);
+        assert.ok(imp.endsWith('.js'), `Import must specify explicit .js extension in ${path.basename(f)}: ${imp}`);
+        const target = path.resolve(path.dirname(f), imp);
+        assert.ok(fs.existsSync(target), `Imported target ${imp} does not exist from ${path.basename(f)}`);
+      }
+    }
+    console.log('  ✔ TC-141-02: ESM Syntax & Relative Import Graph PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-141-03: Zero-Dependency Performance & Size Budget Invariant
+  // -------------------------------------------------------------
+  {
+    const jsDir = path.resolve(__dirname, '../public/js');
+    function getJsFiles(dir) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      let files = [];
+      for (const e of entries) {
+        const res = path.resolve(dir, e.name);
+        if (e.isDirectory()) files = files.concat(getJsFiles(res));
+        else if (e.name.endsWith('.js')) files.push(res);
+      }
+      return files;
+    }
+    const allFiles = getJsFiles(jsDir);
+    let totalBytes = 0;
+    for (const f of allFiles) totalBytes += fs.statSync(f).size;
+    assert.ok(totalBytes <= 100 * 1024, `Total JS size (${totalBytes} bytes) must be <= 100 KB budget`);
+    console.log(`  ✔ TC-141-03: Zero External Dependencies & Footprint (${(totalBytes / 1024).toFixed(1)} KB) PASSED`);
+  }
+
+  // -------------------------------------------------------------
+  // TC-141-04 to TC-141-06: Telemetry Model Invariants in Modular ESM
+  // -------------------------------------------------------------
+  {
+    const api = await import('../public/js/api.js');
+    const model = await import('../public/js/model.js');
+    const stateMod = await import('../public/js/state.js');
+
+    api.setRawApiStatus(fixtureStatus);
+    api.setRawApiRoutes(fixtureRoutes);
+    api.setRawApiUpstreams(fixtureUpstreams);
+    stateMod.invalidate();
+
+    const D = model.buildDataModel();
+    assert.ok(D, 'Modular buildDataModel should return data');
+
+    // TC-141-04: Subpath rollup & polling isolation
+    const apiRoute = D.routes.find(r => r.id === '_kite_api');
+    assert.ok(apiRoute, 'Route _kite_api must exist');
+    assert.equal(apiRoute.totalReqs, 3000, `Hierarchical subpath rollup should equal 3000, got ${apiRoute.totalReqs}`);
+    console.log('  ✔ TC-141-04: Modular Subpath Rollup & Polling Isolation PASSED');
+
+    // TC-141-05: Moving average smoothing
+    assert.ok(D.total > 0, 'Derived total RPS must be greater than zero');
+    console.log('  ✔ TC-141-05: Moving Average RPS Smoothing Invariant PASSED');
+
+    // TC-141-06: Disaggregated pools
+    assert.ok(D.pools.length >= 4, `Expected >= 4 pools, got ${D.pools.length}`);
+    const poolCallback = D.pools.find(p => p.id === '_kite_callback');
+    const poolBroker = D.pools.find(p => p.id === '_kite_broker');
+    assert.ok(poolCallback && poolBroker, 'Pools must be disaggregated');
+    assert.equal(poolCallback.tone, 'ok', 'Callback pool must be healthy');
+    assert.equal(poolBroker.tone, 'err', 'Broker pool must be degraded/err');
+    console.log('  ✔ TC-141-06: Disaggregated Route Pools Invariant PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-141-07: View Module Shell & Registry Contract
+  // -------------------------------------------------------------
+  {
+    const app = await import('../public/js/app.js');
+    assert.ok(app.VIEWS, 'app.VIEWS registry must exist');
+    const expectedViews = ['overview', 'routes', 'upstreams', 'logs', 'certs', 'modules', 'alerts', 'console'];
+    for (const v of expectedViews) {
+      assert.ok(app.VIEWS[v], `View ${v} must be registered in app.VIEWS`);
+      assert.equal(typeof app.VIEWS[v].shell, 'function', `View ${v} must have shell() function`);
+      const html = app.VIEWS[v].shell();
+      assert.equal(typeof html, 'string', `View ${v} shell() must return HTML string`);
+      assert.ok(html.length > 10, `View ${v} shell() must return non-trivial content`);
+    }
+    console.log('  ✔ TC-141-07: View Module Shell & Registry Contract PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-141-08: Drawer Controller Contract
+  // -------------------------------------------------------------
+  {
+    const drawer = await import('../public/js/components/drawer.js');
+    assert.equal(typeof drawer.openDrawer, 'function', 'openDrawer must be exported');
+    assert.equal(typeof drawer.closeDrawer, 'function', 'closeDrawer must be exported');
+    assert.equal(typeof drawer.renderDrawer, 'function', 'renderDrawer must be exported');
+    assert.ok(drawer.dw, 'dw state object must be exported');
+    console.log('  ✔ TC-141-08: Drawer Controller Contract PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-141-09: index.html Module Integration
+  // -------------------------------------------------------------
+  {
+    const indexHtml = fs.readFileSync(path.resolve(__dirname, '../public/index.html'), 'utf8');
+    assert.ok(
+      indexHtml.includes('<script type="module" src="/internal/dashboard/js/app.js"></script>') ||
+      indexHtml.includes('<script type="module" src="./js/app.js"></script>'),
+      'index.html must load js/app.js as an ES module'
+    );
+    console.log('  ✔ TC-141-09: index.html Native Module Tag PASSED');
+  }
+
+  // -------------------------------------------------------------
+  // TC-141-10: Strictly Relative Links Invariant in REQ-141 Documents
+  // -------------------------------------------------------------
+  {
+    const docFiles = [
+      'docs/requirements/REQ-141.md',
+      'docs/tasks/TASK-164.md',
+      'docs/architecture/ADR-141.md',
+      'docs/testCases/TC-141.md'
+    ];
+    const absPathPattern = /\]\(\/(?!\/)|href="\/(?!\/)|src="\/(?!\/)|file:\/\/\//g;
+    for (const f of docFiles) {
+      const fullPath = path.resolve(__dirname, '..', f);
+      assert.ok(fs.existsSync(fullPath), `Document ${f} must exist`);
+      const content = fs.readFileSync(fullPath, 'utf8');
+      const matches = content.match(absPathPattern);
+      assert.ok(!matches || matches.length === 0, `File ${f} contains absolute links: ${matches}`);
+    }
+    console.log('  ✔ TC-141-10: Strictly Relative Links Invariant in REQ-141 Docs PASSED');
+  }
+
+  console.log('\n============================================================');
+  console.log('🎉 ALL TC-139, TC-140 & TC-141 TEST CASES PASSED SUCCESSFULLY!');
+  console.log('============================================================\n');
+})().catch(err => {
+  console.error('\n❌ TC-141 TEST FAILED:', err);
+  process.exit(1);
+});

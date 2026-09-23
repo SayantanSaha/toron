@@ -1,5 +1,34 @@
 # Release Notes
 
+## 2026-09-23 - Toron v1.5.36 Milestone (Dynamic Upstream Target Resolution, Route Identification & Live Request Log Telemetry Fidelity)
+
+### Milestone Summary
+- **Dynamic Upstream Target Resolution in Live Request Logs**:
+  - Eliminated the hardcoded `"gateway"` upstream logging defect in the Control Center dashboard (`public/app.js`) and telemetry tracing middleware (`cmd/toron/main.go`).
+  - Implemented request context value propagation in `pkg/proxy/proxy.go`: when `ReverseProxy.ServeHTTPWithPrefix` selects an upstream backend target (`targetNode`), the active backend host:port socket address (`targetNode.URL.Host`, e.g. `127.0.0.1:8080`, `10.0.1.11:8080`) is dynamically attached to `req.Context()`.
+  - In `cmd/toron/main.go`, the global telemetry middleware extracts the resolved upstream socket and records it in `server.GlobalTraceBuffer`, populating the **Upstream** column and trace waterfall drawer with accurate backend destination information.
+- **Route Identification & Destination Tagging**:
+  - In `pkg/router/router.go`, incoming requests are tagged in `req.Context()` with their matched route prefix, route type (`upstream`, `static`, `exact`), and destination identifier.
+  - Static asset routes are cleanly identified as `static`, and unproxied built-in gateway handlers (such as `/health`, `/metrics`, and HTTP-to-HTTPS redirects) are identified as `in-process`.
+- **Hierarchical Route Subpath Filtering**:
+  - Enhanced log filtering in `public/app.js` (`lgUpdate`) to support hierarchical matching. Selecting a parent route (e.g. `/kite/api`) matches all child subpath transactions (such as `/kite/api/v1/trades`, `/kite/api/v1/business`, `/kite/api/v1/auth`), allowing operators to filter traffic across complex microservice APIs.
+- **Topology Information Disclosure Guard (CWE-200)**:
+  - Ensured backend target sockets are preserved strictly in server memory buffers and exposed only via authenticated management APIs. Zero internal network topology or upstream headers are emitted in external client responses.
+
+### Added
+- **`pkg/proxy/proxy.go`**: Context keys and helper functions `GetUpstreamTarget` and `SetUpstreamTarget`.
+- **`pkg/router/router.go`**: Context keys and helper functions `GetMatchedRoute`, `SetMatchedRoute`, `GetRouteType`, `SetRouteType`, `GetDestination`, and `SetDestination`.
+- **`pkg/proxy/proxy_test.go`**: Automated unit tests for single-target and multi-target upstream context propagation.
+- **`pkg/router/router_test.go`**: Automated unit tests for route prefix matching and destination tagging.
+- **`tests/dashboard_telemetry_test.js`**: Frontend verification suite for dynamic upstream rendering and hierarchical subpath filtering.
+
+### Changed
+- **`cmd/toron/main.go`**: Refactored global telemetry tracing middleware to dynamically resolve upstream sockets, canonical route prefixes, and destination labels.
+- **`public/app.js`**: Upgraded route filtering logic in `lgUpdate` to match hierarchical subpaths and render live upstream sockets.
+- **`docs/wiki/features/observability-dashboard.md`**: Added documentation on dynamic upstream socket resolution and trace waterfall fidelity.
+
+---
+
 ## 2026-09-23 - Toron v1.5.35 Milestone (Disaggregated Upstream Route Pool Rendering, Hierarchical Subpath Rollup & Live Telemetry Metric Derivations in Control Center Dashboard)
 
 ### Milestone Summary

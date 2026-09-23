@@ -40,6 +40,30 @@ const (
 	AlgorithmLeastLatency       Algorithm = "least_latency"
 )
 
+// UpstreamContextKeyType is the private type for proxy context keys.
+type UpstreamContextKeyType string
+
+// UpstreamTargetContextKey is the context key for the selected upstream target socket address.
+const UpstreamTargetContextKey UpstreamContextKeyType = "toron.upstream_target"
+
+// GetUpstreamTarget retrieves the resolved upstream target host:port from ctx.
+func GetUpstreamTarget(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(UpstreamTargetContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// SetUpstreamTarget stores the selected upstream target host:port in the request context.
+func SetUpstreamTarget(req *httpparser.Request, target string) {
+	if req != nil {
+		req.SetContext(context.WithValue(req.Context(), UpstreamTargetContextKey, target))
+	}
+}
+
 var (
 	ErrNoTargetsAvailable = errors.New("proxy: no upstream targets available")
 )
@@ -1033,6 +1057,7 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	if p.Balancer != nil {
 		selected, err := p.Balancer.Next(req)
 		if err != nil {
+			SetUpstreamTarget(req, "unavailable")
 			if errors.Is(err, ErrNoHealthyUpstreamAvailable) {
 				p.writeServiceUnavailable(res, "503 Service Unavailable: All upstream targets are unhealthy or circuit open")
 			} else {
@@ -1046,9 +1071,12 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	}
 
 	if targetNode == nil || targetNode.URL == nil {
+		SetUpstreamTarget(req, "unavailable")
 		p.writeBadGateway(res, "No upstream target available")
 		return
 	}
+
+	SetUpstreamTarget(req, targetNode.URL.Host)
 
 	targetNode.IncActiveConns()
 	startTime := time.Now()

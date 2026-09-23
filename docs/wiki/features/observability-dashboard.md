@@ -230,6 +230,24 @@ When an upstream returns errors or fails health probes, the pool card border, st
 
 ---
 
+## Live Request Tracing & Dynamic Upstream Target Fidelity
+
+The **Live Requests & Logs** section (`#/logs`) and Trace Waterfall Drawer (`openDrawer('log', id)`) provide end-to-end telemetry on active gateway transactions:
+
+### 1. Dynamic Upstream Socket Resolution
+When a request is handled by a reverse proxy route, the active backend socket selected by the load balancer (e.g., `127.0.0.1:8080`, `10.0.1.11:8080`) is propagated from `pkg/proxy/proxy.go` via request context into `server.GlobalTraceBuffer`.
+- **Proxy Routes**: Render the concrete upstream socket (`127.0.0.1:8080`), eliminating ambiguous generic `"gateway"` strings.
+- **Static Assets Routes**: Tagged with destination `static`.
+- **In-Process Routes**: Built-in engine endpoints (such as `/health`, `/metrics`, and HTTPS redirects) are tagged as `in-process`.
+
+### 2. Hierarchical Route Subpath Filtering
+In `public/app.js`, the route dropdown filter (`#lgRoute`) matches both the canonical route prefix and all child subpaths. For example, filtering by `/kite/api` seamlessly displays requests to `/kite/api/v1/trades`, `/kite/api/v1/business`, and `/kite/api/v1/auth`.
+
+### 3. Trace Waterfall & Security Isolation
+Opening a request row renders execution spans across listener, router, WAF, and proxy phases. The resolved upstream node is displayed in the inspector drawer. In accordance with CWE-200 security requirements, internal upstream network sockets are recorded strictly within in-memory telemetry buffers and are never leaked to external client response headers.
+
+---
+
 ## Administrative Access & Security
 
 Access to `/internal/dashboard/` and all backing APIs (`/internal/api/*`) can be protected using token, API key, Basic auth, and CIDR subnet restrictions configured in `config.yaml`:

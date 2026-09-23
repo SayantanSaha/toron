@@ -221,10 +221,12 @@ function createSandbox() {
       flow,
       rtUpdate,
       upUpdate,
-      setRawApiData: (s, r, u) => {
+      lgUpdate,
+      setRawApiData: (s, r, u, l) => {
         rawApiStatus = s;
         rawApiRoutes = r;
         rawApiUpstreams = u;
+        if (l) rawApiLogs = l;
         invalidate();
       },
       getState: () => state
@@ -713,6 +715,91 @@ console.log('Running TC-139 (v1.1) Verification Suite...\n');
   console.log('  ✔ TC-139-13: Performance Budget & Relative Links PASSED');
 }
 
+// =============================================================
+// TC-140 VERIFICATION SUITE: Dynamic Upstream Target & Route Logging
+// =============================================================
+console.log('\nRunning TC-140 Verification Suite (Dynamic Upstream & Route Fidelity)...\n');
+
+// -------------------------------------------------------------
+// TC-140-01: Dynamic Upstream Socket Rendering in Request Logs
+// -------------------------------------------------------------
+{
+  const { exports, domElements } = createSandbox();
+  const sampleLogs = [
+    { id: 101, ts: Date.now() - 500, method: 'GET', path: '/kite/api/v1/trades', route: '/kite/api', short: 'sayantansaha.in /kite/api', status: 200, ms: 12.4, up: '127.0.0.1:8080', trace: 'tr123456', ip: '192.168.1.10', bytes: 1024 },
+    { id: 102, ts: Date.now() - 300, method: 'GET', path: '/assets/style.css', route: '/assets', short: 'static /assets', status: 200, ms: 1.2, up: 'static', trace: 'tr789012', ip: '192.168.1.15', bytes: 4096 },
+    { id: 103, ts: Date.now() - 100, method: 'GET', path: '/health', route: '/health', short: 'in-process', status: 200, ms: 0.5, up: 'in-process', trace: 'tr345678', ip: '127.0.0.1', bytes: 128 }
+  ];
+
+  exports.setRawApiData(fixtureStatus, fixtureRoutes, fixtureUpstreams, sampleLogs);
+  const D = exports.buildDataModel();
+  exports.lgUpdate(D, true);
+
+  const lgBody = domElements.get('#lgBody');
+  assert.ok(lgBody && lgBody.innerHTML, 'Request log body must be populated');
+  assert.ok(lgBody.innerHTML.includes('127.0.0.1:8080'), `Expected '127.0.0.1:8080' in table, got: ${lgBody.innerHTML}`);
+  assert.ok(lgBody.innerHTML.includes('static'), `Expected 'static' in table`);
+  assert.ok(lgBody.innerHTML.includes('in-process'), `Expected 'in-process' in table`);
+  assert.ok(!lgBody.innerHTML.includes('<code>gateway</code>'), `Upstream column must NOT display generic 'gateway'`);
+
+  console.log('  ✔ TC-140-01: Dynamic Upstream Socket Display PASSED');
+}
+
+// -------------------------------------------------------------
+// TC-140-02: Hierarchical Route Subpath Filtering in Request Logs
+// -------------------------------------------------------------
+{
+  const { exports, domElements } = createSandbox();
+  const sampleLogs = [
+    { id: 201, ts: Date.now() - 500, method: 'GET', path: '/kite/api/v1/trades', route: '/kite/api', short: 'sayantansaha.in /kite/api', status: 200, ms: 12.4, up: '127.0.0.1:8080', trace: 'tr201', ip: '192.168.1.10' },
+    { id: 202, ts: Date.now() - 400, method: 'GET', path: '/kite/api/v1/business', route: '/kite/api', short: 'sayantansaha.in /kite/api', status: 200, ms: 15.1, up: '127.0.0.1:8080', trace: 'tr202', ip: '192.168.1.11' },
+    { id: 203, ts: Date.now() - 300, method: 'GET', path: '/kite/broker/stream', route: '/kite/broker', short: 'sayantansaha.in /kite/broker', status: 200, ms: 22.0, up: '127.0.0.1:8080', trace: 'tr203', ip: '192.168.1.12' }
+  ];
+
+  exports.setRawApiData(fixtureStatus, fixtureRoutes, fixtureUpstreams, sampleLogs);
+  const D = exports.buildDataModel();
+  const state = exports.getState();
+
+  // Filter by route ID for /kite/api
+  state.lroute = '_kite_api';
+  exports.lgUpdate(D, true);
+
+  const lgBody = domElements.get('#lgBody');
+  assert.ok(lgBody.innerHTML.includes('/kite/api/v1/trades'), 'Subpath /kite/api/v1/trades must be matched');
+  assert.ok(lgBody.innerHTML.includes('/kite/api/v1/business'), 'Subpath /kite/api/v1/business must be matched');
+  assert.ok(!lgBody.innerHTML.includes('/kite/broker/stream'), 'Unrelated route /kite/broker/stream must be filtered out');
+
+  // Reset filter to 'all'
+  state.lroute = 'all';
+  exports.lgUpdate(D, true);
+  assert.ok(lgBody.innerHTML.includes('/kite/broker/stream'), 'All routes must appear when lroute is "all"');
+
+  console.log('  ✔ TC-140-02: Hierarchical Route Subpath Filtering PASSED');
+}
+
+// -------------------------------------------------------------
+// TC-140-03: Relative Links Invariant in REQ-140 Documents
+// -------------------------------------------------------------
+{
+  const docFiles = [
+    'docs/requirements/REQ-140.md',
+    'docs/tasks/TASK-163.md',
+    'docs/architecture/ADR-140.md',
+    'docs/testCases/TC-140.md'
+  ];
+
+  const absPathPattern = /\]\(\/(?!\/)|href="\/(?!\/)|src="\/(?!\/)|file:\/\/\//g;
+  for (const f of docFiles) {
+    const fullPath = path.resolve(__dirname, '..', f);
+    assert.ok(fs.existsSync(fullPath), `Document ${f} must exist`);
+    const content = fs.readFileSync(fullPath, 'utf8');
+    const matches = content.match(absPathPattern);
+    assert.ok(!matches || matches.length === 0, `File ${f} contains absolute links: ${matches}`);
+  }
+
+  console.log('  ✔ TC-140-03: Strictly Relative Links Invariant PASSED');
+}
+
 console.log('\n========================================');
-console.log('🎉 ALL TC-139 (v1.1) TEST CASES PASSED SUCCESSFULLY!');
+console.log('🎉 ALL TC-139 & TC-140 TEST CASES PASSED SUCCESSFULLY!');
 console.log('========================================\n');

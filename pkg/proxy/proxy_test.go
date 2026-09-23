@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"runtime"
 	"strings"
 	"sync"
@@ -3097,4 +3098,73 @@ func TestReverseProxy_BufferPoolRecyclingConcurrency(t *testing.T) {
 			}
 		}
 	}
+}
+
+func TestProxy_UpstreamTargetContextPropagation(t *testing.T) {
+	ts1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-1"))
+	}))
+	defer ts1.Close()
+
+	u1, _ := url.Parse(ts1.URL)
+
+	ts2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("backend-2"))
+	}))
+	defer ts2.Close()
+
+	u2, _ := url.Parse(ts2.URL)
+
+	t.Run("Single-Target Upstream Context Injection", func(t *testing.T) {
+		px, err := proxy.NewReverseProxy(ts1.URL, 5*time.Second)
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		req, _ := httpparser.NewRequest("GET", "/test-single", "HTTP/1.1")
+		res := httpparser.NewResponse()
+
+		px.ServeHTTPWithPrefix(req, res, "")
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200, got %d", res.StatusCode)
+		}
+
+		gotTarget := proxy.GetUpstreamTarget(req.Context())
+		if gotTarget != u1.Host {
+			t.Errorf("expected upstream target %q, got %q", u1.Host, gotTarget)
+		}
+	})
+
+	t.Run("Multi-Target Load Balancer Upstream Context Injection", func(t *testing.T) {
+		px, err := proxy.NewLoadBalancerProxy([]string{ts1.URL, ts2.URL}, proxy.AlgorithmRoundRobin, 5*time.Second)
+		if err != nil {
+			t.Fatalf("failed to create lb proxy: %v", err)
+		}
+		defer px.Close()
+
+		req1, _ := httpparser.NewRequest("GET", "/test-lb-1", "HTTP/1.1")
+		res1 := httpparser.NewResponse()
+		px.ServeHTTPWithPrefix(req1, res1, "")
+
+		target1 := proxy.GetUpstreamTarget(req1.Context())
+		if target1 != u1.Host && target1 != u2.Host {
+			t.Errorf("unexpected target1: %q", target1)
+		}
+
+		req2, _ := httpparser.NewRequest("GET", "/test-lb-2", "HTTP/1.1")
+		res2 := httpparser.NewResponse()
+		px.ServeHTTPWithPrefix(req2, res2, "")
+
+		target2 := proxy.GetUpstreamTarget(req2.Context())
+		if target2 != u1.Host && target2 != u2.Host {
+			t.Errorf("unexpected target2: %q", target2)
+		}
+
+		if target1 == target2 {
+			t.Errorf("expected different targets under round-robin, got %q and %q", target1, target2)
+		}
+	})
 }

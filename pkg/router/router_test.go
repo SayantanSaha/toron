@@ -2154,3 +2154,69 @@ func TestRouter_NineRoutingMethodsInvariants(t *testing.T) {
 	TestRouter_AllNineRoutingMethods_HostPortInvariants(t)
 }
 
+func TestRouter_ContextRouteTagging(t *testing.T) {
+	r := router.New()
+
+	// 1. Register an upstream prefix route
+	_ = r.RoutePrefix(router.RouteTypeUpstream, "", "/kite/api", nil, "", proxy.ProxyOptions{
+		Targets: []string{"http://127.0.0.1:8080"},
+	})
+
+	// 2. Register a static prefix route
+	tmpDir := t.TempDir()
+	_ = r.RoutePrefix(router.RouteTypeStatic, "", "/assets", nil, tmpDir, proxy.ProxyOptions{})
+
+	// 3. Register an exact route
+	r.GET("/exact-endpoint", func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("exact")
+	})
+
+	t.Run("Subpath matches parent prefix route context", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/kite/api/v1/trades/order-99", "HTTP/1.1")
+		res := httpparser.NewResponse()
+
+		r.ServeHTTP(req, res)
+
+		matched := router.GetMatchedRoute(req.Context())
+		if matched != "/kite/api" {
+			t.Errorf("expected matched route '/kite/api', got %q", matched)
+		}
+		routeType := router.GetRouteType(req.Context())
+		if routeType != "upstream" {
+			t.Errorf("expected route type 'upstream', got %q", routeType)
+		}
+	})
+
+	t.Run("Static route tags destination", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/assets/app.js", "HTTP/1.1")
+		res := httpparser.NewResponse()
+
+		r.ServeHTTP(req, res)
+
+		matched := router.GetMatchedRoute(req.Context())
+		if matched != "/assets" {
+			t.Errorf("expected matched route '/assets', got %q", matched)
+		}
+		dest := router.GetDestination(req.Context())
+		if dest != "static" {
+			t.Errorf("expected destination 'static', got %q", dest)
+		}
+	})
+
+	t.Run("Exact route tags in-process destination", func(t *testing.T) {
+		req, _ := httpparser.NewRequest("GET", "/exact-endpoint", "HTTP/1.1")
+		res := httpparser.NewResponse()
+
+		r.ServeHTTP(req, res)
+
+		matched := router.GetMatchedRoute(req.Context())
+		if matched != "/exact-endpoint" {
+			t.Errorf("expected matched route '/exact-endpoint', got %q", matched)
+		}
+		dest := router.GetDestination(req.Context())
+		if dest != "in-process" {
+			t.Errorf("expected destination 'in-process', got %q", dest)
+		}
+	})
+}

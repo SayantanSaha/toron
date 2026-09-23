@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"mime"
@@ -21,6 +22,69 @@ import (
 	"toron/pkg/proxy"
 	"toron/pkg/waf"
 )
+
+// RouterContextKeyType is the private type for router context keys.
+type RouterContextKeyType string
+
+const (
+	MatchedRouteContextKey RouterContextKeyType = "toron.matched_route"
+	RouteTypeContextKey    RouterContextKeyType = "toron.route_type"
+	DestinationContextKey  RouterContextKeyType = "toron.destination"
+)
+
+// GetMatchedRoute extracts the matched route prefix/identifier from ctx.
+func GetMatchedRoute(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(MatchedRouteContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// SetMatchedRoute stores the matched route prefix in the request context.
+func SetMatchedRoute(req *httpparser.Request, prefix string) {
+	if req != nil {
+		req.SetContext(context.WithValue(req.Context(), MatchedRouteContextKey, prefix))
+	}
+}
+
+// GetRouteType extracts the matched route type ("upstream", "static", "exact") from ctx.
+func GetRouteType(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(RouteTypeContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// SetRouteType stores the matched route type in the request context.
+func SetRouteType(req *httpparser.Request, routeType string) {
+	if req != nil {
+		req.SetContext(context.WithValue(req.Context(), RouteTypeContextKey, routeType))
+	}
+}
+
+// GetDestination extracts the destination label (e.g. "static", "in-process") from ctx.
+func GetDestination(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if v, ok := ctx.Value(DestinationContextKey).(string); ok {
+		return v
+	}
+	return ""
+}
+
+// SetDestination stores the destination label in the request context.
+func SetDestination(req *httpparser.Request, dest string) {
+	if req != nil {
+		req.SetContext(context.WithValue(req.Context(), DestinationContextKey, dest))
+	}
+}
 
 // RouteType specifies whether a route handler serves static site assets or proxies requests upstream.
 type RouteType string
@@ -836,6 +900,8 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 	}
 	r.mu.RLock()
 	var targetHandler HandlerFunc
+	var matchedPR *prefixRoute
+	var matchedExact bool
 
 	reqHost := extractHost(req)
 
@@ -850,6 +916,7 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 				if entries[i].host != "" && hasExplicitPort(entries[i].host) {
 					if headersAndHostMatch(reqHost, req, entries[i].host, entries[i].headers) {
 						targetHandler = entries[i].handler
+						matchedExact = true
 						break
 					}
 				}
@@ -864,6 +931,7 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 					if entries[i].host != "" && !hasExplicitPort(entries[i].host) {
 						if headersAndHostMatch(reqHost, req, entries[i].host, entries[i].headers) {
 							targetHandler = entries[i].handler
+							matchedExact = true
 							break
 						}
 					}
@@ -876,6 +944,7 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 					if entries[i].host == "" && len(entries[i].headers) > 0 {
 						if headersAndHostMatch(reqHost, req, entries[i].host, entries[i].headers) {
 							targetHandler = entries[i].handler
+							matchedExact = true
 							break
 						}
 					}
@@ -885,6 +954,7 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 			// Tier 4: Fall back to wildcard route if registered and no specific route matched
 			if targetHandler == nil && fallbackEntry != nil {
 				targetHandler = fallbackEntry.handler
+				matchedExact = true
 			}
 		} else {
 			targetHandler = r.MethodNotAllowed
@@ -946,6 +1016,7 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 					}
 					if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
 						targetHandler = pr.handler
+						matchedPR = pr
 						break
 					}
 					if pr.host == "" && len(pr.headers) == 0 && fallbackPrefix == nil {
@@ -955,6 +1026,7 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 			}
 			if targetHandler == nil && fallbackPrefix != nil {
 				targetHandler = fallbackPrefix.handler
+				matchedPR = fallbackPrefix
 			}
 			if targetHandler == nil {
 				if methodMismatch {
@@ -968,6 +1040,21 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 
 	middlewares := append([]MiddlewareFunc(nil), r.middlewares...)
 	r.mu.RUnlock()
+
+	// Tag request context with matched route telemetry metadata
+	if matchedPR != nil {
+		SetMatchedRoute(req, matchedPR.prefix)
+		SetRouteType(req, matchedPR.routeType)
+		if matchedPR.routeType == string(RouteTypeStatic) {
+			SetDestination(req, "static")
+		}
+	} else if matchedExact {
+		SetMatchedRoute(req, req.Path)
+		SetRouteType(req, "exact")
+		SetDestination(req, "in-process")
+	} else {
+		SetDestination(req, "in-process")
+	}
 
 	// Chain middlewares in reverse order
 	finalChain := targetHandler

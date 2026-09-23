@@ -224,27 +224,39 @@ func main() {
 				if traceID == "" {
 					traceID = fmt.Sprintf("%x", time.Now().UnixNano())
 				}
-				routeStr := req.Path
-				shortStr := req.Path
-				if reqHost != "" {
-					shortStr = reqHost + " " + req.Path
+				routeStr := router.GetMatchedRoute(req.Context())
+				if routeStr == "" {
+					routeStr = req.Path
 				}
+				shortStr := routeStr
+				if reqHost != "" {
+					shortStr = reqHost + " " + routeStr
+				}
+
+				upNode := proxy.GetUpstreamTarget(req.Context())
+				if upNode == "" {
+					upNode = router.GetDestination(req.Context())
+				}
+				if upNode == "" {
+					upNode = "in-process"
+				}
+
 				var bodyBytes int64
 				if res.Body != nil {
 					bodyBytes = int64(res.Body.Len())
 				}
 				server.GlobalTraceBuffer.RecordTrace(server.TraceLogEntry{
-					TS:      time.Now().UnixMilli(),
-					Method:  req.Method,
-					Path:    req.Path,
-					Route:   routeStr,
-					Short:   shortStr,
-					Status:  res.StatusCode,
-					MS:      float64(dur.Microseconds()) / 1000.0,
-					Up:      "gateway",
-					Trace:   traceID,
-					IP:      req.RemoteAddr,
-					Bytes:   bodyBytes,
+					TS:     time.Now().UnixMilli(),
+					Method: req.Method,
+					Path:   req.Path,
+					Route:  routeStr,
+					Short:  shortStr,
+					Status: res.StatusCode,
+					MS:     float64(dur.Microseconds()) / 1000.0,
+					Up:     upNode,
+					Trace:  traceID,
+					IP:     req.RemoteAddr,
+					Bytes:  bodyBytes,
 				})
 			}
 		}
@@ -364,12 +376,12 @@ func main() {
 			}
 			return appCfg.Server.AdminAuth.Token
 		}(),
-		AdminAPIKeys:  appCfg.Server.AdminAuth.APIKeys,
-		AdminUsername: appCfg.Server.AdminAuth.Username,
-		AdminPassword: appCfg.Server.AdminAuth.Password,
-		AdminUsers:    appCfg.Server.AdminAuth.Users,
-		AdminSubnets:  appCfg.Server.AdminSubnets,
-		ACMEDomains:   appCfg.Server.ACME.Domains,
+		AdminAPIKeys:      appCfg.Server.AdminAuth.APIKeys,
+		AdminUsername:     appCfg.Server.AdminAuth.Username,
+		AdminPassword:     appCfg.Server.AdminAuth.Password,
+		AdminUsers:        appCfg.Server.AdminAuth.Users,
+		AdminSubnets:      appCfg.Server.AdminSubnets,
+		ACMEDomains:       appCfg.Server.ACME.Domains,
 		ACMEChallengeType: appCfg.Server.ACME.ChallengeType,
 	}
 	server.RegisterInternalAPIRoutes(r, internalCfg)

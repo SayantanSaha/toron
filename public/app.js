@@ -1155,7 +1155,22 @@ function lgUpdate(D, force) {
     { id: 102, ts: Date.now() - 900, method: 'POST', path: '/v1/payments/charge', route: 'payments', short: 'api /v1/payments', status: 502, ms: 210.5, up: '10.0.4.13:8080', trace: 'b9e3d1a8c7f2', ip: '192.168.1.15', bytes: 420, err: 'connect: connection refused' }
   ];
 
-  const f = logs.filter(e => state.lst.has(stCls(e.status)) && (state.lroute === 'all' || e.route === state.lroute) && (!state.lq || (e.path + e.up + e.trace + (e.short || '') + (e.ip || '')).toLowerCase().includes(state.lq))).sort((a, b) => {
+  const selR = (D && D.routes) ? D.routes.find(r => r.id === state.lroute) : null;
+  const f = logs.filter(e => {
+    if (!state.lst.has(stCls(e.status))) return false;
+    if (state.lroute !== 'all') {
+      const pfx = selR ? (selR.path || selR.prefix) : state.lroute;
+      const matchRoute = (e.route === state.lroute) ||
+                         (pfx && (e.route === pfx || (e.route && e.route.startsWith(pfx + '/')) || e.path === pfx || (e.path && e.path.startsWith(pfx + '/')))) ||
+                         (e.short && (e.short === state.lroute || (selR && e.short === selR.short)));
+      if (!matchRoute) return false;
+    }
+    if (state.lq) {
+      const haystack = (e.path + ' ' + (e.up || '') + ' ' + (e.trace || '') + ' ' + (e.short || '') + ' ' + (e.ip || e.client_ip || '')).toLowerCase();
+      if (!haystack.includes(state.lq)) return false;
+    }
+    return true;
+  }).sort((a, b) => {
     const dt = (b.ts || 0) - (a.ts || 0);
     if (dt !== 0) return dt;
     const ipA = a.ip || a.client_ip || '';

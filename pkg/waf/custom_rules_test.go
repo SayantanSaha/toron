@@ -172,3 +172,59 @@ func TestWAF_CustomRule_DisabledRules(t *testing.T) {
 		t.Fatalf("expected disabled custom rule not to trigger, blocked=%v score=%d matched=%+v", blocked, score, matched)
 	}
 }
+
+func TestWAF_CustomRule_WebshellProbe(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Enabled = true
+	cfg.Mode = "enforce"
+	cfg.AnomalyThreshold = 5
+	cfg.CustomRules = []CustomRuleConfig{
+		{
+			ID:          "CUSTOM-003",
+			Category:    "webshell",
+			Description: "Block known webshell filenames and generic PHP backdoor probing",
+			Pattern:     `(?i)(/+(alfa|wso|c99|r57|b8|foxv10|coffexium|sallu|radio|chosen|dex|jybkxer|wsd|wmore1)\.php|\.php\?p=)`,
+			Score:       10,
+			Locations:   []string{"url"},
+		},
+	}
+
+	engine, err := NewEngine(cfg)
+	if err != nil {
+		t.Fatalf("failed to initialize engine: %v", err)
+	}
+
+	maliciousURIs := []string{
+		"/alfa.php",
+		"//foxv10.php",
+		"/coffexium.php",
+		"/wso.php",
+		"/radio.php",
+		"/test.php?p=alfa.php",
+		"/admin/c99.php",
+	}
+
+	for _, uri := range maliciousURIs {
+		req := httptest.NewRequest("GET", uri, nil)
+		blocked, score, matched, _ := engine.Inspect(req)
+		if !blocked || score < 10 || len(matched) == 0 || matched[0].ID != "CUSTOM-003" {
+			t.Errorf("expected %s to be blocked by CUSTOM-003, got blocked=%v score=%d matched=%+v", uri, blocked, score, matched)
+		}
+	}
+
+	benignURIs := []string{
+		"/index.php",
+		"/home",
+		"/api/v1/users",
+		"/blog/article-php",
+	}
+
+	for _, uri := range benignURIs {
+		req := httptest.NewRequest("GET", uri, nil)
+		blocked, score, matched, _ := engine.Inspect(req)
+		if blocked || score != 0 || len(matched) != 0 {
+			t.Errorf("expected %s to NOT be blocked, got blocked=%v score=%d matched=%+v", uri, blocked, score, matched)
+		}
+	}
+}
+

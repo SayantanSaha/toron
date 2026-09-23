@@ -106,9 +106,21 @@ server:
       - id: "CUSTOM-001"
         category: "bot"
         description: "Block malicious scrapers and security scanners"
-        pattern: "(?i)(sqlmap|nikto|nmap|acunetix)"
+        pattern: "(?i)(sqlmap|nikto|nmap|acunetix|gobuster|dirbuster|wfuzz|masscan)"
         score: 10
         locations: ["headers"]
+      - id: "CUSTOM-002"
+        category: "traversal"
+        description: "Block path traversal and sensitive file probes"
+        pattern: '(?i)(\.env|\.git|\.aws|\.ssh|wp-config\.php|id_rsa|/etc/passwd)'
+        score: 10
+        locations: ["url", "query"]
+      - id: "CUSTOM-003"
+        category: "webshell"
+        description: "Block known webshell filenames and generic PHP backdoor probing"
+        pattern: '(?i)(/+(alfa|wso|c99|r57|b8|foxv10|coffexium|sallu|radio|chosen|dex|jybkxer|wsd|wmore1)\.php|\.php\?p=)'
+        score: 10
+        locations: ["url"]
     audit_log:
       enabled: true           # Enable structured JSON security audit logging
       output: "stdout"        # Destination: "stdout", "stderr", or file path (e.g. "./logs/security.log")

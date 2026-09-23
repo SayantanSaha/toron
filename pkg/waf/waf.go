@@ -310,6 +310,11 @@ func (e *WAFEngine) Inspect(req *http.Request) (blocked bool, score int, matched
 		rawQuery = req.URL.RawQuery
 	}
 
+	rawURI := req.RequestURI
+	if rawURI == "" && req.URL != nil {
+		rawURI = req.URL.RequestURI()
+	}
+
 	if req.RequestURI != "" {
 		rawWire := req.RequestURI
 		if idx := strings.IndexByte(rawWire, '?'); idx != -1 {
@@ -345,7 +350,7 @@ func (e *WAFEngine) Inspect(req *http.Request) (blocked bool, score int, matched
 		req.Body = io.NopCloser(io.MultiReader(bytes.NewReader(b), req.Body))
 	}
 
-	return e.inspectInternal(req.Method, urlPath, rawQuery, headersCombined.String(), bodyReader, restoreBody)
+	return e.inspectInternal(req.Method, urlPath, rawURI, rawQuery, headersCombined.String(), bodyReader, restoreBody)
 }
 
 // InspectToron evaluates a Toron *httpparser.Request against active WAF rules.
@@ -358,6 +363,14 @@ func (e *WAFEngine) InspectToron(req *httpparser.Request) (blocked bool, score i
 	rawQuery := ""
 	if req.URL != nil {
 		rawQuery = req.URL.RawQuery
+	}
+
+	rawURI := req.RequestURI
+	if rawURI == "" && req.URL != nil {
+		rawURI = req.URL.RequestURI()
+	}
+	if rawURI == "" {
+		rawURI = req.Path
 	}
 
 	if req.RequestURI != "" {
@@ -395,10 +408,10 @@ func (e *WAFEngine) InspectToron(req *httpparser.Request) (blocked bool, score i
 		req.Body = io.MultiReader(bytes.NewReader(b), req.Body)
 	}
 
-	return e.inspectInternal(req.Method, urlPath, rawQuery, headersCombined.String(), bodyReader, restoreBody)
+	return e.inspectInternal(req.Method, urlPath, rawURI, rawQuery, headersCombined.String(), bodyReader, restoreBody)
 }
 
-func (e *WAFEngine) inspectInternal(method, urlPath, rawQuery, headersStr string, bodyReader io.Reader, restoreBody func([]byte)) (blocked bool, score int, matched []WAFRule, err error) {
+func (e *WAFEngine) inspectInternal(method, urlPath, rawURI, rawQuery, headersStr string, bodyReader io.Reader, restoreBody func([]byte)) (blocked bool, score int, matched []WAFRule, err error) {
 	if e == nil {
 		return false, 0, nil, nil
 	}
@@ -413,6 +426,11 @@ func (e *WAFEngine) inspectInternal(method, urlPath, rawQuery, headersStr string
 	normPath := urlPath
 	if unescaped, unErr := url.PathUnescape(urlPath); unErr == nil {
 		normPath = unescaped
+	}
+
+	normRawURI := rawURI
+	if unescaped, unErr := url.QueryUnescape(rawURI); unErr == nil {
+		normRawURI = unescaped
 	}
 
 	normQuery := rawQuery
@@ -436,7 +454,11 @@ func (e *WAFEngine) inspectInternal(method, urlPath, rawQuery, headersStr string
 	for _, rule := range e.rules {
 		matchFound := false
 
-		if (rule.Locations&InspectURL != 0) && ((normPath != "" && rule.Pattern.MatchString(normPath)) || (urlPath != "" && rule.Pattern.MatchString(urlPath))) {
+		if (rule.Locations&InspectURL != 0) && (
+			(normPath != "" && rule.Pattern.MatchString(normPath)) ||
+			(urlPath != "" && rule.Pattern.MatchString(urlPath)) ||
+			(rawURI != "" && rule.Pattern.MatchString(rawURI)) ||
+			(normRawURI != "" && rule.Pattern.MatchString(normRawURI))) {
 			matchFound = true
 		}
 		if !matchFound && (rule.Locations&InspectQuery != 0) && normQuery != "" && rule.Pattern.MatchString(normQuery) {

@@ -159,6 +159,13 @@ server:
           - query
         pattern: (?i)(\.env|\.git|\.aws|\.ssh|wp-config\.php|id_rsa|/etc/passwd)
         score: 10
+      - id: CUSTOM-003
+        category: webshell
+        description: Block known webshell filenames and generic PHP backdoor probing
+        locations:
+          - url
+        pattern: '(?i)(/+(alfa|wso|c99|r57|b8|foxv10|coffexium|sallu|radio|chosen|dex|jybkxer|wsd|wmore1)\.php|\.php\?p=)'
+        score: 10
 
 sidecar:
   app_port: 8443

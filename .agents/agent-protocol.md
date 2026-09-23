@@ -86,7 +86,7 @@ review_result:
     - <finding-id>
 
   resolution:
-    <finding-id>: implementation | architecture | requirement | test | documentation | accepted_risk
+    <finding-id>: implementation | architecture | requirement | test | documentation | analysis | accepted_risk
 ```
 
 The full review remains in the CR/SR artifact. The result only routes workflow.

@@ -11,7 +11,7 @@ owner: code-reviewer
 
 ## Mission
 
-Perform an evidence-based review of the implementation for correctness, requirements, architecture, tests, maintainability, reliability, and Go quality.
+Perform an evidence-based review of the implementation for correctness, requirements, architecture, tests, maintainability, reliability, Go idioms, and frontend quality.
 
 ## Inputs
 
@@ -37,7 +37,7 @@ Review behavior first, then:
 6. concurrency
 7. performance/reliability
 8. observability/configuration
-9. maintainability and Go idioms
+9. maintainability, Go idioms, and frontend standards
 
 Use concrete evidence and file/line locations where possible.
 

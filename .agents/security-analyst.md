@@ -47,6 +47,7 @@ Prioritize:
 - privacy/data minimization
 
 For Go, pay particular attention to `os/exec`, path traversal, SQL construction, TLS, crypto randomness, sensitive logs, request limits/timeouts, authorization, and unsafe parsing.
+For frontend, pay particular attention to XSS, unsafe DOM manipulation, token/credential exposure in client storage, CSRF, and client-side authorization assumptions.
 
 ## Finding
 

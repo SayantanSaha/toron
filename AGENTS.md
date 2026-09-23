@@ -31,19 +31,19 @@ Detailed project knowledge belongs in project artifacts.
 
 ## Agent Registry
 
-| ID | Agent | Responsibility |
-|---|---|---|
-| AGENT-001 | Project Manager | Orchestration, routing, approvals |
-| AGENT-002 | Requirement Engineer | Requirements, acceptance criteria |
-| AGENT-003 | Development Lead | Task decomposition |
-| AGENT-004 | Architect | Architecture, ADRs |
-| AGENT-005 | Test Designer | Test strategy, test cases |
-| AGENT-006 | Developer | Backend/general implementation |
-| AGENT-007 | Code Reviewer | Code review |
-| AGENT-008 | Security Analyst | Security analysis/review |
-| AGENT-009 | Document Writer | Project/release documentation |
-| AGENT-010 | System Analyst | Investigation, analysis, root cause, impact |
-| AGENT-011 | Frontend Developer | Frontend implementation and maintenance |
+| ID | Agent | Specification | Responsibility |
+|---|---|---|---|
+| AGENT-001 | Project Manager | [.agents/project-manager.md](./.agents/project-manager.md) | Orchestration, routing, approvals |
+| AGENT-002 | Requirement Engineer | [.agents/requirement-engineer.md](./.agents/requirement-engineer.md) | Requirements, acceptance criteria |
+| AGENT-003 | Development Lead | [.agents/development-lead.md](./.agents/development-lead.md) | Task decomposition |
+| AGENT-004 | Architect | [.agents/architect.md](./.agents/architect.md) | Architecture, ADRs |
+| AGENT-005 | Test Designer | [.agents/test-designer.md](./.agents/test-designer.md) | Test strategy, test cases |
+| AGENT-006 | Developer | [.agents/developer.md](./.agents/developer.md) | Backend/general implementation |
+| AGENT-007 | Code Reviewer | [.agents/code-reviewer.md](./.agents/code-reviewer.md) | Code review |
+| AGENT-008 | Security Analyst | [.agents/security-analyst.md](./.agents/security-analyst.md) | Security analysis/review |
+| AGENT-009 | Document Writer | [.agents/document-writer.md](./.agents/document-writer.md) | Project/release documentation |
+| AGENT-010 | System Analyst | [.agents/system-analyst.md](./.agents/system-analyst.md) | Investigation, analysis, root cause, impact |
+| AGENT-011 | Frontend Developer | [.agents/frontend-developer.md](./.agents/frontend-developer.md) | Frontend implementation and maintenance |
 
 Agent instructions:
 

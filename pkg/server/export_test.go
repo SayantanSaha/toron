@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"net"
 	"time"
 )
@@ -18,4 +19,10 @@ func RelayStreams(conn1, conn2 net.Conn, idleTimeout time.Duration) {
 
 func NewPrefixConn(conn net.Conn, prefix []byte) net.Conn {
 	return &prefixConn{Conn: conn, prefix: prefix}
+}
+
+type ActivityReader = activityReader
+
+func NewActivityReader(r *bufio.Reader, conn net.Conn, tracker *connDeadlineTracker, timeout time.Duration, limit int64) *activityReader {
+	return newActivityReader(r, conn, tracker, timeout, limit)
 }

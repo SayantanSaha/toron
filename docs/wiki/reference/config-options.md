@@ -318,7 +318,13 @@ For performance engineers conducting raw benchmark evaluations or deploying in i
 | `auth` | `object` | Route-level authentication overrides (`type`, `jwt`, `api_key`, `basic`) |
 | `trusted_proxies` | `list` | Route-level trusted proxy CIDR subnets gating forwarded headers for this route |
 | `transport` | `object` | Route-level upstream transport override (`max_conns_per_host`, `disable_compression`, `stream_response`, `max_payload_size`, etc.) |
-| `max_payload_size` | `integer` | Route-level response payload buffer limit in bytes before dynamic direct streaming activates (default: `1048576` / 1 MB) (REQ-129) |
+| `max_payload_size` | `integer` | Route-level response payload buffer limit in bytes before dynamic direct streaming activates (default: `1048576` / 1 MB) |
+| `max_body_bytes` | `integer` | Route-scoped request payload ceiling in bytes (default: `4194304` / 4 MB). Declared `Content-Length` exceeding this value triggers immediate pre-read `HTTP 413 Payload Too Large` rejection without reading body bytes |
+| `max_concurrency` | `integer` | Route bulkhead concurrency gate limiting in-flight requests. Saturated requests receive immediate `HTTP 503 Service Unavailable` (`Retry-After: 5`). Defaults to automated guardrail `min(32, worker_pool_size/4)` when omitted on elevated routes |
+| `read_timeout` | `duration` | Route-scoped socket read timeout. Refreshed dynamically on byte progress via sliding deadlines, permitting slow sustained uploads while enforcing anti-drip rate limits |
+| `write_timeout` | `duration` | Route-scoped downstream client socket write timeout |
+| `response_header_timeout` | `duration` | Route-level timeout awaiting upstream response headers. Expiration emits `HTTP 504 Gateway Timeout`. Downstream client write deadline is decoupled during backend processing |
+| `stream_request_body` | `boolean` | Direct zero-copy body streaming from client socket to upstream backend ($O(1)$ constant memory $\le 64\,\text{KB}$). Automatically active for bodies $> 64\,\text{KB}$ or chunked transfers when omitted |
 
 ## Section: `proxy.transport` / `routes[].transport` (REQ-123, REQ-124, REQ-129)
 
@@ -349,5 +355,6 @@ For performance engineers conducting raw benchmark evaluations or deploying in i
 ## Related Pages
 
 - [Configuration Guide](../configuration.md)
+- [Enterprise Legacy Workload & Route-Scoped Ingress Isolation](../features/route-scoped-ingress.md)
 - [Layer 4 TCP & UDP Transport Proxies](../features/layer4-proxy.md)
 - [CLI Reference](./cli.md)

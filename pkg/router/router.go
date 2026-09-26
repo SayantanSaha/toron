@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"toron/pkg/httpparser"
@@ -27,9 +28,10 @@ import (
 type RouterContextKeyType string
 
 const (
-	MatchedRouteContextKey RouterContextKeyType = "toron.matched_route"
-	RouteTypeContextKey    RouterContextKeyType = "toron.route_type"
-	DestinationContextKey  RouterContextKeyType = "toron.destination"
+	MatchedRouteContextKey      RouterContextKeyType = "toron.matched_route"
+	RouteTypeContextKey         RouterContextKeyType = "toron.route_type"
+	DestinationContextKey       RouterContextKeyType = "toron.destination"
+	RouteSlotAcquiredContextKey RouterContextKeyType = "toron.route_slot_acquired"
 )
 
 // GetMatchedRoute extracts the matched route prefix/identifier from ctx.
@@ -107,18 +109,25 @@ type routeEntry struct {
 }
 
 type prefixRoute struct {
-	source       string
-	proxy        *proxy.ReverseProxy
-	routeType    string
-	method       string
-	host         string
-	prefix       string
-	matcher      func(path string) bool
-	headers      map[string]string
-	redirectHTTP *bool
-	accessLog    string
-	securityLog  string
-	handler      HandlerFunc
+	source                string
+	proxy                 *proxy.ReverseProxy
+	routeType             string
+	method                string
+	host                  string
+	prefix                string
+	matcher               func(path string) bool
+	headers               map[string]string
+	redirectHTTP          *bool
+	accessLog             string
+	securityLog           string
+	handler               HandlerFunc
+	maxConcurrency        int
+	activeRequests        int64
+	maxBodyBytes          int64
+	readTimeout           time.Duration
+	writeTimeout          time.Duration
+	responseHeaderTimeout time.Duration
+	streamRequestBody     *bool
 }
 
 // Router handles URL routing, method dispatching, domain matching, header-based routing, static file serving, reverse proxying, and middleware execution.
@@ -127,6 +136,7 @@ type Router struct {
 	routes           map[string]map[string][]routeEntry // path -> method -> []routeEntry
 	prefixRoutes     []prefixRoute
 	middlewares      []MiddlewareFunc
+	workerPoolSize   int
 	NotFound         HandlerFunc
 	MethodNotAllowed HandlerFunc
 }
@@ -134,7 +144,8 @@ type Router struct {
 // New creates a new Router instance with default 404/405 handlers.
 func New() *Router {
 	r := &Router{
-		routes: make(map[string]map[string][]routeEntry),
+		routes:         make(map[string]map[string][]routeEntry),
+		workerPoolSize: 128,
 	}
 
 	r.NotFound = func(req *httpparser.Request, res *httpparser.Response) {
@@ -235,15 +246,42 @@ func (r *Router) POSTHeader(path, headerKey, headerVal string, handler HandlerFu
 	r.HandleHeader("POST", path, map[string]string{headerKey: headerVal}, handler)
 }
 
+// SetWorkerPoolSize configures the worker pool size used for automatic bulkhead guardrails.
+func (r *Router) SetWorkerPoolSize(size int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if size > 0 {
+		r.workerPoolSize = size
+	}
+}
+
+// WorkerPoolSize returns the configured worker pool size.
+func (r *Router) WorkerPoolSize() int {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.workerPoolSize <= 0 {
+		return 128
+	}
+	return r.workerPoolSize
+}
+
 // PrefixRouteSpec defines a declarative configuration for registering or replacing a prefix route.
 type PrefixRouteSpec struct {
-	TargetType RouteType
-	Host       string
-	Prefix     string
-	Method     string
-	Headers    map[string]string
-	DirPath    string
-	Opts       proxy.ProxyOptions
+	TargetType            RouteType
+	RouteType             RouteType
+	Host                  string
+	Prefix                string
+	Method                string
+	Headers               map[string]string
+	DirPath               string
+	Opts                  proxy.ProxyOptions
+	Handler               HandlerFunc
+	MaxConcurrency        int
+	MaxBodyBytes          int64
+	ReadTimeout           time.Duration
+	WriteTimeout          time.Duration
+	ResponseHeaderTimeout time.Duration
+	StreamRequestBody     *bool
 }
 
 // CanonicalHeaderString formats headers map into a deterministic sorted query-like string (k1=v1&k2=v2).
@@ -464,7 +502,11 @@ func (r *Router) compilePrefixRoute(source string, spec PrefixRouteSpec) (prefix
 		cleanPrefix = ""
 	}
 
-	normType := RouteType(strings.ToLower(strings.TrimSpace(string(spec.TargetType))))
+	targetTypeStr := string(spec.TargetType)
+	if targetTypeStr == "" {
+		targetTypeStr = string(spec.RouteType)
+	}
+	normType := RouteType(strings.ToLower(strings.TrimSpace(targetTypeStr)))
 	if normType == "proxy" {
 		normType = RouteTypeUpstream
 	}
@@ -474,7 +516,12 @@ func (r *Router) compilePrefixRoute(source string, spec PrefixRouteSpec) (prefix
 		px      *proxy.ReverseProxy
 	)
 
-	if normType == RouteTypeStatic {
+	if spec.Handler != nil {
+		handler = spec.Handler
+		if normType == "" {
+			normType = RouteType("handler")
+		}
+	} else if normType == RouteTypeStatic {
 		if spec.DirPath == "" {
 			return prefixRoute{}, fmt.Errorf("router: static route for prefix %q requires non-empty dirPath", spec.Prefix)
 		}
@@ -539,30 +586,84 @@ func (r *Router) compilePrefixRoute(source string, spec PrefixRouteSpec) (prefix
 
 	normMethod := strings.ToUpper(strings.TrimSpace(spec.Method))
 
+	maxConcurrency := spec.MaxConcurrency
+	if maxConcurrency == 0 {
+		maxConcurrency = spec.Opts.MaxConcurrency
+	}
+	maxBodyBytes := spec.MaxBodyBytes
+	if maxBodyBytes == 0 {
+		maxBodyBytes = spec.Opts.MaxBodyBytes
+	}
+	readTimeout := spec.ReadTimeout
+	if readTimeout == 0 {
+		readTimeout = spec.Opts.ReadTimeout
+	}
+	writeTimeout := spec.WriteTimeout
+	if writeTimeout == 0 {
+		writeTimeout = spec.Opts.WriteTimeout
+	}
+	respTimeout := spec.ResponseHeaderTimeout
+	if respTimeout == 0 {
+		respTimeout = spec.Opts.ResponseHeaderTimeout
+	}
+	if respTimeout == 0 {
+		respTimeout = spec.Opts.Transport.ResponseHeaderTimeout
+	}
+	streamBody := spec.StreamRequestBody
+	if streamBody == nil {
+		streamBody = spec.Opts.StreamRequestBody
+	}
+
+	// Automatic safety guardrail:
+	// If maxConcurrency == 0 and (maxBodyBytes > 4MB or respTimeout > 10s)
+	if maxConcurrency == 0 && (maxBodyBytes > 4*1024*1024 || respTimeout > 10*time.Second) {
+		poolSize := r.WorkerPoolSize()
+		safeLimit := poolSize / 4
+		if safeLimit < 1 {
+			safeLimit = 1
+		}
+		if safeLimit > 32 {
+			safeLimit = 32
+		}
+		maxConcurrency = safeLimit
+	}
+
 	return prefixRoute{
-		source:       cleanSource,
-		proxy:        px,
-		routeType:    string(normType),
-		method:       normMethod,
-		host:         strings.ToLower(strings.TrimSpace(spec.Host)),
-		prefix:       cleanPrefix,
-		headers:      spec.Headers,
-		redirectHTTP: spec.Opts.RedirectHTTP,
-		accessLog:    strings.TrimSpace(spec.Opts.AccessLog),
-		securityLog:  strings.TrimSpace(spec.Opts.SecurityLog),
-		handler:      handler,
+		source:                cleanSource,
+		proxy:                 px,
+		routeType:             string(normType),
+		method:                normMethod,
+		host:                  strings.ToLower(strings.TrimSpace(spec.Host)),
+		prefix:                cleanPrefix,
+		headers:               spec.Headers,
+		redirectHTTP:          spec.Opts.RedirectHTTP,
+		accessLog:             strings.TrimSpace(spec.Opts.AccessLog),
+		securityLog:           strings.TrimSpace(spec.Opts.SecurityLog),
+		handler:               handler,
+		maxConcurrency:        maxConcurrency,
+		maxBodyBytes:          maxBodyBytes,
+		readTimeout:           readTimeout,
+		writeTimeout:          writeTimeout,
+		responseHeaderTimeout: respTimeout,
+		streamRequestBody:     streamBody,
 	}, nil
 }
 
 // RoutePrefixWithSource registers a prefix route tagged with a specific subsystem source identifier.
 func (r *Router) RoutePrefixWithSource(source string, targetType RouteType, host, prefix string, headers map[string]string, dirPath string, opts proxy.ProxyOptions) error {
 	pr, err := r.compilePrefixRoute(source, PrefixRouteSpec{
-		TargetType: targetType,
-		Host:       host,
-		Prefix:     prefix,
-		Headers:    headers,
-		DirPath:    dirPath,
-		Opts:       opts,
+		TargetType:            targetType,
+		Host:                  host,
+		Prefix:                prefix,
+		Headers:               headers,
+		DirPath:               dirPath,
+		Opts:                  opts,
+		MaxConcurrency:        opts.MaxConcurrency,
+		MaxBodyBytes:          opts.MaxBodyBytes,
+		ReadTimeout:           opts.ReadTimeout,
+		WriteTimeout:          opts.WriteTimeout,
+		ResponseHeaderTimeout: opts.ResponseHeaderTimeout,
+		StreamRequestBody:     opts.StreamRequestBody,
 	})
 	if err != nil {
 		return err
@@ -578,6 +679,19 @@ func (r *Router) RoutePrefixWithSource(source string, targetType RouteType, host
 // RoutePrefix registers a prefix route that acts either as a static file server or an upstream reverse proxy, matching optional host and headers.
 func (r *Router) RoutePrefix(targetType RouteType, host, prefix string, headers map[string]string, dirPath string, opts proxy.ProxyOptions) error {
 	return r.RoutePrefixWithSource("config", targetType, host, prefix, headers, dirPath, opts)
+}
+
+// AddRoute registers a prefix route from a PrefixRouteSpec with optional handler or proxy options.
+func (r *Router) AddRoute(spec PrefixRouteSpec) error {
+	pr, err := r.compilePrefixRoute("config", spec)
+	if err != nil {
+		return err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.prefixRoutes = append(r.prefixRoutes, pr)
+	sortPrefixRoutes(r.prefixRoutes)
+	return nil
 }
 
 // ReplacePrefixRoutesBySource atomically replaces all prefix routes matching source with specs under write lock.
@@ -1056,6 +1170,51 @@ func (r *Router) ServeHTTP(req *httpparser.Request, res *httpparser.Response) {
 		SetDestination(req, "in-process")
 	}
 
+	// Enforce route bulkhead concurrency limits if not already acquired by caller (e.g. s.handleConn)
+	if matchedPR != nil && matchedPR.maxConcurrency > 0 {
+		alreadyAcquired := false
+		if req != nil && req.Context() != nil {
+			if v, ok := req.Context().Value(RouteSlotAcquiredContextKey).(bool); ok && v {
+				alreadyAcquired = true
+			}
+		}
+		if !alreadyAcquired {
+			current := atomic.LoadInt64(&matchedPR.activeRequests)
+			if current >= int64(matchedPR.maxConcurrency) {
+				res.SetStatus(http.StatusServiceUnavailable)
+				res.Header.Set("Retry-After", "5")
+				res.Header.Set("Content-Type", "application/json")
+				res.Header.Set("Connection", "close")
+				if res.Body == nil {
+					res.Body = bytes.NewBuffer(nil)
+				} else {
+					res.Body.Reset()
+				}
+				_, _ = res.WriteString(`{"error":"503 Service Unavailable: Route concurrency limit reached"}`)
+				return
+			}
+			newVal := atomic.AddInt64(&matchedPR.activeRequests, 1)
+			if newVal > int64(matchedPR.maxConcurrency) {
+				atomic.AddInt64(&matchedPR.activeRequests, -1)
+				res.SetStatus(http.StatusServiceUnavailable)
+				res.Header.Set("Retry-After", "5")
+				res.Header.Set("Content-Type", "application/json")
+				res.Header.Set("Connection", "close")
+				if res.Body == nil {
+					res.Body = bytes.NewBuffer(nil)
+				} else {
+					res.Body.Reset()
+				}
+				_, _ = res.WriteString(`{"error":"503 Service Unavailable: Route concurrency limit reached"}`)
+				return
+			}
+			var once sync.Once
+			defer once.Do(func() {
+				atomic.AddInt64(&matchedPR.activeRequests, -1)
+			})
+		}
+	}
+
 	// Chain middlewares in reverse order
 	finalChain := targetHandler
 	for i := len(middlewares) - 1; i >= 0; i-- {
@@ -1173,6 +1332,98 @@ func headersAndHostMatch(reqHost string, req *httpparser.Request, routeHost stri
 		}
 	}
 	return true
+}
+
+// RouteMatchInfo holds matched route metadata and resolved limits.
+type RouteMatchInfo struct {
+	Prefix                string
+	RouteType             string
+	MaxBodyBytes          int64
+	MaxConcurrency        int
+	ReadTimeout           time.Duration
+	WriteTimeout          time.Duration
+	ResponseHeaderTimeout time.Duration
+	StreamRequestBody     *bool
+	routeRef              *prefixRoute
+}
+
+// LookupPrefixRoute evaluates route matching (path, host, method, headers) without consuming request body.
+func (r *Router) LookupPrefixRoute(req *httpparser.Request) (*RouteMatchInfo, bool) {
+	if r == nil || req == nil {
+		return nil, false
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	reqHost := extractHost(req)
+	reqPath := cleanRequestPath(req.Path)
+
+	var fallbackPrefix *prefixRoute
+	for i := range r.prefixRoutes {
+		pr := &r.prefixRoutes[i]
+		if pr.prefix == "" || strings.HasPrefix(reqPath, pr.prefix+"/") || reqPath == pr.prefix {
+			if pr.method != "" && !strings.EqualFold(pr.method, req.Method) {
+				continue
+			}
+			if pr.matcher != nil && !pr.matcher(reqPath) {
+				continue
+			}
+			if headersAndHostMatch(reqHost, req, pr.host, pr.headers) {
+				return &RouteMatchInfo{
+					Prefix:                pr.prefix,
+					RouteType:             pr.routeType,
+					MaxBodyBytes:          pr.maxBodyBytes,
+					MaxConcurrency:        pr.maxConcurrency,
+					ReadTimeout:           pr.readTimeout,
+					WriteTimeout:          pr.writeTimeout,
+					ResponseHeaderTimeout: pr.responseHeaderTimeout,
+					StreamRequestBody:     pr.streamRequestBody,
+					routeRef:              pr,
+				}, true
+			}
+			if pr.host == "" && len(pr.headers) == 0 && fallbackPrefix == nil {
+				fallbackPrefix = pr
+			}
+		}
+	}
+	if fallbackPrefix != nil {
+		return &RouteMatchInfo{
+			Prefix:                fallbackPrefix.prefix,
+			RouteType:             fallbackPrefix.routeType,
+			MaxBodyBytes:          fallbackPrefix.maxBodyBytes,
+			MaxConcurrency:        fallbackPrefix.maxConcurrency,
+			ReadTimeout:           fallbackPrefix.readTimeout,
+			WriteTimeout:          fallbackPrefix.writeTimeout,
+			ResponseHeaderTimeout: fallbackPrefix.responseHeaderTimeout,
+			StreamRequestBody:     fallbackPrefix.streamRequestBody,
+			routeRef:              fallbackPrefix,
+		}, true
+	}
+	return nil, false
+}
+
+// TryAcquireRouteSlot attempts to reserve a concurrency slot on the matched route.
+// Returns release callback and true if slot was acquired, or false if route is at capacity.
+func (r *Router) TryAcquireRouteSlot(info *RouteMatchInfo) (release func(), acquired bool) {
+	if info == nil || info.routeRef == nil || info.MaxConcurrency <= 0 {
+		return func() {}, true // Unconstrained route
+	}
+	pr := info.routeRef
+	current := atomic.LoadInt64(&pr.activeRequests)
+	if current >= int64(info.MaxConcurrency) {
+		return nil, false
+	}
+	newVal := atomic.AddInt64(&pr.activeRequests, 1)
+	if newVal > int64(info.MaxConcurrency) {
+		atomic.AddInt64(&pr.activeRequests, -1) // Rollback
+		return nil, false
+	}
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			atomic.AddInt64(&pr.activeRequests, -1)
+		})
+	}, true
 }
 
 // MatchPrefixRoute finds the matching prefix route for an incoming request and returns its prefix, access log override, and security log override.

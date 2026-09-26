@@ -1187,3 +1187,238 @@ func TestConfig_ProxyTransport_StreamResponseDefault(t *testing.T) {
 		}
 	}
 }
+
+// TASK-169 / AC-169-1: Deserialization of Route-Scoped Ingress Limits
+func TestConfig_RouteScopedIngressLimits_YAMLAndJSON(t *testing.T) {
+	yamlData := `
+proxy:
+  enabled: true
+  routes:
+    - prefix: "/legacy/upload"
+      type: "upstream"
+      target: "http://localhost:9001"
+      max_body_bytes: 268435456
+      max_concurrency: 16
+      read_timeout: 10s
+      write_timeout: 15s
+      stream_request_body: true
+      response_header_timeout: 30s
+`
+	cfg := config.DefaultAppConfig()
+	if err := yaml.Unmarshal([]byte(yamlData), cfg); err != nil {
+		t.Fatalf("failed to unmarshal YAML: %v", err)
+	}
+
+	if len(cfg.Proxy.Routes) != 1 {
+		t.Fatalf("expected 1 route, got %d", len(cfg.Proxy.Routes))
+	}
+	r := cfg.Proxy.Routes[0]
+	if r.MaxBodyBytes != 268435456 {
+		t.Errorf("expected MaxBodyBytes 268435456, got %d", r.MaxBodyBytes)
+	}
+	if r.MaxConcurrency != 16 {
+		t.Errorf("expected MaxConcurrency 16, got %d", r.MaxConcurrency)
+	}
+	if r.ReadTimeout != 10*time.Second {
+		t.Errorf("expected ReadTimeout 10s, got %v", r.ReadTimeout)
+	}
+	if r.WriteTimeout != 15*time.Second {
+		t.Errorf("expected WriteTimeout 15s, got %v", r.WriteTimeout)
+	}
+	if r.StreamRequestBody == nil || !*r.StreamRequestBody {
+		t.Errorf("expected StreamRequestBody true, got %v", r.StreamRequestBody)
+	}
+	if r.ResponseHeaderTimeout != 30*time.Second {
+		t.Errorf("expected ResponseHeaderTimeout 30s, got %v", r.ResponseHeaderTimeout)
+	}
+
+	// Test JSON unmarshaling
+	jsonData := `[
+		{
+			"prefix": "/legacy/json",
+			"type": "upstream",
+			"target": "http://localhost:9002",
+			"max_body_bytes": 104857600,
+			"max_concurrency": 8,
+			"read_timeout": 5000000000,
+			"write_timeout": 8000000000,
+			"stream_request_body": false,
+			"response_header_timeout": 20000000000
+		}
+	]`
+	var jsonRoutes []config.ProxyRouteConfig
+	if err := json.Unmarshal([]byte(jsonData), &jsonRoutes); err != nil {
+		t.Fatalf("failed to unmarshal JSON: %v", err)
+	}
+	if len(jsonRoutes) != 1 {
+		t.Fatalf("expected 1 JSON route, got %d", len(jsonRoutes))
+	}
+	jr := jsonRoutes[0]
+	if jr.MaxBodyBytes != 104857600 || jr.MaxConcurrency != 8 || jr.ReadTimeout != 5*time.Second ||
+		jr.WriteTimeout != 8*time.Second || jr.StreamRequestBody == nil || *jr.StreamRequestBody != false ||
+		jr.ResponseHeaderTimeout != 20*time.Second {
+		t.Errorf("unexpected JSON route fields: %+v", jr)
+	}
+}
+
+// TASK-169 / AC-169-2: Hierarchical Ceiling Fallback
+func TestConfig_RouteScopedIngressLimits_GetMaxBodyBytes(t *testing.T) {
+	rEmpty := config.ProxyRouteConfig{}
+	if got := rEmpty.GetMaxBodyBytes(4 * 1024 * 1024); got != 4*1024*1024 {
+		t.Errorf("expected fallback 4MB, got %d", got)
+	}
+
+	rCustom := config.ProxyRouteConfig{MaxBodyBytes: 256 * 1024 * 1024}
+	if got := rCustom.GetMaxBodyBytes(4 * 1024 * 1024); got != 256*1024*1024 {
+		t.Errorf("expected 256MB, got %d", got)
+	}
+
+	if got := rEmpty.GetReadTimeout(5 * time.Second); got != 5*time.Second {
+		t.Errorf("expected read timeout fallback 5s, got %v", got)
+	}
+	rCustomTimeout := config.ProxyRouteConfig{ReadTimeout: 12 * time.Second, WriteTimeout: 14 * time.Second, ResponseHeaderTimeout: 25 * time.Second}
+	if got := rCustomTimeout.GetReadTimeout(5 * time.Second); got != 12*time.Second {
+		t.Errorf("expected custom read timeout 12s, got %v", got)
+	}
+	if got := rCustomTimeout.GetWriteTimeout(5 * time.Second); got != 14*time.Second {
+		t.Errorf("expected custom write timeout 14s, got %v", got)
+	}
+	if got := rCustomTimeout.GetResponseHeaderTimeout(10 * time.Second); got != 25*time.Second {
+		t.Errorf("expected custom response header timeout 25s, got %v", got)
+	}
+}
+
+// TASK-169 / AC-169-3, AC-169-4 / TC-145-09: Automatic Bulkhead Safety Guardrail Derivation
+func TestConfig_GetMaxConcurrency_SafetyGuardrail(t *testing.T) {
+	// Route A: elevated max_body_bytes (256MB), max_concurrency omitted (0)
+	routeA := config.ProxyRouteConfig{MaxBodyBytes: 268435456}
+	if got := routeA.GetMaxConcurrency(128); got != 32 {
+		t.Errorf("Route A (pool 128): expected 32, got %d", got)
+	}
+
+	// Route B: elevated response_header_timeout (30s), max_concurrency omitted (0)
+	routeB := config.ProxyRouteConfig{ResponseHeaderTimeout: 30 * time.Second}
+	if got := routeB.GetMaxConcurrency(128); got != 32 {
+		t.Errorf("Route B (pool 128): expected 32, got %d", got)
+	}
+
+	// Route C: standard limits, max_concurrency omitted (0) -> returns 0 (unconstrained)
+	routeC := config.ProxyRouteConfig{MaxBodyBytes: 2 * 1024 * 1024, ResponseHeaderTimeout: 5 * time.Second}
+	if got := routeC.GetMaxConcurrency(128); got != 0 {
+		t.Errorf("Route C (pool 128): expected 0 (unconstrained), got %d", got)
+	}
+
+	// Route D: explicit max_concurrency: 8 -> returns 8
+	routeD := config.ProxyRouteConfig{MaxBodyBytes: 268435456, MaxConcurrency: 8}
+	if got := routeD.GetMaxConcurrency(128); got != 8 {
+		t.Errorf("Route D (pool 128): expected 8, got %d", got)
+	}
+
+	// Smaller worker pool (16 workers) -> min(32, max(1, 16/4)) = 4
+	if got := routeA.GetMaxConcurrency(16); got != 4 {
+		t.Errorf("Route A (pool 16): expected 4, got %d", got)
+	}
+
+	// Edge case: pool 2 -> min(32, max(1, 2/4)) = 1
+	if got := routeA.GetMaxConcurrency(2); got != 1 {
+		t.Errorf("Route A (pool 2): expected 1, got %d", got)
+	}
+}
+
+// TASK-169 / AC-169-5: Automatic Streaming Ingress Heuristic
+func TestConfig_ShouldStreamRequestBody(t *testing.T) {
+	// Auto mode (StreamRequestBody == nil)
+	rAuto := config.ProxyRouteConfig{StreamRequestBody: nil}
+	if !rAuto.ShouldStreamRequestBody(70000) {
+		t.Error("expected auto streaming true for 70KB payload")
+	}
+	if !rAuto.ShouldStreamRequestBody(-1) {
+		t.Error("expected auto streaming true for chunked payload (-1)")
+	}
+	if rAuto.ShouldStreamRequestBody(65536) {
+		t.Error("expected auto streaming false for exactly 64KB payload")
+	}
+	if rAuto.ShouldStreamRequestBody(1024) {
+		t.Error("expected auto streaming false for 1KB payload")
+	}
+
+	// Explicit override true
+	tVal := true
+	rTrue := config.ProxyRouteConfig{StreamRequestBody: &tVal}
+	if !rTrue.ShouldStreamRequestBody(100) {
+		t.Error("expected streaming true for 100 bytes when explicitly enabled")
+	}
+
+	// Explicit override false
+	fVal := false
+	rFalse := config.ProxyRouteConfig{StreamRequestBody: &fVal}
+	if rFalse.ShouldStreamRequestBody(104857600) {
+		t.Error("expected streaming false for 100MB payload when explicitly disabled")
+	}
+
+	// Test IsStreamRequestBody alias
+	if rAuto.IsStreamRequestBody(70000) != rAuto.ShouldStreamRequestBody(70000) {
+		t.Error("IsStreamRequestBody should match ShouldStreamRequestBody")
+	}
+}
+
+// TASK-169 / AC-169-6: Negative Value Validation in ValidateConfig
+func TestConfig_RouteScopedIngressLimits_Validation(t *testing.T) {
+	baseCfg := func() *config.AppConfig {
+		c := config.DefaultAppConfig()
+		c.Static.Enabled = false
+		c.Proxy.Enabled = true
+		return c
+	}
+
+	t.Run("Negative MaxBodyBytes", func(t *testing.T) {
+		c := baseCfg()
+		c.Proxy.Routes = []config.ProxyRouteConfig{
+			{Prefix: "/api", Target: "http://localhost:9001", MaxBodyBytes: -1},
+		}
+		if err := config.ValidateConfig(c); err == nil || !strings.Contains(err.Error(), "max_body_bytes must be non-negative") {
+			t.Fatalf("expected error containing 'max_body_bytes must be non-negative', got: %v", err)
+		}
+	})
+
+	t.Run("Negative MaxConcurrency", func(t *testing.T) {
+		c := baseCfg()
+		c.Proxy.Routes = []config.ProxyRouteConfig{
+			{Prefix: "/api", Target: "http://localhost:9001", MaxConcurrency: -5},
+		}
+		if err := config.ValidateConfig(c); err == nil || !strings.Contains(err.Error(), "max_concurrency must be non-negative") {
+			t.Fatalf("expected error containing 'max_concurrency must be non-negative', got: %v", err)
+		}
+	})
+
+	t.Run("Negative ReadTimeout", func(t *testing.T) {
+		c := baseCfg()
+		c.Proxy.Routes = []config.ProxyRouteConfig{
+			{Prefix: "/api", Target: "http://localhost:9001", ReadTimeout: -time.Second},
+		}
+		if err := config.ValidateConfig(c); err == nil || !strings.Contains(err.Error(), "read_timeout must be non-negative") {
+			t.Fatalf("expected error containing 'read_timeout must be non-negative', got: %v", err)
+		}
+	})
+
+	t.Run("Negative WriteTimeout", func(t *testing.T) {
+		c := baseCfg()
+		c.Proxy.Routes = []config.ProxyRouteConfig{
+			{Prefix: "/api", Target: "http://localhost:9001", WriteTimeout: -time.Second},
+		}
+		if err := config.ValidateConfig(c); err == nil || !strings.Contains(err.Error(), "write_timeout must be non-negative") {
+			t.Fatalf("expected error containing 'write_timeout must be non-negative', got: %v", err)
+		}
+	})
+
+	t.Run("Negative ResponseHeaderTimeout", func(t *testing.T) {
+		c := baseCfg()
+		c.Proxy.Routes = []config.ProxyRouteConfig{
+			{Prefix: "/api", Target: "http://localhost:9001", ResponseHeaderTimeout: -time.Second},
+		}
+		if err := config.ValidateConfig(c); err == nil || !strings.Contains(err.Error(), "response_header_timeout must be non-negative") {
+			t.Fatalf("expected error containing 'response_header_timeout must be non-negative', got: %v", err)
+		}
+	})
+}
+

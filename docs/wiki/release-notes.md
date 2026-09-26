@@ -1,5 +1,48 @@
 # Release Notes
 
+## 2026-09-26 - Toron v1.5.37 Milestone (Enterprise Legacy Workload & Route-Scoped Ingress Isolation)
+
+### Milestone Summary
+- **Route-Scoped Payload Ingestion & Tier-1 Fast-Fail Rejection (`HTTP 413`)**:
+  - Decoupled request ingestion in `pkg/server/server.go` into a two-phase parsing pipeline: Phase 1 parses request headers into pooled buffers with zero heap allocation for the body, followed immediately by interim route matching.
+  - Introduced route-level `max_body_bytes` under `routes[]` in `routes.yaml`, allowing specific legacy endpoints (e.g. `/legacy/upload`) to accept large payloads (such as 200 MB+) while maintaining the strict 4 MB global server default (`server.max_body_bytes`).
+  - Implemented Tier-1 pre-read fast-fail rejection: if incoming declared `Content-Length` exceeds the matched route's ceiling, Toron immediately emits `HTTP 413 Payload Too Large` and terminates the connection without reading body bytes or dialing upstream backends.
+  - Added cumulative streaming clamping in `pkg/server/activity_reader.go` to enforce route byte ceilings dynamically on chunked or streaming uploads without declared length.
+- **Route Bulkhead Concurrency Gates & Worker Reservation Guarantee (`HTTP 503`)**:
+  - Implemented route-scoped concurrency bounding (`max_concurrency`) in `pkg/router/router.go` and `pkg/server/server.go` to isolate slow or resource-intensive legacy workloads from the reactor worker pool.
+  - Incoming requests matching a saturated route immediately receive `HTTP 503 Service Unavailable` with `Retry-After: 5` before body reading or upstream connection setup.
+  - Implemented an automated safety guardrail in `pkg/config/config.go`: when an elevated payload ceiling (`max_body_bytes > 4MB`) or elevated backend timeout (`response_header_timeout > 10s`) is configured on a route but `max_concurrency` is omitted, Toron automatically clamps concurrency to $\min(32, \max(1, \text{worker\_pool\_size}/4))$, guaranteeing that at least 75% of reactor worker capacity remains reserved for fast microservices, static assets, and operational probes (`/health`, `/metrics`).
+- **Activity-Refreshed Sliding Read Deadlines & Anti-Drip Clamping**:
+  - Added `pkg/server/activity_reader.go` wrapping client connections in progress-refreshed sliding read deadlines (`read_timeout`). Each steady read progress refreshes the deadline forward, enabling 200 MB+ uploads over slow or constrained WAN links to complete across 30s to 120s+ without premature `i/o timeout` failures.
+  - Implemented anti-drip progress rate clamping (requiring at least 1 KB per deadline window) to detect and terminate Slowloris attackers trickling bytes.
+  - Synergized with `connDeadlineTracker` to skip redundant operating system syscalls when $>50\%$ of the deadline window remains.
+- **Decoupled Backend Response Timeouts (`HTTP 504`)**:
+  - Introduced route-level `response_header_timeout` to support high-latency legacy backends (SQL aggregations, batch reports) executing for 15s to 60s+.
+  - Downstream client socket write deadlines are automatically decoupled (`time.Now().Add(response_header_timeout + write_timeout)`), preventing premature client connection drops while awaiting backend processing.
+  - Upstream backend timeout expiration triggers upstream context cancellation and emits a clean `HTTP 504 Gateway Timeout` response.
+- **Direct Zero-Copy Body Streaming ($O(1)$ Memory $\le 64\,\text{KB}$)**:
+  - Implemented direct socket-to-upstream body streaming in `pkg/proxy/proxy.go` (`outReq.Body = req.Body`), streaming payload bodies of any size with constant $O(1) \le 64\,\text{KB}$ memory per active connection.
+  - Neutralized Out-Of-Memory (OOM) attack vectors by eliminating monolithic heap buffer allocations (`make([]byte, clInt)`).
+  - Automatically activates for request bodies $> 64\,\text{KB}$ (`Content-Length > 65536`) or chunked uploads, and supports explicit configuration via `stream_request_body`.
+  - Implemented bidirectional context and abort propagation between client and upstream sockets.
+
+### Added
+- **`pkg/server/activity_reader.go`**: Progress-based activity reader implementing sliding socket read deadlines, cumulative byte clamping, and anti-drip rate clamping against Slowloris attacks.
+- **`docs/wiki/features/route-scoped-ingress.md`**: Comprehensive feature guide for enterprise legacy workload isolation, two-phase parsing pipeline, route bulkheads, sliding deadlines, decoupled response timeouts, and direct zero-copy body streaming.
+
+### Changed
+- **`pkg/config/config.go`**: Added route-scoped fields `MaxBodyBytes`, `MaxConcurrency`, `ReadTimeout`, `WriteTimeout`, `StreamRequestBody`, and `ResponseHeaderTimeout` to `ProxyRouteConfig` with helper methods (`GetMaxBodyBytes`, `GetMaxConcurrency`, `GetReadTimeout`, `GetWriteTimeout`, `GetResponseHeaderTimeout`, `ShouldStreamRequestBody`).
+- **`pkg/router/router.go`**: Integrated interim route lookup, route-scoped limit propagation, atomic bulkhead concurrency slot tracking (`TryAcquireRouteSlot`), and deterministic slot release lifecycle.
+- **`pkg/server/server.go`**: Decoupled HTTP ingestion into Phase 1 header parsing and Phase 2 governed body reading, added Tier-1 declared `Content-Length` fast-fail rejection (`HTTP 413`), route bulkhead gate evaluation (`HTTP 503` with `Retry-After: 5`), decoupled downstream write deadline calculations, and activity reader integration.
+- **`pkg/proxy/proxy.go`**: Implemented direct zero-copy body streaming from client socket directly to upstream transport connections with constant $O(1) \le 64\,\text{KB}$ memory, upstream timeout translation to `HTTP 504 Gateway Timeout`, and bidirectional abort propagation.
+- **`pkg/httpparser/chunked.go` & `pkg/httpparser/parser.go`**: Supported streaming body reader hand-offs without eager heap buffering.
+- **`docs/wiki/configuration.md`**: Documented route-level legacy configuration options, bulkhead concurrency limits, sliding read deadlines, decoupled response timeouts, and configuration examples.
+- **`docs/wiki/reference/config-options.md`**: Updated `routes[]` schema reference table with route-scoped ingress options.
+- **`docs/wiki/_data/navigation.yml`**: Added Route-Scoped Ingress navigation entry under Routing & Resilience.
+- **`docs/wiki/index.md`**: Added Route-Scoped Ingress feature link to documentation index.
+
+---
+
 ## 2026-09-23 - Toron v1.5.36 Milestone (Dynamic Upstream Target Resolution, Route Identification & Live Request Log Telemetry Fidelity)
 
 ### Milestone Summary

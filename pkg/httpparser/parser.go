@@ -117,24 +117,16 @@ func DefaultParserOptions() ParserOptions {
 	}
 }
 
-// ParseRequest parses an HTTP/1.1 request from an io.Reader according to ParserOptions limits.
-func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
+// ParseHeader parses the HTTP request line and headers from r into a Request metadata structure.
+// It parses request line and headers up to CRLF CRLF with zero body allocation.
+// req.Body is left uninitialized (nil).
+func ParseHeader(r *bufio.Reader, opts ParserOptions) (*Request, error) {
 	if opts.MaxHeaderBytes <= 0 {
 		opts.MaxHeaderBytes = 8 * 1024
 	}
-	if opts.MaxBodyBytes <= 0 {
-		opts.MaxBodyBytes = 4 * 1024 * 1024
-	}
-
-	var bufr *bufio.Reader
-	if br, ok := r.(*bufio.Reader); ok {
-		bufr = br
-	} else {
-		bufr = bufio.NewReader(r)
-	}
 
 	// Read Request Line (e.g. "GET /index.html HTTP/1.1\r\n")
-	requestLine, err := readLineBounded(bufr, opts.MaxHeaderBytes)
+	requestLine, err := readLineBounded(r, opts.MaxHeaderBytes)
 	if err != nil {
 		if errors.Is(err, ErrHeaderTooLarge) {
 			return nil, ErrHeaderTooLarge
@@ -168,11 +160,12 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%w: invalid URI", ErrBadRequest)
 	}
+	req.Body = nil
 
 	// Read Headers
 	headerBytesCount := len(requestLine)
 	for {
-		line, err := readLineBounded(bufr, opts.MaxHeaderBytes-headerBytesCount)
+		line, err := readLineBounded(r, opts.MaxHeaderBytes-headerBytesCount)
 		if err != nil {
 			return nil, err
 		}
@@ -270,11 +263,6 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 		}
 
 		req.ContentLength = -1
-		var closer io.Closer
-		if c, ok := r.(io.Closer); ok {
-			closer = c
-		}
-		req.Body = newChunkedBodyReader(bufr, closer, opts.MaxBodyBytes, req.Header)
 		return req, nil
 	}
 
@@ -299,11 +287,162 @@ func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
 			}
 		}
 
+		req.ContentLength = clInt
+		req.Header.Set("Content-Length", strconv.FormatInt(clInt, 10))
+		return req, nil
+	}
+
+	req.ContentLength = 0
+	return req, nil
+}
+
+// ParseHeaderReader parses request line and headers from io.Reader.
+// Returns populated Request metadata, active *bufio.Reader, and any error.
+func ParseHeaderReader(r io.Reader, opts ParserOptions) (*Request, *bufio.Reader, error) {
+	var bufr *bufio.Reader
+	if br, ok := r.(*bufio.Reader); ok {
+		bufr = br
+	} else {
+		bufr = bufio.NewReader(r)
+	}
+	req, err := ParseHeader(bufr, opts)
+	return req, bufr, err
+}
+
+// StreamingBodyReader wraps an underlying reader with an uncompressed byte ceiling limit.
+type StreamingBodyReader struct {
+	r             io.Reader
+	remaining     int64
+	totalRead     int64
+	limit         int64
+	contentLength int64
+	closer        io.Closer
+	closed        bool
+}
+
+// NewStreamingBodyReader returns an io.ReadCloser that permits reading up to limit bytes.
+// If the stream exceeds limit bytes, Read returns ErrBodyTooLarge.
+func NewStreamingBodyReader(r io.Reader, limit int64, optional ...any) *StreamingBodyReader {
+	var contentLength int64 = -1
+	var closer io.Closer
+	if c, ok := r.(io.Closer); ok {
+		closer = c
+	}
+	for _, opt := range optional {
+		switch v := opt.(type) {
+		case int64:
+			contentLength = v
+		case int:
+			contentLength = int64(v)
+		case io.Closer:
+			closer = v
+		}
+	}
+	return &StreamingBodyReader{
+		r:             r,
+		limit:         limit,
+		remaining:     limit,
+		contentLength: contentLength,
+		closer:        closer,
+	}
+}
+
+// Read reads bounded bytes from the underlying reader, returning ErrBodyTooLarge if limit is exceeded.
+func (s *StreamingBodyReader) Read(p []byte) (int, error) {
+	if s.closed {
+		return 0, io.EOF
+	}
+	if len(p) == 0 {
+		return 0, nil
+	}
+	toRead := len(p)
+	if s.contentLength >= 0 {
+		remCL := s.contentLength - s.totalRead
+		if remCL <= 0 {
+			return 0, io.EOF
+		}
+		if int64(toRead) > remCL {
+			toRead = int(remCL)
+		}
+	}
+
+	if s.limit > 0 && s.totalRead > s.limit {
+		return 0, ErrBodyTooLarge
+	}
+
+	if s.limit > 0 {
+		maxAllowed := (s.limit - s.totalRead) + 1
+		if int64(toRead) > maxAllowed {
+			toRead = int(maxAllowed)
+		}
+	}
+
+	n, err := s.r.Read(p[:toRead])
+	if n > 0 {
+		s.totalRead += int64(n)
+		s.remaining -= int64(n)
+		if s.limit > 0 && s.totalRead > s.limit {
+			if s.closer != nil {
+				_ = s.closer.Close()
+			}
+			return n, ErrBodyTooLarge
+		}
+	}
+	return n, err
+}
+
+// Close closes the streaming body reader and underlying closer if present.
+func (s *StreamingBodyReader) Close() error {
+	if s.closed {
+		return nil
+	}
+	s.closed = true
+	if s.closer != nil {
+		return s.closer.Close()
+	}
+	return nil
+}
+
+// TotalRead returns cumulative bytes read through this reader.
+func (s *StreamingBodyReader) TotalRead() int64 {
+	return s.totalRead
+}
+
+// ParseRequest parses an HTTP/1.1 request from an io.Reader according to ParserOptions limits.
+func ParseRequest(r io.Reader, opts ParserOptions) (*Request, error) {
+	if opts.MaxHeaderBytes <= 0 {
+		opts.MaxHeaderBytes = 8 * 1024
+	}
+	if opts.MaxBodyBytes <= 0 {
+		opts.MaxBodyBytes = 4 * 1024 * 1024
+	}
+
+	var bufr *bufio.Reader
+	if br, ok := r.(*bufio.Reader); ok {
+		bufr = br
+	} else {
+		bufr = bufio.NewReader(r)
+	}
+
+	req, err := ParseHeader(bufr, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	if req.ContentLength == -1 {
+		var closer io.Closer
+		if c, ok := r.(io.Closer); ok {
+			closer = c
+		}
+		req.Body = newChunkedBodyReader(bufr, closer, opts.MaxBodyBytes, req.Header)
+		return req, nil
+	}
+
+	if req.ContentLength > 0 {
+		clInt := req.ContentLength
 		if clInt > opts.MaxBodyBytes {
 			return nil, ErrBodyTooLarge
 		}
-		req.ContentLength = clInt
-		req.Header.Set("Content-Length", strconv.FormatInt(clInt, 10))
 
 		// Read Body payload
 		if clInt <= maxPooledBodySize {

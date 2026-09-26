@@ -86,6 +86,7 @@ documents:
 related_to:
   - index.md
   - features/http3.md
+  - features/route-scoped-ingress.md
   - reference/config-options.md
   - reference/cli.md
 ---
@@ -562,16 +563,22 @@ routes:
     trusted_proxies:
       - "198.51.100.10/32"
 
-  # Tuned Upstream Route with Streaming by Default & Bounded Clamping (REQ-123, REQ-129)
+  # Enterprise Legacy File Upload (200MB Upload with Activity-Refreshed Read Deadlines & Concurrency Bulkhead)
   - type: "upstream"
-    prefix: "/services/streaming-api"
-    target: "http://localhost:9004"
-    transport:
-      profile: "raw_speed"
-      stream_response: true       # Streaming by default across all profiles (REQ-129)
-      max_payload_size: 1048576   # Dynamic bounded clamp threshold in bytes (default: 1 MB) (REQ-129)
-      max_conns_per_host: 100
-      disable_compression: true
+    prefix: "/legacy/upload"
+    target: "http://localhost:9005"
+    max_body_bytes: 209715200          # 200 MB route ceiling (global default remains 4 MB)
+    max_concurrency: 16                # Bulkhead concurrency isolation (HTTP 503 on overflow)
+    read_timeout: 10s                  # Activity-refreshed sliding deadline (resets on byte progress)
+    stream_request_body: true          # Zero-copy streaming directly to upstream (O(1) memory <= 64KB)
+
+  # Enterprise Legacy Batch Processing / Reporting (Slow Backend Execution with Decoupled Timeouts)
+  - type: "upstream"
+    prefix: "/legacy/reports"
+    target: "http://localhost:9006"
+    max_concurrency: 8                 # Bulkhead isolation protecting reactor worker capacity
+    response_header_timeout: 60s       # Await upstream headers up to 60s (HTTP 504 on timeout)
+    write_timeout: 30s                 # Route-scoped downstream client write deadline
 ```
 
 ### Upstream Reverse Proxy & Transport Configuration (`ProxyTransportConfig`)
@@ -721,6 +728,70 @@ routes:
 ```
 
 For complete technical specifications, wire grammar rules, state machine diagrams, and threat mitigations, refer to [Inbound Chunked Transfer-Encoding Ingestion](./features/inbound-chunked-ingestion.md).
+
+---
+
+### Route-Scoped Ingress & Enterprise Legacy Workload Isolation
+
+Toron provides route-level ingress isolation that allows enterprise legacy services (such as 200MB+ file uploads, sustained slow transfers over constrained branch networks, or long-running database reports) to run safely without weakening the gateway's global perimeter defaults.
+
+#### Key Ingress Parameters in `routes.yaml`
+
+| Field | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `max_body_bytes` | `integer` | `0` (inherits `server.max_body_bytes`, 4 MB) | Route-scoped request payload ceiling in bytes. Declared `Content-Length` exceeding this value triggers immediate pre-read `HTTP 413 Payload Too Large` rejection without reading body bytes. |
+| `max_concurrency` | `integer` | `0` (or auto guardrail) | Bulkhead concurrency limit for in-flight requests on this route. Saturated requests receive immediate `HTTP 503 Service Unavailable` with `Retry-After: 5`. Defaults to automated guardrail `min(32, worker_pool_size/4)` when omitted on elevated routes. |
+| `read_timeout` | `duration` | `0s` (inherits `server.read_timeout`, 5s) | Route-scoped socket read timeout. Refreshed dynamically on byte progress via sliding deadlines, permitting sustained slow transfers while enforcing anti-drip rate limits. |
+| `write_timeout` | `duration` | `0s` (inherits `server.write_timeout`, 5s) | Route-scoped downstream client socket write timeout. |
+| `response_header_timeout` | `duration` | `0s` (inherits `proxy.transport.response_header_timeout`, 10s) | Route-level timeout awaiting upstream response headers. Expiration emits `HTTP 504 Gateway Timeout`. Downstream client write deadline is decoupled while backend is processing. |
+| `stream_request_body` | `boolean` | `nil` (auto) | Enables direct zero-copy body streaming from client socket directly to upstream transport ($O(1) \le 64\,\text{KB}$ memory). Automatically active for bodies $> 64\,\text{KB}$ or chunked transfers when omitted. |
+
+#### Architectural Protections
+
+1. **Two-Phase Request Parsing & Tier-1 Fast-Fail Rejection (`HTTP 413`)**:
+   Toron decouples request parsing into Phase 1 (headers) and Phase 2 (body). In Phase 1, headers are parsed with zero heap allocation for the body. If the incoming `Content-Length` exceeds the matched route's `max_body_bytes`, Toron rejects the request immediately with `HTTP 413 Payload Too Large` before reading any body bytes from the network socket. For chunked requests without `Content-Length`, cumulative bytes are clamped dynamically.
+
+2. **Route Bulkhead Concurrency Gates (`HTTP 503`) & Automated Safety Guardrails**:
+   Each route with `max_concurrency` maintains an atomic in-flight counter. When active requests reach capacity, subsequent requests are immediately rejected with `HTTP 503 Service Unavailable` and `Retry-After: 5`, preventing slow backend or upload endpoints from exhausting reactor worker goroutines.
+   - **Automated Guardrail**: If an administrator sets an elevated payload ceiling (`max_body_bytes > 4MB`) or an elevated backend timeout (`response_header_timeout > 10s`) but omits `max_concurrency`, Toron automatically sets `max_concurrency` to $\min(32, \max(1, \text{worker\_pool\_size}/4))$. This reserves $\ge 75\%$ of reactor capacity for microservice APIs and operational endpoints (`/health`, `/metrics`).
+
+3. **Activity-Refreshed Sliding Deadlines & Anti-Drip Clamping**:
+   Instead of a static deadline that aborts multi-megabyte transfers mid-flight, `read_timeout` is refreshed upon steady read progress. Transfers taking 30s to 60s+ over constrained networks proceed uninterrupted. If a client pauses or drips data below 1 KB per window, the connection is forcibly terminated to prevent Slowloris attacks.
+
+4. **Decoupled Backend Response Timeouts (`HTTP 504`)**:
+   For routes configured with `response_header_timeout`, Toron decouples the downstream client write deadline (`write_timeout`) while awaiting the upstream backend's initial headers. If the backend fails to respond within the configured timeout, Toron cancels the upstream context and returns `HTTP 504 Gateway Timeout`.
+
+5. **Direct Zero-Copy Body Streaming**:
+   When streaming is active (automatic for bodies $> 64\,\text{KB}$ or chunked transfers), Toron forwards the client reader directly to the upstream request (`outReq.Body = req.Body`) with constant $O(1) \le 64\,\text{KB}$ memory usage, eliminating monolithic heap allocations. If either side aborts, cancellations propagate bidirectionally.
+
+#### Route-Scoped Configuration Example
+
+```yaml
+routes:
+  # 1. High-Volume File Ingestion Route (200MB Uploads, 16 Concurrency Slots, 10s Activity Timeout)
+  - type: "upstream"
+    prefix: "/legacy/upload"
+    target: "http://storage-backend:9000"
+    max_body_bytes: 209715200          # 200 MB route ceiling
+    max_concurrency: 16                # Bulkhead concurrency isolation (HTTP 503 on overflow)
+    read_timeout: 10s                  # Activity-refreshed sliding deadline
+    stream_request_body: true          # Zero-copy streaming directly to upstream
+
+  # 2. Long-Running Legacy SQL / ETL Query Route (Upstream Response Header Timeout up to 60s)
+  - type: "upstream"
+    prefix: "/legacy/reports"
+    target: "http://analytics-service:8080"
+    max_concurrency: 8                 # Bulkhead concurrency isolation
+    response_header_timeout: 60s       # Await upstream headers up to 60s (HTTP 504 on timeout)
+    write_timeout: 30s                 # Route-scoped downstream client write deadline
+
+  # 3. Standard Microservice Route (Inherits 4MB body ceiling and 5s timeouts)
+  - type: "upstream"
+    prefix: "/api"
+    target: "http://api-service:8080"
+```
+
+For complete technical specifications, architectural diagrams, and threat mitigation analysis, refer to [Enterprise Legacy Workload & Route-Scoped Ingress Isolation](./features/route-scoped-ingress.md).
 
 ---
 

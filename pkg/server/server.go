@@ -238,7 +238,7 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			_ = tracker.SetAmortizedReadDeadline(timeout)
 		}
 
-		req, err := httpparser.ParseRequest(br, opts)
+		req, err := httpparser.ParseHeader(br, opts)
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				return nil
@@ -280,9 +280,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		}
 
 		req.RawConn = conn
-		if cr, ok := req.Body.(*httpparser.ChunkedBodyReader); ok {
-			cr.SetCloser(conn)
+		if conn != nil && conn.RemoteAddr() != nil {
+			req.RemoteAddr = conn.RemoteAddr().String()
 		}
+		firstRequest = false
 
 		if strings.EqualFold(s.config.InboundChunkedMode, "reject") && req.ContentLength == -1 && req.Header.Get("Transfer-Encoding") != "" {
 			res := httpparser.NewResponse()
@@ -298,13 +299,93 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			return httpparser.ErrUnsupportedTransferEncoding
 		}
 
-		if conn != nil && conn.RemoteAddr() != nil {
-			req.RemoteAddr = conn.RemoteAddr().String()
+		// Interim Route Lookup
+		routeInfo, matched := s.router.LookupPrefixRoute(req)
+		effectiveMaxBody := s.config.MaxBodyBytes
+		if effectiveMaxBody <= 0 {
+			effectiveMaxBody = 4 * 1024 * 1024
 		}
-		firstRequest = false
+		effectiveReadTimeout := s.config.ReadTimeout
+		effectiveRespTimeout := 10 * time.Second
+
+		if matched && routeInfo != nil {
+			if routeInfo.MaxBodyBytes > 0 {
+				effectiveMaxBody = routeInfo.MaxBodyBytes
+			}
+			if routeInfo.ReadTimeout > 0 {
+				effectiveReadTimeout = routeInfo.ReadTimeout
+			}
+			if routeInfo.ResponseHeaderTimeout > 0 {
+				effectiveRespTimeout = routeInfo.ResponseHeaderTimeout
+			}
+		}
+
+		// Tier-1 Declared Content-Length Fast-Fail Validation (FR-145-2 / AC-145-02)
+		if req.ContentLength > effectiveMaxBody {
+			res := httpparser.NewResponse()
+			res.SetStatus(http.StatusRequestEntityTooLarge)
+			res.Header.Set("Connection", "close")
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(`{"error":"413 Payload Too Large: request Content-Length exceeds effective route limit"}`)
+			if s.config.WriteTimeout > 0 {
+				_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
+			}
+			_ = res.Serialize(conn)
+			_ = conn.Close()
+			return httpparser.ErrBodyTooLarge
+		}
+
+		// Route Bulkhead Concurrency Gate Evaluation (FR-145-5 / AC-145-06)
+		var slotRelease func()
+		if matched && routeInfo != nil && routeInfo.MaxConcurrency > 0 {
+			rel, acquired := s.router.TryAcquireRouteSlot(routeInfo)
+			if !acquired {
+				res := httpparser.NewResponse()
+				res.SetStatus(http.StatusServiceUnavailable)
+				res.Header.Set("Retry-After", "5")
+				res.Header.Set("Connection", "close")
+				res.Header.Set("Content-Type", "application/json")
+				_, _ = res.WriteString(`{"error":"503 Service Unavailable: Route concurrency limit reached"}`)
+				if s.config.WriteTimeout > 0 {
+					_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
+				}
+				_ = res.Serialize(conn)
+				_ = conn.Close()
+				return nil
+			}
+			slotRelease = rel
+		}
+
+		// Phase 2: Governed Body Ingestion
+		if (req.ContentLength > 0 || req.ContentLength == -1) && effectiveReadTimeout > 0 {
+			_ = tracker.SetAmortizedReadDeadline(effectiveReadTimeout)
+		}
+		if req.ContentLength == -1 {
+			actReader := newActivityReader(br, conn, tracker, effectiveReadTimeout, 0)
+			chunkedBufr := bufio.NewReader(actReader)
+			req.Body = httpparser.NewChunkedBodyReader(chunkedBufr, conn, effectiveMaxBody)
+		} else if req.ContentLength > 0 {
+			actReader := newActivityReader(br, conn, tracker, effectiveReadTimeout, effectiveMaxBody)
+			req.Body = httpparser.NewStreamingBodyReader(actReader, effectiveMaxBody, req.ContentLength, actReader)
+		} else {
+			req.Body = nil
+		}
 
 		reqCtx, reqCancel := context.WithCancel(ctx)
+		if slotRelease != nil {
+			reqCtx = context.WithValue(reqCtx, router.RouteSlotAcquiredContextKey, true)
+		}
 		req.SetContext(reqCtx)
+
+		// Downstream Client Write Timeout Decoupling for Upstream Proxy Routes
+		writeTimeout := s.config.WriteTimeout
+		if writeTimeout <= 0 {
+			writeTimeout = 5 * time.Second
+		}
+		if matched && routeInfo != nil && (routeInfo.RouteType == "upstream" || routeInfo.RouteType == "proxy" || routeInfo.ResponseHeaderTimeout > 0) {
+			decoupledDeadline := time.Now().Add(effectiveRespTimeout + writeTimeout)
+			_ = tracker.ForceSetWriteDeadline(decoupledDeadline)
+		}
 
 		// Process request through router
 		res := httpparser.NewResponse()
@@ -346,6 +427,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 				if res.UpgradedConn != nil {
 					_ = res.UpgradedConn.Close()
 				}
+				if slotRelease != nil {
+					slotRelease()
+					slotRelease = nil
+				}
 				reqCancel()
 				return fmt.Errorf("server: failed to write upgrade response: %w", err)
 			}
@@ -365,6 +450,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 					streamConn = &prefixConn{Conn: conn, prefix: unconsumed}
 				}
 				s.relayUpgradedStreams(streamConn, res.UpgradedConn, idleTimeout)
+				if slotRelease != nil {
+					slotRelease()
+					slotRelease = nil
+				}
 				reqCancel()
 				return nil
 			}
@@ -374,6 +463,10 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			keepAlive, err := s.relayStreamBody(conn, req, res, tracker, connHeader)
 			_ = req.CloseBody()
 			reqCancel()
+			if slotRelease != nil {
+				slotRelease()
+				slotRelease = nil
+			}
 			if err != nil {
 				return err
 			}
@@ -383,6 +476,30 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 			return nil
 		}
 
+		if req.ContentLength > 0 {
+			if sr, ok := req.Body.(*httpparser.StreamingBodyReader); ok && sr.TotalRead() < req.ContentLength && res.StatusCode < 400 {
+				_ = req.CloseBody()
+				reqCancel()
+				if slotRelease != nil {
+					slotRelease()
+					slotRelease = nil
+				}
+				_ = conn.Close()
+				return nil
+			}
+		} else if req.ContentLength == -1 {
+			if cr, ok := req.Body.(*httpparser.ChunkedBodyReader); ok && !cr.IsEOF() && res.StatusCode < 400 {
+				_ = req.CloseBody()
+				reqCancel()
+				if slotRelease != nil {
+					slotRelease()
+					slotRelease = nil
+				}
+				_ = conn.Close()
+				return nil
+			}
+		}
+
 		if s.config.WriteTimeout > 0 {
 			_ = tracker.SetAmortizedWriteDeadline(s.config.WriteTimeout)
 		}
@@ -390,11 +507,34 @@ func (s *Server) handleConn(ctx context.Context, conn net.Conn) error {
 		if err := res.Serialize(conn); err != nil {
 			_ = req.CloseBody()
 			reqCancel()
+			if slotRelease != nil {
+				slotRelease()
+				slotRelease = nil
+			}
 			return fmt.Errorf("server: failed to write response: %w", err)
 		}
 
 		_ = req.CloseBody()
 		reqCancel()
+		if slotRelease != nil {
+			slotRelease()
+			slotRelease = nil
+		}
+
+		if req.ContentLength > 0 {
+			if sr, ok := req.Body.(*httpparser.StreamingBodyReader); ok {
+				if sr.TotalRead() < req.ContentLength {
+					return nil
+				}
+			}
+		} else if req.ContentLength == -1 {
+			if cr, ok := req.Body.(*httpparser.ChunkedBodyReader); ok {
+				if !cr.IsEOF() {
+					_ = conn.Close()
+					return nil
+				}
+			}
+		}
 
 		outConnHeader := strings.ToLower(res.Header.Get("Connection"))
 		if connHeader == "close" || outConnHeader == "close" {
@@ -503,12 +643,39 @@ func (s *Server) http2AdapterHandler() http.Handler {
 
 		req := httpparser.NewRequestFromStd(r)
 
+		routeInfo, matched := s.router.LookupPrefixRoute(req)
+		maxBodyBytes := s.config.MaxBodyBytes
+		if maxBodyBytes <= 0 {
+			maxBodyBytes = 4 * 1024 * 1024
+		}
+		if matched && routeInfo != nil && routeInfo.MaxBodyBytes > 0 {
+			maxBodyBytes = routeInfo.MaxBodyBytes
+		}
+
+		if r.ContentLength > maxBodyBytes {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_, _ = w.Write([]byte(`{"error":"413 Payload Too Large"}`))
+			return
+		}
+
+		var releaseSlot func()
+		if matched && routeInfo != nil && routeInfo.MaxConcurrency > 0 {
+			rel, acquired := s.router.TryAcquireRouteSlot(routeInfo)
+			if !acquired {
+				w.Header().Set("Retry-After", "5")
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = w.Write([]byte(`{"error":"503 Service Unavailable: Route concurrency limit reached"}`))
+				return
+			}
+			releaseSlot = rel
+			defer releaseSlot()
+			req.SetContext(context.WithValue(req.Context(), router.RouteSlotAcquiredContextKey, true))
+		}
+
 		if r.Method != "CONNECT" && r.Body != nil {
 			defer r.Body.Close()
-			maxBodyBytes := s.config.MaxBodyBytes
-			if maxBodyBytes <= 0 {
-				maxBodyBytes = 4 * 1024 * 1024
-			}
 			lr := io.LimitReader(r.Body, maxBodyBytes+1)
 			bodyBytes, err := io.ReadAll(lr)
 			if err != nil {

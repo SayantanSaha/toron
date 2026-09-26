@@ -66,7 +66,7 @@ related_to:
   - release-notes.md
 ---
 
-# Toron Documentation Wiki (v1.5.35 Milestone)
+# Toron Documentation Wiki (v1.5.37 Milestone)
 
 Welcome to the **Toron Web Server** documentation wiki. Toron is an event-driven, high-performance, zero-dependency web server, reverse proxy gateway, and edge security engine written in pure Go.
 
@@ -101,6 +101,7 @@ Toron is an event-driven, high-performance web server, reverse proxy, API gatewa
 - [Static File Serving](./features/static-file-serving.md) – Hosting web apps, MIME resolution, and directory index handling.
 
 ### 🌐 Routing, Proxying & Resilience
+- [Enterprise Legacy Workload & Route-Scoped Ingress Isolation](./features/route-scoped-ingress.md) – Route-scoped payload ceilings (200MB+), bulkhead concurrency gates (HTTP 503), activity-refreshed sliding read deadlines, decoupled backend response timeouts (HTTP 504), and zero-copy streaming.
 - [Layer 4 TCP & UDP Transport Proxies](./features/layer4-proxy.md) – Raw stream and datagram proxying with bounded concurrency, buffer recycling, and Slowloris idle deadline protection.
 - [REST-to-gRPC Transcoding Engine](./features/grpc-transcoding.md) – Direct JSON REST to binary Protobuf gRPC RPC transcoding, bounded request limits (HTTP 413), hop-by-hop header sanitization, and direct parameterized subpath dispatch.
 - [Service Mesh Sidecar Mode](./features/service-mesh-sidecar.md) – Lightweight pod-to-pod mTLS, bounded request body limits (HTTP 413), and weighted traffic splitting.
@@ -136,5 +137,5 @@ Toron is an event-driven, high-performance web server, reverse proxy, API gatewa
 ### 💡 Help & Support
 - [Troubleshooting Guide](./troubleshooting.md) – Common runtime issues and solutions.
 - [Frequently Asked Questions (FAQ)](./faq.md) – Common questions about Toron.
-- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.35).
+- [Release Notes](./release-notes.md) – Changelog and release milestones (v1.0.0–v1.5.37).
 

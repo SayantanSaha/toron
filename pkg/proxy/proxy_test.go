@@ -1,11 +1,14 @@
 package proxy_test
 
 import (
+	"bufio"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -1756,15 +1759,15 @@ func TestProxy_Transport_ResponseHeaderTimeoutEnforcement(t *testing.T) {
 	px.ServeHTTP(req, res)
 	elapsed := time.Since(start)
 
-	if res.StatusCode != http.StatusBadGateway {
-		t.Fatalf("expected 502 Bad Gateway on ResponseHeaderTimeout, got %d", res.StatusCode)
+	if res.StatusCode != http.StatusGatewayTimeout && res.StatusCode != http.StatusBadGateway {
+		t.Fatalf("expected 504 Gateway Timeout or 502 Bad Gateway on ResponseHeaderTimeout, got %d", res.StatusCode)
 	}
 	if elapsed > 140*time.Millisecond {
 		t.Fatalf("expected failure within ~50ms ResponseHeaderTimeout, took %v", elapsed)
 	}
 	bodyStr := res.Body.String()
-	if !strings.Contains(bodyStr, "timeout awaiting response headers") && !strings.Contains(bodyStr, "header timeout") && !strings.Contains(bodyStr, "Client.Timeout") && !strings.Contains(bodyStr, "Upstream unreachable") {
-		t.Fatalf("expected bad gateway message mentioning timeout, got: %s", bodyStr)
+	if !strings.Contains(bodyStr, "504 Gateway Timeout") && !strings.Contains(bodyStr, "timeout awaiting response headers") && !strings.Contains(bodyStr, "header timeout") && !strings.Contains(bodyStr, "Client.Timeout") && !strings.Contains(bodyStr, "Upstream unreachable") {
+		t.Fatalf("expected gateway timeout message mentioning timeout, got: %s", bodyStr)
 	}
 }
 
@@ -2742,9 +2745,11 @@ func TestReverseProxy_InboundChunked_Normalize(t *testing.T) {
 	}))
 	defer upstream.Close()
 
+	falseVal := false
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
 		Targets:            []string{upstream.URL},
 		InboundChunkedMode: "normalize",
+		StreamRequestBody:  &falseVal,
 	})
 	if err != nil {
 		t.Fatalf("failed to create proxy: %v", err)
@@ -2948,9 +2953,11 @@ func TestReverseProxy_InboundChunked_HopByHopAndTrailers(t *testing.T) {
 	}))
 	defer upstream.Close()
 
+	falseVal := false
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
 		Targets:            []string{upstream.URL},
 		InboundChunkedMode: "normalize",
+		StreamRequestBody:  &falseVal,
 	})
 	if err != nil {
 		t.Fatalf("failed to create proxy: %v", err)
@@ -3024,9 +3031,11 @@ func TestReverseProxy_BufferPoolRecyclingConcurrency(t *testing.T) {
 	}))
 	defer upstream.Close()
 
+	falseVal := false
 	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
 		Targets:            []string{upstream.URL},
 		InboundChunkedMode: "normalize",
+		StreamRequestBody:  &falseVal,
 	})
 	if err != nil {
 		t.Fatalf("failed to create proxy: %v", err)
@@ -3168,3 +3177,273 @@ func TestProxy_UpstreamTargetContextPropagation(t *testing.T) {
 		}
 	})
 }
+
+// repeatingByteReader generates an infinite stream of a repeated pattern without heap allocations.
+type repeatingByteReader struct {
+	pattern []byte
+	idx     int
+}
+
+func (r *repeatingByteReader) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	n := 0
+	for n < len(p) {
+		copied := copy(p[n:], r.pattern[r.idx:])
+		n += copied
+		r.idx = (r.idx + copied) % len(r.pattern)
+	}
+	return n, nil
+}
+
+func TestProxy_Streaming_ConstantMemoryFootprint(t *testing.T) {
+	var upstreamBytesReceived atomic.Int64
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n, err := io.Copy(io.Discard, r.Body)
+		if err != nil {
+			t.Errorf("upstream read error: %v", err)
+		}
+		upstreamBytesReceived.Store(n)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer upstream.Close()
+
+	trueVal := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:           []string{upstream.URL},
+		StreamRequestBody: &trueVal,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	const payloadSize = int64(50 * 1024 * 1024) // 50MB streaming upload
+	streamSource := io.LimitReader(&repeatingByteReader{pattern: []byte("0123456789ABCDEF")}, payloadSize)
+
+	req, err := httpparser.NewRequest("POST", "/upload", "HTTP/1.1")
+	if err != nil {
+		t.Fatalf("failed to create request: %v", err)
+	}
+	req.ContentLength = payloadSize
+	req.Body = io.NopCloser(streamSource)
+
+	res := httpparser.NewResponse()
+
+	runtime.GC()
+	var m1, m2 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+
+	px.ServeHTTPWithPrefix(req, res, "")
+
+	runtime.ReadMemStats(&m2)
+	heapDelta := int64(m2.Alloc) - int64(m1.Alloc)
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+	}
+	if upstreamBytesReceived.Load() != payloadSize {
+		t.Fatalf("expected upstream to receive %d bytes, got %d", payloadSize, upstreamBytesReceived.Load())
+	}
+	// Constant O(1) memory verification: heap delta must be under 10MB during 50MB transfer
+	if heapDelta > 10*1024*1024 {
+		t.Fatalf("heap delta exceeded 10MB limit: %d bytes (%.2f MB)", heapDelta, float64(heapDelta)/(1024*1024))
+	}
+}
+
+func TestProxy_ResponseHeaderTimeout_GatewayTimeout504(t *testing.T) {
+	t.Run("Slow Upstream Exceeds ResponseHeaderTimeout Returns 504", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(150 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer upstream.Close()
+
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets:               []string{upstream.URL},
+			ResponseHeaderTimeout: 50 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		req, _ := httpparser.NewRequest("GET", "/slow", "HTTP/1.1")
+		res := httpparser.NewResponse()
+
+		px.ServeHTTPWithPrefix(req, res, "")
+
+		if res.StatusCode != http.StatusGatewayTimeout {
+			t.Fatalf("expected 504 Gateway Timeout, got %d", res.StatusCode)
+		}
+		if res.Header.Get("Connection") != "close" {
+			t.Errorf("expected Connection: close on timeout, got %q", res.Header.Get("Connection"))
+		}
+		body := res.Body.String()
+		if !strings.Contains(body, "504 Gateway Timeout") {
+			t.Errorf("expected 504 Gateway Timeout in body, got: %s", body)
+		}
+	})
+
+	t.Run("Fast Upstream Within ResponseHeaderTimeout Returns 200", func(t *testing.T) {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			time.Sleep(20 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"fast":"ok"}`))
+		}))
+		defer upstream.Close()
+
+		px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+			Targets:               []string{upstream.URL},
+			ResponseHeaderTimeout: 200 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("failed to create proxy: %v", err)
+		}
+		defer px.Close()
+
+		req, _ := httpparser.NewRequest("GET", "/fast", "HTTP/1.1")
+		res := httpparser.NewResponse()
+
+		px.ServeHTTPWithPrefix(req, res, "")
+
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("expected 200 OK, got %d", res.StatusCode)
+		}
+	})
+}
+
+func TestProxy_Streaming_ClientDisconnectContextCancel(t *testing.T) {
+	upstreamCancelled := make(chan struct{})
+	upstreamReceived := make(chan struct{})
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(upstreamReceived)
+		go func() {
+			buf := make([]byte, 1024)
+			for {
+				if _, err := r.Body.Read(buf); err != nil {
+					return
+				}
+			}
+		}()
+		select {
+		case <-r.Context().Done():
+			close(upstreamCancelled)
+		case <-time.After(2 * time.Second):
+			w.WriteHeader(http.StatusOK)
+		}
+	}))
+	defer upstream.Close()
+
+	trueVal := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:           []string{upstream.URL},
+		StreamRequestBody: &trueVal,
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	clientCtx, clientCancel := context.WithCancel(context.Background())
+	req, _ := httpparser.NewRequest("POST", "/disconnect", "HTTP/1.1")
+	req.SetContext(clientCtx)
+	req.ContentLength = 1000000
+
+	// Simulating client stream that waits for cancel
+	streamPipeR, streamPipeW := io.Pipe()
+	req.Body = streamPipeR
+
+	go func() {
+		// Wait until upstream is processing
+		<-upstreamReceived
+		// Abrupt client disconnect
+		clientCancel()
+		_ = streamPipeW.CloseWithError(errors.New("client disconnected"))
+	}()
+
+	res := httpparser.NewResponse()
+	px.ServeHTTPWithPrefix(req, res, "")
+
+	select {
+	case <-upstreamCancelled:
+		// Success: upstream context was cancelled promptly
+	case <-time.After(500 * time.Millisecond):
+		t.Fatalf("upstream did not receive context cancellation within 500ms of client disconnect")
+	}
+}
+
+func TestProxy_Streaming_UpstreamMidstreamAbortFailClosed(t *testing.T) {
+	// Raw TCP server that sends partial chunked response then resets TCP
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		// Read request headers
+		br := bufio.NewReader(conn)
+		for {
+			line, err := br.ReadString('\n')
+			if err != nil || line == "\r\n" {
+				break
+			}
+		}
+
+		// Send partial chunked response
+		respHdr := "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\n\r\n"
+		_, _ = conn.Write([]byte(respHdr))
+		// Chunk of 5 bytes
+		_, _ = conn.Write([]byte("5\r\nhello\r\n"))
+		// Abrupt TCP close without sending 0\r\n\r\n
+	}()
+
+	upstreamURL := fmt.Sprintf("http://%s", ln.Addr().String())
+	trueVal := true
+	px, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets: []string{upstreamURL},
+		Transport: proxy.ProxyTransportConfig{
+			StreamResponse: &trueVal,
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to create proxy: %v", err)
+	}
+	defer px.Close()
+
+	req, _ := httpparser.NewRequest("GET", "/abort", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	px.ServeHTTPWithPrefix(req, res, "")
+
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 status code before stream abort, got %d", res.StatusCode)
+	}
+	if res.StreamBody == nil {
+		t.Fatalf("expected res.StreamBody to be populated for streaming")
+	}
+	defer res.StreamBody.Close()
+
+	buf := make([]byte, 1024)
+	n, readErr := res.StreamBody.Read(buf)
+	if n > 0 {
+		// Read first chunk
+		_, readErr2 := res.StreamBody.Read(buf)
+		if readErr2 == nil {
+			t.Fatalf("expected error on midstream abort, got nil")
+		}
+	} else if readErr == nil {
+		t.Fatalf("expected read error on aborted stream, got nil")
+	}
+}
+

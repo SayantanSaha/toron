@@ -488,6 +488,7 @@ type ReverseProxy struct {
 	modeMu                 sync.RWMutex
 	inboundChunkedMode     string
 	maxBodyBytes           int64
+	opts                   ProxyOptions
 }
 
 // InboundChunkedMode returns the configured inbound chunked handling mode ("normalize", "passthrough", "reject").
@@ -645,8 +646,13 @@ type ProxyOptions struct {
 	RouteHasCache       bool
 	Transport           ProxyTransportConfig
 	MaxPayloadSize      int
-	InboundChunkedMode  string
-	MaxBodyBytes        int64
+	InboundChunkedMode    string
+	MaxBodyBytes          int64
+	MaxConcurrency        int
+	ReadTimeout           time.Duration
+	WriteTimeout          time.Duration
+	ResponseHeaderTimeout time.Duration
+	StreamRequestBody     *bool
 }
 
 // NewLoadBalancerProxy creates a ReverseProxy instance that load balances requests across multiple target URL strings.
@@ -720,7 +726,9 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 	if opts.Transport.StreamResponse != nil {
 		tc.StreamResponse = opts.Transport.StreamResponse
 	}
-	if opts.Transport.ResponseHeaderTimeout > 0 {
+	if opts.ResponseHeaderTimeout > 0 {
+		tc.ResponseHeaderTimeout = opts.ResponseHeaderTimeout
+	} else if opts.Transport.ResponseHeaderTimeout > 0 {
 		tc.ResponseHeaderTimeout = opts.Transport.ResponseHeaderTimeout
 	}
 	if tc.ResponseHeaderTimeout <= 0 {
@@ -886,6 +894,7 @@ func NewProxyWithOptions(opts ProxyOptions) (*ReverseProxy, error) {
 		maxPayloadSize:         maxPayloadSize,
 		inboundChunkedMode:     inboundMode,
 		maxBodyBytes:           opts.MaxBodyBytes,
+		opts:                   opts,
 	}, nil
 }
 
@@ -1113,7 +1122,33 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	var cancelFunc context.CancelFunc
 	reqCtx := req.Context()
 
-	if isChunked {
+	// Direct Zero-Copy Body Streaming Activation (TASK-172 WP-1)
+	shouldStream := p.opts.StreamRequestBody != nil && *p.opts.StreamRequestBody
+	if p.opts.StreamRequestBody == nil {
+		if req.ContentLength > 65536 {
+			shouldStream = true
+		} else if req.ContentLength == -1 {
+			// Chunked: stream if passthrough, or if route has elevated body ceiling > 4MB (Option 1)
+			if strings.EqualFold(effectiveMode, "passthrough") || p.opts.MaxBodyBytes > 4*1024*1024 {
+				shouldStream = true
+			}
+		}
+	}
+
+	if shouldStream && req.Body != nil {
+		if isChunked {
+			if strings.EqualFold(effectiveMode, "reject") {
+				res.SetStatus(http.StatusNotImplemented)
+				res.Header.Set("Connection", "close")
+				res.Header.Set("Content-Type", "application/json")
+				_, _ = res.WriteString(`{"error":"501 Not Implemented: Inbound chunked transfer encoding is disabled"}`)
+				return
+			}
+			bodyReader = req.Body
+		} else {
+			bodyReader = req.Body
+		}
+	} else if isChunked {
 		if strings.EqualFold(effectiveMode, "reject") {
 			res.SetStatus(http.StatusNotImplemented)
 			res.Header.Set("Connection", "close")
@@ -1122,7 +1157,7 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 			return
 		} else if strings.EqualFold(effectiveMode, "passthrough") {
 			var passthroughCancel context.CancelFunc
-			reqCtx, passthroughCancel = context.WithCancel(req.Context())
+			reqCtx, passthroughCancel = context.WithCancel(reqCtx)
 			cancelFunc = passthroughCancel
 			bodyReader = &earlyCancelingReader{
 				r:      req.Body,
@@ -1161,9 +1196,27 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 			}
 		}
 	} else if req.Body != nil {
-		bodyBytes, err := io.ReadAll(req.Body)
-		if err == nil && len(bodyBytes) > 0 {
-			bodyReader = bytes.NewReader(bodyBytes)
+		if req.ContentLength > 0 && req.ContentLength <= 65536 {
+			bufPtr := httpparser.GetBodyBuffer()
+			buf := *bufPtr
+			n, err := io.ReadFull(req.Body, buf[:req.ContentLength])
+			if err == nil || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				bodyReader = bytes.NewReader(buf[:n])
+				cleanupBuf = func() {
+					httpparser.PutBodyBuffer(bufPtr)
+				}
+			} else {
+				httpparser.PutBodyBuffer(bufPtr)
+				bodyBytes, rErr := io.ReadAll(req.Body)
+				if rErr == nil && len(bodyBytes) > 0 {
+					bodyReader = bytes.NewReader(bodyBytes)
+				}
+			}
+		} else {
+			bodyBytes, err := io.ReadAll(req.Body)
+			if err == nil && len(bodyBytes) > 0 {
+				bodyReader = bytes.NewReader(bodyBytes)
+			}
 		}
 	}
 
@@ -1215,7 +1268,7 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	}
 
 	if isChunked {
-		if strings.EqualFold(effectiveMode, "passthrough") {
+		if shouldStream || strings.EqualFold(effectiveMode, "passthrough") {
 			outReq.ContentLength = -1
 			outReq.TransferEncoding = []string{"chunked"}
 			outReq.Header.Del("Content-Length")
@@ -1229,8 +1282,12 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 			outReq.Header.Set("Content-Length", strconv.FormatInt(exactCL, 10))
 			outReq.Header.Del("Transfer-Encoding")
 		}
-	} else if req.ContentLength > 0 {
+	} else if req.ContentLength >= 0 {
 		outReq.ContentLength = req.ContentLength
+		if req.ContentLength > 0 {
+			outReq.Header.Set("Content-Length", strconv.FormatInt(req.ContentLength, 10))
+		}
+		outReq.Header.Del("Transfer-Encoding")
 	}
 
 	// Derive client peer IP and trust status
@@ -1310,6 +1367,15 @@ func (p *ReverseProxy) ServeHTTPWithPrefix(req *httpparser.Request, res *httppar
 	outResp, err := p.Client.Do(outReq)
 	if err != nil {
 		targetNode.RecordFailure()
+		isTimeout := strings.Contains(strings.ToLower(err.Error()), "timeout awaiting response headers")
+		var netErr net.Error
+		if errors.As(err, &netErr) && netErr.Timeout() {
+			isTimeout = true
+		}
+		if isTimeout {
+			p.writeGatewayTimeout(res, fmt.Sprintf("Upstream timeout (%s): %v", targetURL.String(), err))
+			return
+		}
 		p.writeBadGateway(res, fmt.Sprintf("Upstream unreachable (%s): %v", targetURL.String(), err))
 		return
 	}
@@ -1426,6 +1492,14 @@ func (p *ReverseProxy) writeBadGateway(res *httpparser.Response, msg string) {
 	res.Header.Set("Content-Type", "application/json")
 	res.Body.Reset()
 	_, _ = res.WriteString(fmt.Sprintf(`{"error":"502 Bad Gateway","message":%q}`, msg))
+}
+
+func (p *ReverseProxy) writeGatewayTimeout(res *httpparser.Response, msg string) {
+	res.SetStatus(http.StatusGatewayTimeout)
+	res.Header.Set("Content-Type", "application/json")
+	res.Header.Set("Connection", "close")
+	res.Body.Reset()
+	_, _ = res.WriteString(`{"error":"504 Gateway Timeout: Upstream response header timeout expired"}`)
 }
 
 func (p *ReverseProxy) writeServiceUnavailable(res *httpparser.Response, msg string) {

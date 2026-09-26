@@ -1,6 +1,6 @@
 {
-  "timestamp": "2026-09-17T11:21:50Z",
-  "target_edge": "127.0.0.1:65129",
+  "timestamp": "2026-09-25T08:53:20Z",
+  "target_edge": "127.0.0.1:60126",
   "execution_mode": "Standalone In-Process (Pure Go)",
   "total_scenarios": 30,
   "passed_scenarios": 30,
@@ -57,7 +57,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 3007
+      "execution_time_us": 1894
     },
     {
       "vector_id": "VECTOR-02",
@@ -78,7 +78,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 865
+      "execution_time_us": 276
     },
     {
       "vector_id": "VECTOR-03",
@@ -99,7 +99,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 896
+      "execution_time_us": 235
     },
     {
       "vector_id": "VECTOR-04",
@@ -121,7 +121,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1192
+      "execution_time_us": 469
     },
     {
       "vector_id": "VECTOR-05",
@@ -143,7 +143,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1055
+      "execution_time_us": 412
     },
     {
       "vector_id": "VECTOR-06",
@@ -165,7 +165,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1106
+      "execution_time_us": 405
     },
     {
       "vector_id": "VECTOR-07",
@@ -186,7 +186,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 652
+      "execution_time_us": 235
     },
     {
       "vector_id": "VECTOR-08",
@@ -207,7 +207,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1526
+      "execution_time_us": 543
     },
     {
       "vector_id": "VECTOR-09",
@@ -228,7 +228,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1279
+      "execution_time_us": 459
     },
     {
       "vector_id": "VECTOR-10",
@@ -249,7 +249,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1374
+      "execution_time_us": 528
     },
     {
       "vector_id": "VECTOR-01",
@@ -270,7 +270,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 940
+      "execution_time_us": 467
     },
     {
       "vector_id": "VECTOR-02",
@@ -291,7 +291,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 934
+      "execution_time_us": 311
     },
     {
       "vector_id": "VECTOR-03",
@@ -312,7 +312,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 866
+      "execution_time_us": 267
     },
     {
       "vector_id": "VECTOR-04",
@@ -334,7 +334,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1307
+      "execution_time_us": 516
     },
     {
       "vector_id": "VECTOR-05",
@@ -356,7 +356,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1142
+      "execution_time_us": 445
     },
     {
       "vector_id": "VECTOR-06",
@@ -378,7 +378,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 979
+      "execution_time_us": 484
     },
     {
       "vector_id": "VECTOR-07",
@@ -399,7 +399,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 706
+      "execution_time_us": 230
     },
     {
       "vector_id": "VECTOR-08",
@@ -420,7 +420,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1269
+      "execution_time_us": 312
     },
     {
       "vector_id": "VECTOR-09",
@@ -441,7 +441,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1251
+      "execution_time_us": 536
     },
     {
       "vector_id": "VECTOR-10",
@@ -462,7 +462,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1360
+      "execution_time_us": 487
     },
     {
       "vector_id": "VECTOR-01",
@@ -483,7 +483,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 973
+      "execution_time_us": 436
     },
     {
       "vector_id": "VECTOR-02",
@@ -504,7 +504,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 693
+      "execution_time_us": 238
     },
     {
       "vector_id": "VECTOR-03",
@@ -525,7 +525,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 834
+      "execution_time_us": 189
     },
     {
       "vector_id": "VECTOR-04",
@@ -547,7 +547,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1146
+      "execution_time_us": 512
     },
     {
       "vector_id": "VECTOR-05",
@@ -569,7 +569,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 942
+      "execution_time_us": 508
     },
     {
       "vector_id": "VECTOR-06",
@@ -591,7 +591,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 864
+      "execution_time_us": 498
     },
     {
       "vector_id": "VECTOR-07",
@@ -612,7 +612,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 661
+      "execution_time_us": 240
     },
     {
       "vector_id": "VECTOR-08",
@@ -633,7 +633,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1222
+      "execution_time_us": 385
     },
     {
       "vector_id": "VECTOR-09",
@@ -654,7 +654,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 1125
+      "execution_time_us": 461
     },
     {
       "vector_id": "VECTOR-10",
@@ -675,7 +675,7 @@
       "desynchronization": false,
       "pool_integrity": true,
       "overall_passed": true,
-      "execution_time_us": 2105
+      "execution_time_us": 497
     }
   ]
 }

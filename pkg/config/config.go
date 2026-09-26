@@ -412,8 +412,13 @@ type ProxyRouteConfig struct {
 	IdleTimeout         time.Duration         `yaml:"idle_timeout,omitempty" json:"idle_timeout,omitempty"`
 	MaxWorkers          int                   `yaml:"max_workers,omitempty" json:"max_workers,omitempty"`
 	Transport           *ProxyTransportConfig `yaml:"transport,omitempty" json:"transport,omitempty"`
-	InboundChunkedMode  string                `yaml:"inbound_chunked_mode,omitempty" json:"inbound_chunked_mode,omitempty"`
-	MaxBodyBytes        int64                 `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`
+	InboundChunkedMode    string                `yaml:"inbound_chunked_mode,omitempty" json:"inbound_chunked_mode,omitempty"`
+	MaxBodyBytes          int64                 `yaml:"max_body_bytes,omitempty" json:"max_body_bytes,omitempty"`
+	MaxConcurrency        int                   `yaml:"max_concurrency,omitempty" json:"max_concurrency,omitempty"`
+	ReadTimeout           time.Duration         `yaml:"read_timeout,omitempty" json:"read_timeout,omitempty"`
+	WriteTimeout          time.Duration         `yaml:"write_timeout,omitempty" json:"write_timeout,omitempty"`
+	StreamRequestBody     *bool                 `yaml:"stream_request_body,omitempty" json:"stream_request_body,omitempty"`
+	ResponseHeaderTimeout time.Duration         `yaml:"response_header_timeout,omitempty" json:"response_header_timeout,omitempty"`
 }
 
 // ResolveTransport merges the route's transport settings with global defaults.
@@ -618,6 +623,78 @@ func (p *ProxyRouteConfig) GetMaxWorkers() int {
 	}
 	return 1024
 }
+
+// GetMaxBodyBytes returns the effective request body ceiling for the route,
+// falling back to defaultVal (global server.max_body_bytes, 4MB) if unspecified (0).
+func (p *ProxyRouteConfig) GetMaxBodyBytes(defaultVal int64) int64 {
+	if p.MaxBodyBytes > 0 {
+		return p.MaxBodyBytes
+	}
+	return defaultVal
+}
+
+// GetMaxConcurrency returns the effective maximum concurrent in-flight requests on this route.
+// If explicitly configured (> 0), it returns p.MaxConcurrency.
+// If 0 and the route specifies an elevated payload ceiling (> 4MB) or elevated backend timeout (> 10s),
+// it automatically defaults to the safety guardrail min(32, max(1, workerPoolSize/4)).
+// Otherwise, it returns 0 (unconstrained route).
+func (p *ProxyRouteConfig) GetMaxConcurrency(workerPoolSize int) int {
+	if p.MaxConcurrency > 0 {
+		return p.MaxConcurrency
+	}
+	if p.MaxConcurrency == 0 && (p.MaxBodyBytes > 4*1024*1024 || p.ResponseHeaderTimeout > 10*time.Second) {
+		safeGuardrail := workerPoolSize / 4
+		if safeGuardrail < 1 {
+			safeGuardrail = 1
+		}
+		if safeGuardrail > 32 {
+			safeGuardrail = 32
+		}
+		return safeGuardrail
+	}
+	return 0
+}
+
+// GetReadTimeout returns the configured read timeout duration or defaultVal if unspecified (<= 0).
+func (p *ProxyRouteConfig) GetReadTimeout(defaultVal time.Duration) time.Duration {
+	if p.ReadTimeout > 0 {
+		return p.ReadTimeout
+	}
+	return defaultVal
+}
+
+// GetWriteTimeout returns the configured write timeout duration or defaultVal if unspecified (<= 0).
+func (p *ProxyRouteConfig) GetWriteTimeout(defaultVal time.Duration) time.Duration {
+	if p.WriteTimeout > 0 {
+		return p.WriteTimeout
+	}
+	return defaultVal
+}
+
+// GetResponseHeaderTimeout returns the configured response header timeout or defaultVal (10s) if unspecified (<= 0).
+func (p *ProxyRouteConfig) GetResponseHeaderTimeout(defaultVal time.Duration) time.Duration {
+	if p.ResponseHeaderTimeout > 0 {
+		return p.ResponseHeaderTimeout
+	}
+	return defaultVal
+}
+
+// ShouldStreamRequestBody returns whether the incoming request body should stream directly upstream without buffering.
+// If StreamRequestBody is explicitly configured, its value is respected.
+// If StreamRequestBody is nil (auto), it returns true if contentLength > 65536 (64 KB) or contentLength == -1 (chunked),
+// and false if 0 <= contentLength <= 65536.
+func (p *ProxyRouteConfig) ShouldStreamRequestBody(contentLength int64) bool {
+	if p.StreamRequestBody != nil {
+		return *p.StreamRequestBody
+	}
+	return contentLength > 65536 || contentLength == -1
+}
+
+// IsStreamRequestBody is an alias for ShouldStreamRequestBody.
+func (p *ProxyRouteConfig) IsStreamRequestBody(contentLength int64) bool {
+	return p.ShouldStreamRequestBody(contentLength)
+}
+
 
 // LoggingConfig captures logging settings.
 type LoggingConfig struct {

@@ -267,6 +267,21 @@ func ValidateConfig(cfg *AppConfig) error {
 			if route.Transport != nil && route.Transport.InboundChunkedMode != "" && !isValidChunkedMode(route.Transport.InboundChunkedMode) {
 				return fmt.Errorf("route %q transport.inbound_chunked_mode invalid value %q: must be one of 'normalize', 'reject', 'passthrough'", route.Prefix, route.Transport.InboundChunkedMode)
 			}
+			if route.MaxBodyBytes < 0 {
+				return fmt.Errorf("route %q max_body_bytes must be non-negative, got %d", route.Prefix, route.MaxBodyBytes)
+			}
+			if route.MaxConcurrency < 0 {
+				return fmt.Errorf("route %q max_concurrency must be non-negative, got %d", route.Prefix, route.MaxConcurrency)
+			}
+			if route.ReadTimeout < 0 {
+				return fmt.Errorf("route %q read_timeout must be non-negative, got %v", route.Prefix, route.ReadTimeout)
+			}
+			if route.WriteTimeout < 0 {
+				return fmt.Errorf("route %q write_timeout must be non-negative, got %v", route.Prefix, route.WriteTimeout)
+			}
+			if route.ResponseHeaderTimeout < 0 {
+				return fmt.Errorf("route %q response_header_timeout must be non-negative, got %v", route.Prefix, route.ResponseHeaderTimeout)
+			}
 
 			if route.WAF.Enabled {
 				for j, cr := range route.WAF.CustomRules {

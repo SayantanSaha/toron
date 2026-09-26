@@ -1116,3 +1116,152 @@ func TestParseRequest_HeaderValueControlCharRejection(t *testing.T) {
 		})
 	}
 }
+
+// TASK-170 / AC-170-1: Header Parsing Isolation with Zero Body Allocation
+func TestParseHeader_HeaderParsingIsolation(t *testing.T) {
+	headerData := "POST /upload HTTP/1.1\r\nHost: example.com\r\nContent-Length: 10485760\r\nContent-Type: application/octet-stream\r\n\r\n"
+	bodyData := strings.Repeat("A", 1024)
+	inputData := headerData + bodyData
+
+	bufr := bufio.NewReader(strings.NewReader(inputData))
+	opts := httpparser.DefaultParserOptions()
+
+	req, err := httpparser.ParseHeader(bufr, opts)
+	if err != nil {
+		t.Fatalf("unexpected error parsing header: %v", err)
+	}
+
+	if req.Method != "POST" {
+		t.Errorf("expected POST, got %q", req.Method)
+	}
+	if req.ContentLength != 10485760 {
+		t.Errorf("expected ContentLength 10485760, got %d", req.ContentLength)
+	}
+	if req.Body != nil {
+		t.Errorf("expected req.Body to be nil in ParseHeader, got %v", req.Body)
+	}
+
+	// Verify unconsumed body bytes are still in bufr
+	peekBytes, err := bufr.Peek(len(bodyData))
+	if err != nil {
+		t.Fatalf("failed to peek body bytes from bufr: %v", err)
+	}
+	if string(peekBytes) != bodyData {
+		t.Errorf("expected body bytes to remain in bufr, got %q", string(peekBytes))
+	}
+
+	// Also verify ParseHeaderReader convenience wrapper
+	bufr2 := strings.NewReader(inputData)
+	req2, returnedBufr, err := httpparser.ParseHeaderReader(bufr2, opts)
+	if err != nil || req2 == nil || returnedBufr == nil {
+		t.Fatalf("ParseHeaderReader failed: %v", err)
+	}
+	if req2.ContentLength != 10485760 || req2.Body != nil {
+		t.Errorf("unexpected req2 fields: %+v", req2)
+	}
+}
+
+// TASK-170 / AC-170-2: Header Too Large Fast-Fail
+func TestParseHeader_HeaderTooLarge(t *testing.T) {
+	hugeHeader := "GET / HTTP/1.1\r\nHost: example.com\r\nX-Large: " + strings.Repeat("X", 9000) + "\r\n\r\n"
+	bufr := bufio.NewReader(strings.NewReader(hugeHeader))
+	opts := httpparser.ParserOptions{MaxHeaderBytes: 8 * 1024, MaxBodyBytes: 4 * 1024 * 1024}
+
+	_, err := httpparser.ParseHeader(bufr, opts)
+	if !errors.Is(err, httpparser.ErrHeaderTooLarge) {
+		t.Fatalf("expected ErrHeaderTooLarge, got %v", err)
+	}
+}
+
+// TASK-170 / AC-170-3: Conflicting Content-Length & Transfer-Encoding Smuggling Rejection
+func TestParseHeader_SmugglingRejection(t *testing.T) {
+	raw := "POST /data HTTP/1.1\r\nHost: example.com\r\nContent-Length: 50\r\nTransfer-Encoding: chunked\r\n\r\n"
+	bufr := bufio.NewReader(strings.NewReader(raw))
+	opts := httpparser.DefaultParserOptions()
+
+	_, err := httpparser.ParseHeader(bufr, opts)
+	if err == nil {
+		t.Fatal("expected smuggling error, got nil")
+	}
+	if !errors.Is(err, httpparser.ErrBadRequest) {
+		t.Fatalf("expected ErrBadRequest, got %v", err)
+	}
+}
+
+// TASK-170 / AC-170-4: Bounded StreamingBodyReader Limit Enforcement
+func TestHttpparser_StreamingBodyReader_LimitEnforcement(t *testing.T) {
+	t.Run("Subtest 4A: Stream within limit completes successfully", func(t *testing.T) {
+		dataSize := 1024 * 1024 // 1 MB
+		sourceData := bytes.Repeat([]byte("B"), dataSize)
+		r := bytes.NewReader(sourceData)
+
+		sbr := httpparser.NewStreamingBodyReader(r, 2*1024*1024, int64(dataSize))
+		out, err := io.ReadAll(sbr)
+		if err != nil {
+			t.Fatalf("unexpected error reading stream: %v", err)
+		}
+		if len(out) != dataSize {
+			t.Errorf("expected %d bytes, got %d", dataSize, len(out))
+		}
+		if sbr.TotalRead() != int64(dataSize) {
+			t.Errorf("expected TotalRead %d, got %d", dataSize, sbr.TotalRead())
+		}
+	})
+
+	t.Run("Subtest 4B: Stream exceeding limit returns ErrBodyTooLarge", func(t *testing.T) {
+		limit := int64(2 * 1024 * 1024)      // 2 MB limit
+		dataSize := int64(3 * 1024 * 1024)   // 3 MB payload
+		sourceData := bytes.Repeat([]byte("C"), int(dataSize))
+		r := bytes.NewReader(sourceData)
+
+		sbr := httpparser.NewStreamingBodyReader(r, limit, dataSize)
+		buf := make([]byte, 32*1024)
+		var totalRead int64
+		var err error
+
+		for {
+			n, readErr := sbr.Read(buf)
+			totalRead += int64(n)
+			if readErr != nil {
+				err = readErr
+				break
+			}
+		}
+
+		if !errors.Is(err, httpparser.ErrBodyTooLarge) {
+			t.Fatalf("expected ErrBodyTooLarge, got %v (totalRead=%d)", err, totalRead)
+		}
+		if totalRead < limit {
+			t.Errorf("expected totalRead >= limit (%d), got %d", limit, totalRead)
+		}
+	})
+}
+
+// TASK-170 / AC-170-5: AttachChunkedBodyReader route limit
+func TestHttpparser_AttachChunkedBodyReader(t *testing.T) {
+	chunkedRaw := "POST /chunked HTTP/1.1\r\nHost: example.com\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n"
+	bufr := bufio.NewReader(strings.NewReader(chunkedRaw))
+	opts := httpparser.DefaultParserOptions()
+
+	req, err := httpparser.ParseHeader(bufr, opts)
+	if err != nil {
+		t.Fatalf("ParseHeader failed: %v", err)
+	}
+	if req.ContentLength != -1 {
+		t.Fatalf("expected ContentLength -1, got %d", req.ContentLength)
+	}
+
+	httpparser.AttachChunkedBodyReader(req, bufr, nil, 1024*1024)
+	if req.Body == nil {
+		t.Fatal("expected req.Body to be attached")
+	}
+
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatalf("failed to read chunked body: %v", err)
+	}
+	if string(body) != "hello" {
+		t.Errorf("expected 'hello', got %q", string(body))
+	}
+}
+

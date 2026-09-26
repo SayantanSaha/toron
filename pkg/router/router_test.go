@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2220,3 +2221,207 @@ func TestRouter_ContextRouteTagging(t *testing.T) {
 		}
 	})
 }
+
+// TASK-173 / AC-173-1: Pre-Body Route Lookup
+func TestRouter_LookupPrefixRoute(t *testing.T) {
+	r := router.New()
+	tVal := true
+	_ = r.RoutePrefixWithSource("test", router.RouteTypeUpstream, "", "/api/v1", nil, "", proxy.ProxyOptions{
+		Targets:               []string{"http://127.0.0.1:8080"},
+		MaxConcurrency:        16,
+		MaxBodyBytes:          100 * 1024 * 1024,
+		ReadTimeout:           10 * time.Second,
+		WriteTimeout:          15 * time.Second,
+		ResponseHeaderTimeout: 20 * time.Second,
+		StreamRequestBody:     &tVal,
+	})
+
+	req, _ := httpparser.NewRequest("POST", "/api/v1/upload", "HTTP/1.1")
+	matchInfo, found := r.LookupPrefixRoute(req)
+	if !found || matchInfo == nil {
+		t.Fatalf("expected route match, got found=%v", found)
+	}
+
+	if matchInfo.Prefix != "/api/v1" {
+		t.Errorf("expected prefix '/api/v1', got %q", matchInfo.Prefix)
+	}
+	if matchInfo.MaxConcurrency != 16 {
+		t.Errorf("expected MaxConcurrency 16, got %d", matchInfo.MaxConcurrency)
+	}
+	if matchInfo.MaxBodyBytes != 100*1024*1024 {
+		t.Errorf("expected MaxBodyBytes 100MB, got %d", matchInfo.MaxBodyBytes)
+	}
+	if matchInfo.ReadTimeout != 10*time.Second {
+		t.Errorf("expected ReadTimeout 10s, got %v", matchInfo.ReadTimeout)
+	}
+	if matchInfo.WriteTimeout != 15*time.Second {
+		t.Errorf("expected WriteTimeout 15s, got %v", matchInfo.WriteTimeout)
+	}
+	if matchInfo.ResponseHeaderTimeout != 20*time.Second {
+		t.Errorf("expected ResponseHeaderTimeout 20s, got %v", matchInfo.ResponseHeaderTimeout)
+	}
+	if matchInfo.StreamRequestBody == nil || !*matchInfo.StreamRequestBody {
+		t.Errorf("expected StreamRequestBody true, got %v", matchInfo.StreamRequestBody)
+	}
+
+	// Non-matching request
+	reqNonMatch, _ := httpparser.NewRequest("GET", "/other/path", "HTTP/1.1")
+	_, found2 := r.LookupPrefixRoute(reqNonMatch)
+	if found2 {
+		t.Errorf("expected no match for /other/path, got true")
+	}
+}
+
+// TASK-173 / AC-173-2, AC-173-3 / TC-145-06: Bulkhead Concurrency Gate & Fast-Fail 503 Rejection
+func TestRouter_BulkheadConcurrency_FastFail503(t *testing.T) {
+	r := router.New()
+
+	holdGate := make(chan struct{})
+	enteredCount := int64(0)
+	enteredWg := sync.WaitGroup{}
+	enteredWg.Add(4)
+
+	err := r.AddRoute(router.PrefixRouteSpec{
+		Prefix:         "/bulkhead/test",
+		Method:         "GET",
+		MaxConcurrency: 4,
+		Handler: func(req *httpparser.Request, res *httpparser.Response) {
+			atomic.AddInt64(&enteredCount, 1)
+			enteredWg.Done()
+			<-holdGate
+			res.SetStatus(http.StatusOK)
+			_, _ = res.WriteString(`{"status":"done"}`)
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add route: %v", err)
+	}
+
+	// Ensure maxConcurrency is 4
+	matchInfo, found := r.LookupPrefixRoute(&httpparser.Request{Path: "/bulkhead/test", Method: "GET"})
+	if !found || matchInfo == nil {
+		t.Fatal("route not found")
+	}
+	if matchInfo.MaxConcurrency != 4 {
+		t.Fatalf("expected MaxConcurrency 4, got %d", matchInfo.MaxConcurrency)
+	}
+
+	// Dispatch 4 concurrent requests holding all slots
+	for i := 0; i < 4; i++ {
+		go func() {
+			req, _ := httpparser.NewRequest("GET", "/bulkhead/test", "HTTP/1.1")
+			res := httpparser.NewResponse()
+			r.ServeHTTP(req, res)
+		}()
+	}
+
+	enteredWg.Wait() // Ensure all 4 requests are actively holding slots
+
+	// 5th request should be immediately rejected with 503
+	req5, _ := httpparser.NewRequest("GET", "/bulkhead/test", "HTTP/1.1")
+	res5 := httpparser.NewResponse()
+	start := time.Now()
+	r.ServeHTTP(req5, res5)
+	elapsed := time.Since(start)
+
+	if res5.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503 Service Unavailable, got %d", res5.StatusCode)
+	}
+	if res5.Header.Get("Retry-After") != "5" {
+		t.Errorf("expected Retry-After: 5, got %q", res5.Header.Get("Retry-After"))
+	}
+	if !strings.Contains(res5.Body.String(), "503 Service Unavailable: Route concurrency limit reached") {
+		t.Errorf("expected rejection JSON body, got %q", res5.Body.String())
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("expected fast-fail in < 100ms, took %v", elapsed)
+	}
+
+	// Release the 4 holding requests
+	close(holdGate)
+}
+
+// TASK-173 / AC-173-4: Deterministic Release Verification & Panic Recovery
+func TestRouter_BulkheadConcurrency_DeterministicReleaseAndPanic(t *testing.T) {
+	r := router.New()
+	r.Use(router.RecoveryMiddleware())
+
+	_ = r.RoutePrefixWithSource("test", router.RouteTypeUpstream, "", "/panic/test", nil, "", proxy.ProxyOptions{
+		MaxConcurrency: 1,
+	})
+	r.HandlePrefix("GET", "/panic/test", func(req *httpparser.Request, res *httpparser.Response) {
+		panic("simulated route handler panic")
+	})
+
+	req, _ := httpparser.NewRequest("GET", "/panic/test", "HTTP/1.1")
+	res := httpparser.NewResponse()
+
+	// Should recover gracefully with 500
+	r.ServeHTTP(req, res)
+	if res.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("expected 500 on panic recovery, got %d", res.StatusCode)
+	}
+
+	// Concurrency slot must be decremented back to 0 so next request can acquire it!
+	info, found := r.LookupPrefixRoute(req)
+	if !found || info == nil {
+		t.Fatal("route lookup failed")
+	}
+
+	release, acquired := r.TryAcquireRouteSlot(info)
+	if !acquired {
+		t.Fatal("expected slot to be acquired after panic recovery, but route was still locked")
+	}
+	release()
+}
+
+// TASK-173 / AC-173-5: Automatic Bulkhead Safety Guardrail Derivation in Router
+func TestRouter_DefaultSafetyBulkheadDerivation(t *testing.T) {
+	r := router.New()
+	r.SetWorkerPoolSize(128)
+
+	// Elevated payload ceiling (256MB) without max_concurrency
+	_ = r.RoutePrefixWithSource("test", router.RouteTypeUpstream, "", "/elevated/body", nil, "", proxy.ProxyOptions{
+		Targets:      []string{"http://127.0.0.1:8080"},
+		MaxBodyBytes: 256 * 1024 * 1024,
+	})
+
+	req, _ := httpparser.NewRequest("POST", "/elevated/body", "HTTP/1.1")
+	info, found := r.LookupPrefixRoute(req)
+	if !found || info == nil {
+		t.Fatal("route not found")
+	}
+	if info.MaxConcurrency != 32 {
+		t.Errorf("expected auto guardrail 32 for elevated body, got %d", info.MaxConcurrency)
+	}
+
+	// Elevated response timeout (30s) without max_concurrency
+	_ = r.RoutePrefixWithSource("test", router.RouteTypeUpstream, "", "/elevated/timeout", nil, "", proxy.ProxyOptions{
+		Targets:               []string{"http://127.0.0.1:8080"},
+		ResponseHeaderTimeout: 30 * time.Second,
+	})
+	req2, _ := httpparser.NewRequest("GET", "/elevated/timeout", "HTTP/1.1")
+	info2, found2 := r.LookupPrefixRoute(req2)
+	if !found2 || info2 == nil {
+		t.Fatal("route 2 not found")
+	}
+	if info2.MaxConcurrency != 32 {
+		t.Errorf("expected auto guardrail 32 for elevated timeout, got %d", info2.MaxConcurrency)
+	}
+
+	// Standard route without elevated parameters
+	_ = r.RoutePrefixWithSource("test", router.RouteTypeUpstream, "", "/standard", nil, "", proxy.ProxyOptions{
+		Targets:               []string{"http://127.0.0.1:8080"},
+		MaxBodyBytes:          2 * 1024 * 1024,
+		ResponseHeaderTimeout: 5 * time.Second,
+	})
+	req3, _ := httpparser.NewRequest("GET", "/standard", "HTTP/1.1")
+	info3, found3 := r.LookupPrefixRoute(req3)
+	if !found3 || info3 == nil {
+		t.Fatal("route 3 not found")
+	}
+	if info3.MaxConcurrency != 0 {
+		t.Errorf("expected unconstrained (0) for standard route, got %d", info3.MaxConcurrency)
+	}
+}
+

@@ -82,6 +82,11 @@ func (cr *ChunkedBodyReader) Trailers() http.Header {
 	return cr.trailers
 }
 
+// IsEOF reports whether the chunked body stream has cleanly completed reading through the terminating chunk.
+func (cr *ChunkedBodyReader) IsEOF() bool {
+	return cr.state == stateDone
+}
+
 // Read decodes chunked transfer bytes into p, maintaining strict RFC 9112 state transitions.
 func (cr *ChunkedBodyReader) Read(p []byte) (int, error) {
 	if cr.closed {
@@ -492,3 +497,12 @@ func isForbiddenTrailer(key string) bool {
 		return false
 	}
 }
+
+// AttachChunkedBodyReader attaches a ChunkedBodyReader to req.Body using a resolved route ceiling maxBodyBytes.
+func AttachChunkedBodyReader(req *Request, r *bufio.Reader, closer io.Closer, maxBodyBytes int64) {
+	if req == nil {
+		return
+	}
+	req.Body = newChunkedBodyReader(r, closer, maxBodyBytes, req.Header)
+}
+

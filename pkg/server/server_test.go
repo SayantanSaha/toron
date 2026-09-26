@@ -4062,3 +4062,390 @@ func TestServer_E2E_RouteLevelOverrides(t *testing.T) {
 		mu.Unlock()
 	}
 }
+
+func TestServer_ActivityRefreshedReadDeadline_SustainedTransfer(t *testing.T) {
+	r := router.New()
+	var receivedBytes atomic.Int64
+	r.AddRoute(router.PrefixRouteSpec{
+		Prefix:       "/legacy/upload",
+		ReadTimeout:  120 * time.Millisecond,
+		MaxBodyBytes: 10 * 1024 * 1024,
+		Handler: func(req *httpparser.Request, res *httpparser.Response) {
+			buf := make([]byte, 1024)
+			for {
+				n, err := req.Body.Read(buf)
+				if n > 0 {
+					receivedBytes.Add(int64(n))
+				}
+				if err != nil {
+					break
+				}
+			}
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(fmt.Sprintf(`{"bytes_received":%d}`, receivedBytes.Load()))
+		},
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.ReadTimeout = 120 * time.Millisecond
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	totalChunks := 5
+	chunkSize := 2048
+	totalPayload := totalChunks * chunkSize
+	header := fmt.Sprintf("POST /legacy/upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", totalPayload)
+	if _, err := conn.Write([]byte(header)); err != nil {
+		t.Fatalf("failed to write headers: %v", err)
+	}
+
+	chunk := make([]byte, chunkSize)
+	for i := range chunk {
+		chunk[i] = 'A'
+	}
+
+	start := time.Now()
+	for i := 0; i < totalChunks; i++ {
+		time.Sleep(50 * time.Millisecond) // 50ms interval < 120ms timeout
+		if _, err := conn.Write(chunk); err != nil {
+			t.Fatalf("failed to write chunk %d: %v", i, err)
+		}
+	}
+	elapsed := time.Since(start)
+	if elapsed < 200*time.Millisecond {
+		t.Logf("sustained transfer took %v", elapsed)
+	}
+
+	respBytes, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("failed to read response: %v", err)
+	}
+	respStr := string(respBytes)
+	if !strings.Contains(respStr, "200 OK") {
+		t.Fatalf("expected 200 OK on sustained transfer, got: %s", respStr)
+	}
+	if receivedBytes.Load() != int64(totalPayload) {
+		t.Fatalf("expected %d bytes received, got %d", totalPayload, receivedBytes.Load())
+	}
+}
+
+func TestServer_ActivityRefreshedReadDeadline_SlowlorisStall(t *testing.T) {
+	r := router.New()
+	r.AddRoute(router.PrefixRouteSpec{
+		Prefix:       "/legacy/upload",
+		ReadTimeout:  100 * time.Millisecond,
+		MaxBodyBytes: 10 * 1024 * 1024,
+		Handler: func(req *httpparser.Request, res *httpparser.Response) {
+			_, _ = io.ReadAll(req.Body)
+			res.SetStatus(http.StatusOK)
+		},
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.ReadTimeout = 100 * time.Millisecond
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	header := "POST /legacy/upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10000\r\nConnection: close\r\n\r\n"
+	if _, err := conn.Write([]byte(header)); err != nil {
+		t.Fatalf("failed to write headers: %v", err)
+	}
+
+	// Send initial small burst
+	if _, err := conn.Write([]byte("initial burst")); err != nil {
+		t.Fatalf("failed to write initial burst: %v", err)
+	}
+
+	// Stall: wait for server to timeout (read_timeout is 100ms)
+	stallStart := time.Now()
+	buf := make([]byte, 1024)
+	_ = conn.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+	_, readErr := conn.Read(buf)
+	stallDuration := time.Since(stallStart)
+
+	if readErr == nil {
+		t.Fatalf("expected connection to be severed on stall, but read succeeded")
+	}
+	if stallDuration > 450*time.Millisecond {
+		t.Fatalf("server took too long to terminate stalled connection: %v", stallDuration)
+	}
+}
+
+func TestServer_ActivityReader_AntiDrip_RateClamping(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	defer clientConn.Close()
+	defer serverConn.Close()
+
+	tracker := server.NewConnDeadlineTracker(serverConn)
+	br := bufio.NewReader(serverConn)
+	timeout := 100 * time.Millisecond
+	actReader := server.NewActivityReader(br, serverConn, tracker, timeout, 1024*1024)
+
+	// Writer sends 1 byte, sleeps 60ms (< 100ms timeout), sends 1 byte, sleeps 60ms. Total 2 bytes in 120ms (> 100ms timeout).
+	go func() {
+		_, _ = clientConn.Write([]byte("A"))
+		time.Sleep(60 * time.Millisecond)
+		_, _ = clientConn.Write([]byte("B"))
+		time.Sleep(60 * time.Millisecond)
+		_, _ = clientConn.Write([]byte("C"))
+	}()
+
+	buf := make([]byte, 10)
+	n1, err1 := actReader.Read(buf)
+	if err1 != nil || n1 != 1 {
+		t.Fatalf("expected 1st byte, got n=%d, err=%v", n1, err1)
+	}
+
+	n2, err2 := actReader.Read(buf)
+	if err2 != nil || n2 != 1 {
+		t.Fatalf("expected 2nd byte, got n=%d, err=%v", n2, err2)
+	}
+
+	// 3rd read occurs after > 100ms total window with only 2 bytes (< 1024 minRateBytes)
+	_, err3 := actReader.Read(buf)
+	if err3 == nil {
+		t.Fatalf("expected anti-drip rate clamping error on 3rd read, got nil")
+	}
+}
+
+func TestServer_PreRead413FastFail(t *testing.T) {
+	r := router.New()
+	routeHit := false
+	r.AddRoute(router.PrefixRouteSpec{
+		Prefix:       "/legacy/upload",
+		MaxBodyBytes: 1024, // 1KB
+		Handler: func(req *httpparser.Request, res *httpparser.Response) {
+			routeHit = true
+			res.SetStatus(http.StatusOK)
+		},
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.MaxBodyBytes = 4096
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	// Content-Length 10MB exceeds 1KB route ceiling
+	header := "POST /legacy/upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: 10485760\r\nConnection: close\r\n\r\n"
+	start := time.Now()
+	if _, err := conn.Write([]byte(header)); err != nil {
+		t.Fatalf("failed to write headers: %v", err)
+	}
+
+	respBytes, err := io.ReadAll(conn)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		t.Fatalf("failed to read response: %v", err)
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Errorf("pre-read 413 fast-fail took too long: %v (expected < 100ms)", elapsed)
+	}
+	respStr := string(respBytes)
+	if !strings.Contains(respStr, "413 Payload Too Large") {
+		t.Fatalf("expected 413 Payload Too Large, got: %s", respStr)
+	}
+	if !strings.Contains(respStr, "request Content-Length exceeds effective route limit") {
+		t.Fatalf("expected structured error message, got: %s", respStr)
+	}
+	if routeHit {
+		t.Errorf("expected route handler NOT to be invoked on pre-read 413 fast-fail")
+	}
+}
+
+func TestServer_DecoupledWriteDeadline_UpstreamSlowBackend(t *testing.T) {
+	// Upstream backend takes 200ms to respond
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(200 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"backend":"done"}`))
+	}))
+	defer backend.Close()
+
+	proxyHandler, err := proxy.NewProxyWithOptions(proxy.ProxyOptions{
+		Targets:               []string{backend.URL},
+		ResponseHeaderTimeout: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("failed to create reverse proxy: %v", err)
+	}
+	defer proxyHandler.Close()
+
+	r := router.New()
+	r.AddRoute(router.PrefixRouteSpec{
+		Prefix:                "/api/slow",
+		RouteType:             "proxy",
+		ResponseHeaderTimeout: 500 * time.Millisecond,
+		Handler: func(req *httpparser.Request, res *httpparser.Response) {
+			proxyHandler.ServeHTTP(req, res)
+		},
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.WriteTimeout = 80 * time.Millisecond // Server WriteTimeout 80ms < backend delay 200ms
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+
+	conn, err := net.Dial("tcp", ln.Addr().String())
+	if err != nil {
+		t.Fatalf("failed to dial: %v", err)
+	}
+	defer conn.Close()
+
+	reqStr := "GET /api/slow HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+	if _, err := conn.Write([]byte(reqStr)); err != nil {
+		t.Fatalf("failed to write request: %v", err)
+	}
+
+	respBytes, err := io.ReadAll(conn)
+	if err != nil {
+		t.Fatalf("failed to read response: %v", err)
+	}
+	respStr := string(respBytes)
+	if !strings.Contains(respStr, "200 OK") {
+		t.Fatalf("expected 200 OK through decoupled write deadline, got: %s", respStr)
+	}
+	if !strings.Contains(respStr, `{"backend":"done"}`) {
+		t.Fatalf("expected backend response payload, got: %s", respStr)
+	}
+}
+
+func TestServer_RouteScopedBodyCeiling_200MBUploadAllowed(t *testing.T) {
+	r := router.New()
+	var uploadReceived atomic.Int64
+	r.AddRoute(router.PrefixRouteSpec{
+		Prefix:       "/legacy/upload",
+		MaxBodyBytes: 256 * 1024 * 1024, // 256 MB
+		Handler: func(req *httpparser.Request, res *httpparser.Response) {
+			n, _ := io.Copy(io.Discard, req.Body)
+			uploadReceived.Store(n)
+			res.SetStatus(http.StatusOK)
+			res.Header.Set("Content-Type", "application/json")
+			_, _ = res.WriteString(fmt.Sprintf(`{"bytes":%d}`, n))
+		},
+	})
+	r.AddRoute(router.PrefixRouteSpec{
+		Prefix: "/api/data",
+		// Default unconfigured: inherits global ceiling
+		Handler: func(req *httpparser.Request, res *httpparser.Response) {
+			res.SetStatus(http.StatusOK)
+		},
+	})
+
+	cfg := server.DefaultConfig()
+	cfg.Addr = "127.0.0.1:0"
+	cfg.MaxBodyBytes = 4 * 1024 * 1024 // 4 MB global ceiling
+	srv := server.New(cfg, r)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen: %v", err)
+	}
+	defer ln.Close()
+
+	go func() { _ = srv.Serve(ln) }()
+
+	// 1. Unconfigured route: 5MB upload should be rejected with 413
+	{
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		rawReq := "POST /api/data HTTP/1.1\r\nHost: localhost\r\nContent-Length: 5242880\r\nConnection: close\r\n\r\n"
+		_, _ = conn.Write([]byte(rawReq))
+		respBytes, _ := io.ReadAll(conn)
+		_ = conn.Close()
+		respStr := string(respBytes)
+		if !strings.Contains(respStr, "413 Payload Too Large") {
+			t.Fatalf("expected 413 on unconfigured route with 5MB upload, got:\n%s", respStr)
+		}
+	}
+
+	// 2. Configured route: 8MB upload (exceeding global 4MB ceiling) should succeed
+	{
+		conn, err := net.Dial("tcp", ln.Addr().String())
+		if err != nil {
+			t.Fatalf("failed to dial: %v", err)
+		}
+		payloadSize := 8 * 1024 * 1024
+		header := fmt.Sprintf("POST /legacy/upload HTTP/1.1\r\nHost: localhost\r\nContent-Length: %d\r\nConnection: close\r\n\r\n", payloadSize)
+		_, _ = conn.Write([]byte(header))
+
+		chunk := make([]byte, 64*1024)
+		sent := 0
+		for sent < payloadSize {
+			toSend := len(chunk)
+			if payloadSize-sent < toSend {
+				toSend = payloadSize - sent
+			}
+			n, werr := conn.Write(chunk[:toSend])
+			if werr != nil {
+				t.Fatalf("failed to write body: %v", werr)
+			}
+			sent += n
+		}
+
+		respBytes, _ := io.ReadAll(conn)
+		_ = conn.Close()
+		respStr := string(respBytes)
+		if !strings.Contains(respStr, "200 OK") {
+			t.Fatalf("expected 200 OK on configured route with 8MB upload, got:\n%s", respStr)
+		}
+		if uploadReceived.Load() != int64(payloadSize) {
+			t.Fatalf("expected %d bytes received, got %d", payloadSize, uploadReceived.Load())
+		}
+	}
+}
+

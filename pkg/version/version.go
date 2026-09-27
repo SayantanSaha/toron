@@ -7,7 +7,7 @@ import (
 )
 
 // DefaultVersion is the fallback canonical version string.
-const DefaultVersion = "1.5.29"
+const DefaultVersion = "1.6"
 
 // Build variables populated by Go linker flags (-ldflags) during compilation.
 var (
@@ -56,7 +56,7 @@ func GetInfo() Info {
 	}
 }
 
-// ShortString returns a clean string like "v1.5.29".
+// ShortString returns a clean string like "v1.6".
 func ShortString() string {
 	v := Get()
 	if !strings.HasPrefix(v, "v") {

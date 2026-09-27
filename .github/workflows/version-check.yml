@@ -1,0 +1,69 @@
+name: Canonical Version Check
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-version-alignment:
+    name: Verify Canonical Version Alignment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Single Source of Truth Fidelity
+        run: |
+          # 1. Read canonical VERSION
+          if [ ! -f VERSION ]; then
+            echo "::error::Canonical VERSION file is missing!"
+            exit 1
+          fi
+          CANONICAL_VERSION=$(cat VERSION | tr -d '[:space:]')
+          echo "Canonical Version: ${CANONICAL_VERSION}"
+
+          # 2. Check pkg/version/version.go
+          PKG_VERSION=$(grep 'const DefaultVersion =' pkg/version/version.go | cut -d '"' -f2)
+          if [ "$PKG_VERSION" != "$CANONICAL_VERSION" ]; then
+            echo "::error::pkg/version.DefaultVersion ($PKG_VERSION) does not match canonical VERSION ($CANONICAL_VERSION)"
+            exit 1
+          fi
+
+          # 3. Check Makefile fallback
+          if ! grep -q "echo \"$CANONICAL_VERSION\"" Makefile; then
+            echo "::error::Makefile fallback does not match canonical VERSION ($CANONICAL_VERSION)"
+            exit 1
+          fi
+
+          # 4. Check install.sh fallback
+          if ! grep -q "echo \"$CANONICAL_VERSION\"" install.sh; then
+            echo "::error::install.sh fallback does not match canonical VERSION ($CANONICAL_VERSION)"
+            exit 1
+          fi
+
+          # 5. Check install.bat fallback
+          if ! grep -q "set TORON_VERSION=$CANONICAL_VERSION" install.bat; then
+            echo "::error::install.bat fallback does not match canonical VERSION ($CANONICAL_VERSION)"
+            exit 1
+          fi
+
+          # 6. Check openapi/openapi.yaml
+          OPENAPI_VER=$(grep '^  version:' openapi/openapi.yaml | awk '{print $2}' | tr -d '[:space:]')
+          if [ "$OPENAPI_VER" != "$CANONICAL_VERSION" ]; then
+            echo "::error::openapi.yaml version ($OPENAPI_VER) does not match canonical VERSION ($CANONICAL_VERSION)"
+            exit 1
+          fi
+
+          # 7. Check public/index.html badge
+          if ! grep -q "id=\"envBadge\">v$CANONICAL_VERSION</span>" public/index.html; then
+            echo "::error::public/index.html envBadge does not match v$CANONICAL_VERSION"
+            exit 1
+          fi
+
+          echo "All components successfully aligned with canonical VERSION: ${CANONICAL_VERSION}"

@@ -1,0 +1,252 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nginx-test
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-ingress-config
+  namespace: nginx-test
+data:
+  nginx.conf: |
+    events { worker_connections 1024; }
+    http {
+      access_log off;
+      server {
+        listen 8080;
+        location = /health {
+          default_type application/json;
+          return 200 '{"status":"ok"}';
+        }
+        location = /stub_status {
+          stub_status;
+          access_log off;
+        }
+        location = /dashboard {
+          default_type text/html;
+          return 200 '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>NGINX Ingress Live Dashboard</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#f8fafc;margin:0;padding:24px}.header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #334155;padding-bottom:16px;margin-bottom:24px}h1{margin:0;font-size:24px;color:#38bdf8;display:flex;align-items:center;gap:10px}.badge{background:#0284c7;color:white;padding:4px 10px;border-radius:9999px;font-size:12px;font-weight:600}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px}.card-title{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}.card-value{font-size:32px;font-weight:700;color:#f1f5f9}.status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;margin-right:6px}pre{background:#020617;border:1px solid #1e293b;border-radius:8px;padding:16px;font-size:13px;color:#cbd5e1;overflow-x:auto}.section-title{font-size:16px;font-weight:600;margin-bottom:12px;color:#e2e8f0}</style></head><body><div class="header"><h1><span class="status-dot"></span>NGINX Ingress Live Dashboard</h1><span class="badge">nginx-ingress (Port 8080)</span></div><div class="grid"><div class="card"><div class="card-title">Active Connections</div><div class="card-value" id="active">-</div></div><div class="card"><div class="card-title">Total Handled</div><div class="card-value" id="handled">-</div></div><div class="card"><div class="card-title">Requests Served</div><div class="card-value" id="requests">-</div></div><div class="card"><div class="card-title">Reading / Writing / Waiting</div><div class="card-value" style="font-size:22px;" id="states">-</div></div></div><div class="section-title">Raw stub_status Telemetry</div><pre id="raw">Loading live telemetry from /stub_status...</pre><script>async function update(){try{const res=await fetch("/stub_status");const txt=await res.text();document.getElementById("raw").textContent=txt;const mActive=txt.match(/Active connections:\s+(\d+)/);const mReqs=txt.match(/\s+(\d+)\s+(\d+)\s+(\d+)/);const mStates=txt.match(/Reading:\s+(\d+)\s+Writing:\s+(\d+)\s+Waiting:\s+(\d+)/);if(mActive)document.getElementById("active").textContent=mActive[1];if(mReqs){document.getElementById("handled").textContent=mReqs[2];document.getElementById("requests").textContent=mReqs[3]}if(mStates)document.getElementById("states").textContent=mStates[1]+" / "+mStates[2]+" / "+mStates[3]}catch(e){document.getElementById("raw").textContent="Error polling status: "+e}}setInterval(update,1000);update()</script></body></html>';
+        }
+        location /dummy/ {
+          proxy_pass http://dummy-backend.nginx-test.svc.cluster.local:9001/;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+        location = /dummy {
+          return 302 /dummy/;
+        }
+        location /sidecar/ {
+          proxy_pass http://sidecar-service.nginx-test.svc.cluster.local:80/;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+        location = /sidecar {
+          return 302 /sidecar/;
+        }
+      }
+    }
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-sidecar-config
+  namespace: nginx-test
+data:
+  nginx.conf: |
+    events { worker_connections 1024; }
+    http {
+      access_log off;
+      server {
+        listen 15006;
+        location / {
+          proxy_pass http://127.0.0.1:9001;
+          proxy_set_header Host $host;
+          proxy_set_header X-Real-IP $remote_addr;
+          proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        }
+      }
+      server {
+        listen 15000;
+        location = /health {
+          default_type application/json;
+          return 200 '{"status":"ok","component":"nginx-sidecar"}';
+        }
+        location = /stub_status {
+          stub_status;
+          access_log off;
+        }
+        location / {
+          default_type text/html;
+          return 200 '<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>NGINX Sidecar Live Dashboard</title><style>body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0f172a;color:#f8fafc;margin:0;padding:24px}.header{display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid #334155;padding-bottom:16px;margin-bottom:24px}h1{margin:0;font-size:24px;color:#a855f7;display:flex;align-items:center;gap:10px}.badge{background:#9333ea;color:white;padding:4px 10px;border-radius:9999px;font-size:12px;font-weight:600}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}.card{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:20px}.card-title{font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}.card-value{font-size:32px;font-weight:700;color:#f1f5f9}.status-dot{display:inline-block;width:10px;height:10px;border-radius:50%;background:#22c55e;margin-right:6px}pre{background:#020617;border:1px solid #1e293b;border-radius:8px;padding:16px;font-size:13px;color:#cbd5e1;overflow-x:auto}.section-title{font-size:16px;font-weight:600;margin-bottom:12px;color:#e2e8f0}</style></head><body><div class="header"><h1><span class="status-dot"></span>NGINX Sidecar Live Dashboard</h1><span class="badge">nginx-sidecar (Port 15000 / Proxy: 15006)</span></div><div class="grid"><div class="card"><div class="card-title">Active Connections</div><div class="card-value" id="active">-</div></div><div class="card"><div class="card-title">Total Handled</div><div class="card-value" id="handled">-</div></div><div class="card"><div class="card-title">Requests Proxied</div><div class="card-value" id="requests">-</div></div><div class="card"><div class="card-title">Reading / Writing / Waiting</div><div class="card-value" style="font-size:22px;" id="states">-</div></div></div><div class="section-title">Proxy Target</div><p style="color:#94a3b8">Inbound mesh traffic arriving on port <code>15006</code> proxies directly to <code>http://127.0.0.1:9001</code> (dummy-app container).</p><div class="section-title">Raw stub_status Telemetry</div><pre id="raw">Loading live telemetry from /stub_status...</pre><script>async function update(){try{const res=await fetch("/stub_status");const txt=await res.text();document.getElementById("raw").textContent=txt;const mActive=txt.match(/Active connections:\s+(\d+)/);const mReqs=txt.match(/\s+(\d+)\s+(\d+)\s+(\d+)/);const mStates=txt.match(/Reading:\s+(\d+)\s+Writing:\s+(\d+)\s+Waiting:\s+(\d+)/);if(mActive)document.getElementById("active").textContent=mActive[1];if(mReqs){document.getElementById("handled").textContent=mReqs[2];document.getElementById("requests").textContent=mReqs[3]}if(mStates)document.getElementById("states").textContent=mStates[1]+" / "+mStates[2]+" / "+mStates[3]}catch(e){document.getElementById("raw").textContent="Error polling status: "+e}}setInterval(update,1000);update()</script></body></html>';
+        }
+      }
+    }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dummy-backend
+  namespace: nginx-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: dummy-backend
+  template:
+    metadata:
+      labels:
+        app: dummy-backend
+    spec:
+      containers:
+        - name: dummy-backend
+          image: dummy-services:test
+          imagePullPolicy: IfNotPresent
+          command: ["/app/dummy"]
+          args: ["-port", "9001", "-count", "1"]
+          ports:
+            - containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9001
+            initialDelaySeconds: 2
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dummy-backend
+  namespace: nginx-test
+spec:
+  type: ClusterIP
+  selector:
+    app: dummy-backend
+  ports:
+    - port: 9001
+      targetPort: 9001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: sidecar-app
+  namespace: nginx-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: sidecar-app
+  template:
+    metadata:
+      labels:
+        app: sidecar-app
+    spec:
+      containers:
+        - name: dummy-app
+          image: dummy-services:test
+          imagePullPolicy: IfNotPresent
+          command: ["/app/dummy"]
+          args: ["-port", "9001", "-count", "1"]
+          ports:
+            - containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9001
+            initialDelaySeconds: 2
+            periodSeconds: 5
+        - name: nginx-sidecar
+          image: nginx:alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: proxy
+              containerPort: 15006
+            - name: dashboard
+              containerPort: 15000
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: config
+          configMap:
+            name: nginx-sidecar-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: sidecar-service
+  namespace: nginx-test
+spec:
+  type: ClusterIP
+  selector:
+    app: sidecar-app
+  ports:
+    - port: 80
+      targetPort: 15006
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-sidecar-dashboard
+  namespace: nginx-test
+spec:
+  type: LoadBalancer
+  selector:
+    app: sidecar-app
+  ports:
+    - name: dashboard
+      port: 15000
+      targetPort: 15000
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-ingress
+  namespace: nginx-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nginx-ingress
+  template:
+    metadata:
+      labels:
+        app: nginx-ingress
+    spec:
+      containers:
+        - name: nginx-ingress
+          image: nginx:alpine
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          volumeMounts:
+            - name: config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+      volumes:
+        - name: config
+          configMap:
+            name: nginx-ingress-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-ingress-service
+  namespace: nginx-test
+spec:
+  type: LoadBalancer
+  selector:
+    app: nginx-ingress
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

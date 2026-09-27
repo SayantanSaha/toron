@@ -1,0 +1,154 @@
+{
+  "timestamp": "2026-09-27T06:58:42Z",
+  "platform": "Darwin arm64",
+  "workload": {
+    "requests": 1000,
+    "concurrency": 20
+  },
+  "targets": [
+    {
+      "id": "toron",
+      "name": "Toron (v1.5.29)",
+      "namespace": "toron-test",
+      "cluster_ip": "192.168.194.246",
+      "footprint": {
+        "image": "toron:test",
+        "image_size_mb": 9.4,
+        "ingress_rss_mb": 11.89,
+        "sidecar_rss_mb": 10.01
+      },
+      "benchmarks": {
+        "direct": {
+          "requests": 1000,
+          "concurrency": 20,
+          "rps": 486.1,
+          "mean_ms": 30.92,
+          "p50_ms": 0.96,
+          "p90_ms": 5.9,
+          "p95_ms": 205.65,
+          "p99_ms": 1004.26,
+          "failures": 0
+        },
+        "sidecar": {
+          "requests": 1000,
+          "concurrency": 20,
+          "rps": 495.2,
+          "mean_ms": 24.6,
+          "p50_ms": 1.06,
+          "p90_ms": 5.97,
+          "p95_ms": 8.4,
+          "p99_ms": 1002.33,
+          "failures": 0
+        }
+      }
+    },
+    {
+      "id": "nginx",
+      "name": "NGINX (Alpine)",
+      "namespace": "nginx-test",
+      "cluster_ip": "192.168.194.243",
+      "footprint": {
+        "image": "nginx:alpine",
+        "image_size_mb": 27.7,
+        "ingress_rss_mb": 3.27,
+        "sidecar_rss_mb": 2.11
+      },
+      "benchmarks": {
+        "direct": {
+          "requests": 1000,
+          "concurrency": 20,
+          "rps": 494.6,
+          "mean_ms": 21.58,
+          "p50_ms": 0.55,
+          "p90_ms": 1.43,
+          "p95_ms": 3.37,
+          "p99_ms": 1004.33,
+          "failures": 0
+        },
+        "sidecar": {
+          "requests": 1000,
+          "concurrency": 20,
+          "rps": 677.8,
+          "mean_ms": 22.62,
+          "p50_ms": 0.77,
+          "p90_ms": 2.04,
+          "p95_ms": 6.39,
+          "p99_ms": 1005.76,
+          "failures": 0
+        }
+      }
+    },
+    {
+      "id": "traefik",
+      "name": "Traefik (v3.1)",
+      "namespace": "traefik-test",
+      "cluster_ip": "192.168.194.175",
+      "footprint": {
+        "image": "traefik:v3.1",
+        "image_size_mb": 45.0,
+        "ingress_rss_mb": 29.43,
+        "sidecar_rss_mb": 31.21
+      },
+      "benchmarks": {
+        "direct": {
+          "requests": 1000,
+          "concurrency": 20,
+          "rps": 447.7,
+          "mean_ms": 22.15,
+          "p50_ms": 0.57,
+          "p90_ms": 1.15,
+          "p95_ms": 2.86,
+          "p99_ms": 1004.67,
+          "failures": 0
+        },
+        "sidecar": {
+          "requests": 1000,
+          "concurrency": 20,
+          "rps": 585.2,
+          "mean_ms": 21.83,
+          "p50_ms": 0.87,
+          "p90_ms": 3.01,
+          "p95_ms": 6.14,
+          "p99_ms": 1002.34,
+          "failures": 0
+        }
+      }
+    },
+    {
+      "id": "envoy",
+      "name": "Envoy (v1.31)",
+      "namespace": "envoy-test",
+      "cluster_ip": "192.168.194.161",
+      "footprint": {
+        "image": "envoyproxy/envoy:v1.31-latest",
+        "image_size_mb": 50.6,
+        "ingress_rss_mb": 35.26,
+        "sidecar_rss_mb": 20.82
+      },
+      "benchmarks": {
+        "direct": {
+          "requests": 1000,
+          "concurrency": 20,
+          "rps": 667.6,
+          "mean_ms": 21.07,
+          "p50_ms": 0.56,
+          "p90_ms": 2.13,
+          "p95_ms": 5.24,
+          "p99_ms": 1002.05,
+          "failures": 0
+        },
+        "sidecar": {
+          "requests": 1000,
+          "concurrency": 20,
+          "rps": 592.3,
+          "mean_ms": 22.86,
+          "p50_ms": 0.84,
+          "p90_ms": 1.44,
+          "p95_ms": 4.36,
+          "p99_ms": 1005.05,
+          "failures": 0
+        }
+      }
+    }
+  ]
+}

@@ -6,10 +6,13 @@ rem ============================================================================
 
 setlocal enabledelayedexpansion
 
-set TORON_VERSION=1.5.29
+set TORON_VERSION=1.6
 if exist "%~dp0VERSION" (
     set /p TORON_VERSION=<"%~dp0VERSION"
 )
+set GITHUB_REPO=SayantanSaha/toron
+if not "%TORON_GITHUB_REPO%"=="" set GITHUB_REPO=%TORON_GITHUB_REPO%
+set GITHUB_RELEASE_BASE=https://github.com/%GITHUB_REPO%/releases
 set INSTALL_BIN_DIR=C:\Program Files\Toron
 set INSTALL_CONF_DIR=C:\ProgramData\Toron
 set INSTALL_LOG_DIR=C:\ProgramData\Toron\logs
@@ -43,7 +46,7 @@ set TARGET_EXECUTABLE=toron-windows-%ARCH%.exe
 echo [INFO] Detected Architecture: %ARCH%
 echo [INFO] Target Binary Name: %TARGET_EXECUTABLE%
 
-rem Step 1: Locate or Compile Binary
+rem Step 1: Locate, Download, or Compile Binary
 set BINARY_SOURCE=
 
 if exist "%~dp0bin\%TARGET_EXECUTABLE%" (
@@ -54,21 +57,65 @@ if exist "%~dp0bin\%TARGET_EXECUTABLE%" (
     set BINARY_SOURCE=%~dp0toron.exe
 )
 
+rem If local binary not found, attempt to download from GitHub Releases
 if "%BINARY_SOURCE%"=="" (
-    where go >nul 2>&1
-    if %errorlevel% equ 0 (
-        echo [INFO] Local binary not found. Compiling %TARGET_EXECUTABLE% with Go...
-        if not exist "%~dp0bin" mkdir "%~dp0bin"
-        set CGO_ENABLED=0
-        set GOOS=windows
-        set GOARCH=%ARCH%
-        go build -o "%~dp0bin\%TARGET_EXECUTABLE%" "%~dp0cmd\toron"
-        set BINARY_SOURCE=%~dp0bin\%TARGET_EXECUTABLE%
+    set RELEASE_URL=%GITHUB_RELEASE_BASE%/download/v%TORON_VERSION%/%TARGET_EXECUTABLE%
+    set LATEST_URL=%GITHUB_RELEASE_BASE%/latest/download/%TARGET_EXECUTABLE%
+    set DOWNLOAD_DEST=%~dp0bin\%TARGET_EXECUTABLE%
+
+    echo [INFO] Local binary not found. Attempting download from GitHub Releases...
+    echo [INFO] Release URL: !RELEASE_URL!
+
+    if not exist "%~dp0bin" mkdir "%~dp0bin"
+
+    where curl >nul 2>&1
+    if !errorlevel! equ 0 (
+        curl -fsSL -o "!DOWNLOAD_DEST!" "!RELEASE_URL!" >nul 2>&1
+        if !errorlevel! neq 0 (
+            echo [WARN] Version v%TORON_VERSION% release not found; trying latest release...
+            curl -fsSL -o "!DOWNLOAD_DEST!" "!LATEST_URL!" >nul 2>&1
+        )
     ) else (
-        echo [ERROR] Could not find %TARGET_EXECUTABLE% in .\bin\ and Go is not installed to compile it.
-        pause
-        exit /b 1
+        where powershell >nul 2>&1
+        if !errorlevel! equ 0 (
+            powershell -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; try { (New-Object Net.WebClient).DownloadFile('!RELEASE_URL!', '!DOWNLOAD_DEST!') } catch { (New-Object Net.WebClient).DownloadFile('!LATEST_URL!', '!DOWNLOAD_DEST!') }" >nul 2>&1
+        )
     )
+
+    if exist "!DOWNLOAD_DEST!" (
+        for %%I in ("!DOWNLOAD_DEST!") do (
+            if %%~zI gtr 0 (
+                set BINARY_SOURCE=!DOWNLOAD_DEST!
+                echo [SUCCESS] Successfully downloaded %TARGET_EXECUTABLE% from GitHub Releases!
+            )
+        )
+    ) else (
+        echo [WARN] Could not download pre-built binary from GitHub Releases.
+    )
+)
+
+rem Fallback: Compile with Go if local source and Go compiler exist
+if "%BINARY_SOURCE%"=="" (
+    if exist "%~dp0cmd\toron" (
+        where go >nul 2>&1
+        if !errorlevel! equ 0 (
+            echo [INFO] Compiling %TARGET_EXECUTABLE% with Go from local source...
+            if not exist "%~dp0bin" mkdir "%~dp0bin"
+            set CGO_ENABLED=0
+            set GOOS=windows
+            set GOARCH=%ARCH%
+            go build -o "%~dp0bin\%TARGET_EXECUTABLE%" "%~dp0cmd\toron"
+            set BINARY_SOURCE=%~dp0bin\%TARGET_EXECUTABLE%
+        )
+    )
+)
+
+if "%BINARY_SOURCE%"=="" (
+    echo [ERROR] Could not obtain %TARGET_EXECUTABLE%.
+    echo         - Download failed from GitHub Releases: %GITHUB_RELEASE_BASE%/download/v%TORON_VERSION%/%TARGET_EXECUTABLE%
+    echo         - Local Go compiler or source code in .\cmd\toron not available.
+    pause
+    exit /b 1
 )
 
 echo [SUCCESS] Found executable binary: %BINARY_SOURCE%

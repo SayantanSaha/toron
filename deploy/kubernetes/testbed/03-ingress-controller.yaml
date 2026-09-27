@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: toron-ingress-controller
+  namespace: toron-test
+  labels:
+    app: toron-ingress-controller
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: toron-ingress-controller
+  template:
+    metadata:
+      labels:
+        app: toron-ingress-controller
+    spec:
+      serviceAccountName: toron-ingress-controller
+      containers:
+        - name: toron-ingress-controller
+          image: toron:test
+          imagePullPolicy: IfNotPresent
+          command:
+            - /usr/local/bin/toron
+            - -config
+            - /etc/toron-config/config.yaml
+            - -routes
+            - /etc/toron-config/routes.yaml
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config-volume
+              mountPath: /etc/toron-config
+      volumes:
+        - name: config-volume
+          configMap:
+            name: toron-ingress-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: toron-ingress-service
+  namespace: toron-test
+  labels:
+    app: toron-ingress-controller
+spec:
+  type: LoadBalancer
+  selector:
+    app: toron-ingress-controller
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080

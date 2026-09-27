@@ -27,7 +27,7 @@ export function bannerHTML(D) {
     text = `${alertCount} operational or security event${alertCount > 1 ? 's require' : ' requires'} administrative attention.`;
   }
 
-  const ver = rawApiStatus ? rawApiStatus.version : '1.5.29';
+  const ver = rawApiStatus ? rawApiStatus.version : '1.6';
   const meta = [['Instances', 'Primary Node'], ['Version', `v${ver}`], ['Engine', 'Zero-Allocation Reactor'], ['Uptime', 'Healthy']];
   const primaryBtnLabel = go === 'upstreams' ? 'View upstreams' : (go === 'certs' ? 'View certificates' : (go === 'routes' ? 'View routes' : 'View alerts'));
   return `<div class="banner ${lvl}"><div class="bn-main"><span class="bn-ic">${ICON(lvl === 'ok' ? 'i-check' : 'i-alert')}</span><div><h2>${esc(title)}</h2><p>${esc(text)}</p>${lvl !== 'ok' ? `<div class="bn-act">${go ? `<button class="btn primary" data-go="${go}">${esc(primaryBtnLabel)}</button>` : ''}<button class="btn" data-go="alerts">Open alerts</button></div>` : ''}</div></div><dl class="meta">${meta.map(([k, v]) => `<div><dt>${esc(k)}</dt><dd>${esc(v)}</dd></div>`).join('')}</dl></div>`;

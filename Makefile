@@ -6,7 +6,7 @@ BINARY_NAME=toron
 BUILD_DIR=bin
 MAIN_SRC=./cmd/toron
 
-VERSION ?= $(shell cat VERSION 2>/dev/null || echo "1.5.29")
+VERSION ?= $(shell cat VERSION 2>/dev/null || echo "1.6")
 GIT_COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
 BUILD_DATE ?= $(shell date -u +'%Y-%m-%dT%H:%M:%SZ')
 LDFLAGS = -X toron/pkg/version.Version=$(VERSION) -X toron/pkg/version.GitCommit=$(GIT_COMMIT) -X toron/pkg/version.BuildDate=$(BUILD_DATE)
@@ -28,6 +28,13 @@ build-darwin-arm64:
 	@echo "==> Building Toron binary for macOS ARM64 in $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64..."
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 $(MAIN_SRC)
 	@echo "==> macOS ARM64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64"
+
+## build-darwin-amd64: Compiles Toron binary for macOS Intel (x86_64)
+build-darwin-amd64:
+	@mkdir -p $(BUILD_DIR)
+	@echo "==> Building Toron binary for macOS AMD64 in $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64..."
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 $(MAIN_SRC)
+	@echo "==> macOS AMD64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64"
 
 ## build-linux-arm64: Compiles Toron binary for Linux ARM64 (aarch64)
 build-linux-arm64:
@@ -58,7 +65,7 @@ build-windows-arm64:
 	@echo "==> Windows ARM64 Build complete: $(BUILD_DIR)/$(BINARY_NAME)-windows-arm64.exe"
 
 ## build-all: Cross-compiles binaries for macOS, Linux, and Windows (ARM64 & AMD64)
-build-all: build-darwin-arm64 build-linux-arm64 build-linux-amd64 build-windows-amd64 build-windows-arm64
+build-all: build-darwin-arm64 build-darwin-amd64 build-linux-arm64 build-linux-amd64 build-windows-amd64 build-windows-arm64
 
 ifeq ($(OS),Windows_NT)
     INSTALL_CMD = cmd /c install.bat

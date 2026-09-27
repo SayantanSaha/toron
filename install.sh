@@ -7,7 +7,9 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TORON_VERSION="$(cat "${SCRIPT_DIR}/VERSION" 2>/dev/null || echo "1.5.29")"
+TORON_VERSION="$(cat "${SCRIPT_DIR}/VERSION" 2>/dev/null || echo "1.6")"
+GITHUB_REPO="${TORON_GITHUB_REPO:-SayantanSaha/toron}"
+GITHUB_RELEASE_BASE="https://github.com/${GITHUB_REPO}/releases"
 INSTALL_BIN_DIR="/usr/local/bin"
 INSTALL_CONF_DIR="/etc/toron"
 INSTALL_LOG_DIR="/var/log/toron"
@@ -123,7 +125,7 @@ fi
 check_privileges
 detect_os_arch
 
-# Step 1: Locate or compile binary
+# Step 1: Locate, download, or compile binary
 locate_binary() {
     log_info "Locating executable binary for ${TARGET_EXECUTABLE}..."
     local SCRIPT_DIR
@@ -131,7 +133,7 @@ locate_binary() {
 
     BINARY_SOURCE=""
 
-    # Check local bin/ folder first
+    # 1. Check local bin/ folder first
     if [[ -f "${SCRIPT_DIR}/bin/${TARGET_EXECUTABLE}" ]]; then
         BINARY_SOURCE="${SCRIPT_DIR}/bin/${TARGET_EXECUTABLE}"
     elif [[ -f "${SCRIPT_DIR}/bin/toron" && "${OS}" == "darwin" && "${ARCH}" == "arm64" ]]; then
@@ -140,15 +142,52 @@ locate_binary() {
         BINARY_SOURCE="${SCRIPT_DIR}/toron"
     fi
 
-    # Build if go is available and binary not found
+    # 2. If not found locally, attempt download from GitHub Releases
     if [[ -z "${BINARY_SOURCE}" ]]; then
-        if command -v go &>/dev/null; then
-            log_info "Local binary not found. Compiling ${TARGET_EXECUTABLE} with Go..."
+        local release_url="${GITHUB_RELEASE_BASE}/download/v${TORON_VERSION}/${TARGET_EXECUTABLE}"
+        local latest_url="${GITHUB_RELEASE_BASE}/latest/download/${TARGET_EXECUTABLE}"
+        local download_dir="${SCRIPT_DIR}/bin"
+        mkdir -p "${download_dir}" 2>/dev/null || download_dir="/tmp"
+        local download_target="${download_dir}/${TARGET_EXECUTABLE}"
+
+        log_info "Local binary not found. Attempting download from GitHub Releases..."
+        log_info "Release URL: ${release_url}"
+
+        local downloaded=false
+        if command -v curl &>/dev/null; then
+            if curl -fsSL "${release_url}" -o "${download_target}" 2>/dev/null; then
+                downloaded=true
+            elif curl -fsSL "${latest_url}" -o "${download_target}" 2>/dev/null; then
+                log_warn "Version v${TORON_VERSION} release asset not found; downloaded latest release asset."
+                downloaded=true
+            fi
+        elif command -v wget &>/dev/null; then
+            if wget -q "${release_url}" -O "${download_target}" 2>/dev/null; then
+                downloaded=true
+            elif wget -q "${latest_url}" -O "${download_target}" 2>/dev/null; then
+                log_warn "Version v${TORON_VERSION} release asset not found; downloaded latest release asset."
+                downloaded=true
+            fi
+        fi
+
+        if [[ "${downloaded}" == "true" && -s "${download_target}" ]]; then
+            chmod +x "${download_target}"
+            BINARY_SOURCE="${download_target}"
+            log_success "Successfully downloaded ${TARGET_EXECUTABLE} from GitHub Releases!"
+        else
+            log_warn "Could not download pre-built binary from GitHub Releases (${release_url})."
+        fi
+    fi
+
+    # 3. Fallback: Build if Go is available and local source is present
+    if [[ -z "${BINARY_SOURCE}" ]]; then
+        if [[ -d "${SCRIPT_DIR}/cmd/toron" ]] && command -v go &>/dev/null; then
+            log_info "Compiling ${TARGET_EXECUTABLE} from local source with Go..."
             mkdir -p "${SCRIPT_DIR}/bin"
             CGO_ENABLED=0 GOOS="${OS}" GOARCH="${ARCH}" go build -o "${SCRIPT_DIR}/bin/${TARGET_EXECUTABLE}" "${SCRIPT_DIR}/cmd/toron"
             BINARY_SOURCE="${SCRIPT_DIR}/bin/${TARGET_EXECUTABLE}"
         else
-            log_error "Could not find binary ${TARGET_EXECUTABLE} in ./bin/ and Go is not installed to compile it."
+            log_error "Could not obtain binary ${TARGET_EXECUTABLE}.\n       - Download failed from GitHub Releases: ${GITHUB_RELEASE_BASE}/download/v${TORON_VERSION}/${TARGET_EXECUTABLE}\n       - Local Go compiler or source code in ./cmd/toron not available."
         fi
     fi
 

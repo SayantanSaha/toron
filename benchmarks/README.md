@@ -18,8 +18,9 @@ The suite is engineered to generate empirical figures, tables, latency distribut
    - [Methodological Disambiguation & Generative Fuzzing (`run_generative_fuzz.sh`)](#45-methodological-disambiguation-invariant-regression-suite-vs-generative-differential-fuzzing-req-132-adr-132-task-155)
 8. [Heterogeneous Multi-Hop Backend Origin Testbed (`benchmarks/multihop/run_multihop.sh`, BMK-03)](#-5-heterogeneous-multi-hop-backend-origin-testbed-benchmarksmultihoprun_multihopsh)
 9. [Controlled Ablation Experiment Suite (`benchmarks/ablation/run_ablation.sh`, BMK-05)](#-6-controlled-ablation-experiment-suite-benchmarksablationrun_ablationsh)
-10. [Result Retention & Historical Manifest Architecture (`REQ-119`, `ADR-119`, `TASK-142`)](#-7-result-retention--historical-manifest-architecture-req-119-adr-119)
-11. [Troubleshooting & Operational FAQs](#-8-troubleshooting--operational-faqs)
+10. [Kubernetes Ingress & Service Mesh Sidecar Comparative Benchmark (`benchmarks/k8s-compare/`, BMK-06)](#-7-kubernetes-ingress--service-mesh-sidecar-comparative-benchmark-benchmarksk8s-compare)
+11. [Result Retention & Historical Manifest Architecture (`REQ-119`, `ADR-119`, `TASK-142`)](#-8-result-retention--historical-manifest-architecture-req-119-adr-119)
+12. [Troubleshooting & Operational FAQs](#-9-troubleshooting--operational-faqs)
 
 ---
 
@@ -83,6 +84,8 @@ benchmarks/
 │   ├── microbenchmarks.raw.txt          # Raw output from Go testing.B parser microbenchmarks
 │   ├── multihop_report.json             # Latest heterogeneous multi-hop evaluation JSON (BMK-03)
 │   ├── multihop_report.md               # Latest multi-hop cross-runtime Markdown matrix
+│   ├── k8s_compare_report.json          # Latest Kubernetes multi-proxy comparative JSON report (BMK-06)
+│   ├── k8s_compare_report.md            # Latest Kubernetes multi-proxy comparative Markdown report (BMK-06)
 │   ├── saturation_stress_report.json    # Latest dual-stream saturation stress JSON report (BMK-04)
 │   ├── saturation_stress_report.md      # Latest saturation stress Markdown report
 │   ├── server.log                       # Background Toron server log from automated runs
@@ -127,6 +130,14 @@ benchmarks/
 │   └── data/                            # Empirical telemetry data for Conditions A & B
 │       ├── condition_a/                 # Metadata and logs for ADR Multi-Agent Pipeline
 │       └── condition_b/                 # Prompts, diffs, telemetry & logs for Direct Prompting
+├── k8s-compare/                         # Kubernetes Ingress & Service Mesh Sidecar Comparative Suite (BMK-06)
+│   ├── run_k8s_compare.sh               # Execution harness integrating with historical retention
+│   ├── runner.py                        # Automated throughput, tail latency & footprint benchmarking engine
+│   └── configs/                         # Complete declarative K8s manifests for all evaluated proxies
+│       ├── toron/                       # Toron Ingress Controller + Toron Service Mesh Sidecar
+│       ├── nginx/                       # NGINX Ingress + NGINX Sidecar
+│       ├── traefik/                     # Traefik Ingress + Traefik Sidecar
+│       └── envoy/                       # Envoy Ingress + Envoy Sidecar
 └── retention/                           # Result retention & historical manifest engine (REQ-119, ADR-119)
     ├── retention.go                     # Core retention logic, atomic manifest writing & Git metadata
     ├── retention_test.go                # Unit test suite for manifest atomicity and directory creation
@@ -766,7 +777,49 @@ go test -v -race -count=1 ./benchmarks/ablation/...
 
 ---
 
-## 🗄️ 7. Result Retention & Historical Manifest Architecture (`REQ-119`, `ADR-119`)
+## ☸️ 7. Kubernetes Ingress & Service Mesh Sidecar Comparative Benchmark (`benchmarks/k8s-compare/run_k8s_compare.sh`, BMK-06)
+
+### Overview
+This subsystem empirically evaluates **Toron** against **NGINX**, **Traefik**, and **Envoy** deployed simultaneously inside a Kubernetes cluster across two architectural topologies:
+1. **Direct Ingress Routing**: Client $\rightarrow$ Ingress Proxy $\rightarrow$ Standalone Backend Pod (`dummy-backend:9001`).
+2. **Multi-Hop Service Mesh Sidecar Routing**: Client $\rightarrow$ Ingress Proxy $\rightarrow$ Pod Inbound Sidecar (`15006`) $\rightarrow$ App Container (`127.0.0.1:9001`).
+
+```mermaid
+flowchart TD
+    Client["Client / Load Generator"] --> Ingress["Ingress Controller / Proxy (Port 8080)"]
+    Ingress -->|/dummy| Standalone["dummy-backend Pod (Port 9001)"]
+    Ingress -->|/sidecar| SidecarPod["sidecar-app Multi-Container Pod"]
+    subgraph SidecarPod["Pod Network Namespace (localhost)"]
+        SidecarProxy["Sidecar Proxy (Port 15006)"] -->|127.0.0.1| AppContainer["dummy-app Container (Port 9001)"]
+    end
+```
+
+### Namespace Isolation & Declarative Testbed Manifests
+Declarative YAML manifests are housed under `benchmarks/k8s-compare/configs/`:
+- `configs/toron/manifest.yaml` (Namespace: `toron-test`): Toron Ingress Controller + Toron Sidecar (`toron:test`)
+- `configs/nginx/manifest.yaml` (Namespace: `nginx-test`): NGINX Ingress + NGINX Sidecar (`nginx:alpine`)
+- `configs/traefik/manifest.yaml` (Namespace: `traefik-test`): Traefik Ingress + Traefik Sidecar (`traefik:v3.1`)
+- `configs/envoy/manifest.yaml` (Namespace: `envoy-test`): Envoy Ingress + Envoy Sidecar (`envoyproxy/envoy:v1.31-latest`)
+
+### Benchmark Execution Harness
+The comparative benchmark is driven by [`benchmarks/k8s-compare/run_k8s_compare.sh`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/k8s-compare/run_k8s_compare.sh) and [`runner.py`](file:///Users/sneha/Developer/toron-research/toron/benchmarks/k8s-compare/runner.py), which automatically discovers ClusterIPs, queries container runtime memory (`docker stats` / cgroups), exercises concurrent workloads, and computes latency distributions:
+
+```bash
+# Execute Kubernetes multi-proxy comparison (1,000 requests, 20 concurrent workers)
+bash benchmarks/k8s-compare/run_k8s_compare.sh -n 1000 -c 20
+
+# Optional: automatically deploy testbeds before running
+bash benchmarks/k8s-compare/run_k8s_compare.sh --deploy -n 1500 -c 25
+```
+
+### Artifacts & Canonical Outputs
+- `benchmarks/results/k8s_compare_report.json`: Machine-readable telemetry and percentile latency distribution.
+- `benchmarks/results/k8s_compare_report.md`: Publication-grade comparison matrix.
+- `benchmarks/results/history/<timestamp>/`: Historical snapshot preserved in the retention tier.
+
+---
+
+## 🗄️ 8. Result Retention & Historical Manifest Architecture (`REQ-119`, `ADR-119`)
 
 ### Dual-Path Model
 To resolve the empirical loss and destructive overwrite of earlier benchmark executions while preserving zero-breaking-change compatibility for papers and CI scripts, Toron implements a **Dual-Path Retention Architecture**:
@@ -862,7 +915,7 @@ bash benchmarks/archive_run.sh archive \
 
 ---
 
-## 🔧 8. Troubleshooting & Operational FAQs
+## 🔧 9. Troubleshooting & Operational FAQs
 
 ### 1. Port Collision (`address already in use` on `127.0.0.1:8080`)
 - **Symptom**: Toron server fails to launch with `bind: address already in use`.

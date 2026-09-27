@@ -1,5 +1,25 @@
 # Release Notes
 
+## 2026-09-27 - Toron v1.6 Milestone (Universal Kubernetes Ingress, Service Mesh Sidecars & Multi-Platform Distribution)
+
+### Milestone Summary
+- **Universal Multi-Platform GitHub Release Distribution & Auto-Installers**:
+  - Configured automated GitHub Release integration across `install.sh` and `install.bat`, enabling seamless one-command downloads from GitHub Releases with automatic fallback to local Go compilation.
+  - Added automated GitHub Actions release workflow (`.github/workflows/release.yml`) cross-compiling static binaries for Linux (AMD64, ARM64), macOS (Intel, Apple Silicon), and Windows (AMD64, ARM64) with SHA256 integrity checksums.
+  - Added `build-darwin-amd64` to `Makefile` and aligned `make build-all` to produce complete multi-platform release assets.
+- **Enterprise Kubernetes Testbed & Live Multi-Engine Observability**:
+  - Deployed comprehensive Kubernetes comparison testbeds evaluating Toron against Traefik, Envoy, and NGINX in parallel namespaces (`toron-test`, `traefik-test`, `envoy-test`, `nginx-test`).
+  - Enabled live browser-accessible dashboards for both Ingress and Service Mesh Sidecar modes across all four gateway engines.
+  - Enabled the native **Toron Control Center Dashboard** (`/internal/dashboard/`) on Kubernetes Ingress (port 8080) and Sidecar (port 8081) with live SVG flow diagrams, in-memory ring-buffer request tracing, WAF security incident monitoring, and upstream health status cards.
+- **Enterprise Legacy Workload & Route-Scoped Ingress Isolation**:
+  - Two-phase HTTP request ingestion pipeline decoupling header parsing from body reading, with Tier-1 pre-read fast-fail rejection (`HTTP 413 Payload Too Large`).
+  - Route bulkhead concurrency gates (`max_concurrency`) isolating slow backends from reactor workers, returning `HTTP 503 Service Unavailable` with `Retry-After: 5` and a 75% worker pool capacity reservation guarantee.
+  - Sliding activity-refreshed read deadlines with anti-drip Slowloris rate clamping for large payload transfers (200 MB+).
+  - Decoupled backend response timeouts (`response_header_timeout`) preventing premature client disconnects with `HTTP 504 Gateway Timeout` on upstream expiration.
+  - Direct zero-copy request body proxy streaming with constant $O(1) \le 64\,\text{KB}$ memory footprint.
+
+---
+
 ## 2026-09-26 - Toron v1.5.37 Milestone (Enterprise Legacy Workload & Route-Scoped Ingress Isolation)
 
 ### Milestone Summary

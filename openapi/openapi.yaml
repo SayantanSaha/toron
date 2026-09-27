@@ -9,7 +9,7 @@ info:
     Configured reverse-proxy and static routes are intentionally not enumerated
     here because their paths are supplied dynamically through routing
     configuration.
-  version: 1.5.29
+  version: 1.6
   license:
     name: Proprietary / Project License
 servers:

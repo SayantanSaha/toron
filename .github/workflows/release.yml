@@ -1,0 +1,115 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag override (optional; defaults to v<VERSION> from canonical VERSION file)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-release:
+    name: Build & Release Binaries
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+          check-latest: true
+
+      - name: Read Canonical Version & Metadata
+        id: meta
+        run: |
+          # 1. Enforce canonical VERSION file as single source of truth
+          if [ ! -f VERSION ]; then
+            echo "::error::Canonical VERSION file not found in repository root!"
+            exit 1
+          fi
+          CANONICAL_VERSION=$(cat VERSION | tr -d '[:space:]')
+          if [ -z "$CANONICAL_VERSION" ]; then
+            echo "::error::Canonical VERSION file is empty!"
+            exit 1
+          fi
+          echo "Canonical version file content: ${CANONICAL_VERSION}"
+
+          # 2. Determine release tag
+          TAG="${{ github.event.inputs.tag }}"
+          if [ -z "$TAG" ]; then
+            if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+              TAG="${GITHUB_REF#refs/tags/}"
+            else
+              TAG="v${CANONICAL_VERSION}"
+            fi
+          fi
+
+          # 3. Log alignment check between tag and canonical version
+          TAG_CLEAN="${TAG#v}"
+          if [ "${TAG_CLEAN}" != "${CANONICAL_VERSION}" ]; then
+            echo "::warning::Release tag (${TAG}) differs from canonical VERSION (${CANONICAL_VERSION}). Canonical VERSION will be embedded into binaries."
+          fi
+
+          GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+          echo "canonical_version=${CANONICAL_VERSION}" >> $GITHUB_OUTPUT
+          echo "version=${CANONICAL_VERSION}" >> $GITHUB_OUTPUT
+          echo "tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "commit=${GIT_COMMIT}" >> $GITHUB_OUTPUT
+          echo "date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+
+      - name: Compile Cross-Platform Binaries
+        env:
+          VERSION: ${{ steps.meta.outputs.canonical_version }}
+          GIT_COMMIT: ${{ steps.meta.outputs.commit }}
+          BUILD_DATE: ${{ steps.meta.outputs.date }}
+        run: |
+          mkdir -p dist
+          LDFLAGS="-s -w -X toron/pkg/version.Version=${VERSION} -X toron/pkg/version.GitCommit=${GIT_COMMIT} -X toron/pkg/version.BuildDate=${BUILD_DATE}"
+
+          echo "Building macOS ARM64 with canonical version ${VERSION}..."
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/toron-darwin-arm64 ./cmd/toron
+
+          echo "Building macOS AMD64 with canonical version ${VERSION}..."
+          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/toron-darwin-amd64 ./cmd/toron
+
+          echo "Building Linux ARM64 with canonical version ${VERSION}..."
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/toron-linux-arm64 ./cmd/toron
+
+          echo "Building Linux AMD64 with canonical version ${VERSION}..."
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/toron-linux-amd64 ./cmd/toron
+
+          echo "Building Windows AMD64 with canonical version ${VERSION}..."
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "$LDFLAGS" -o dist/toron-windows-amd64.exe ./cmd/toron
+
+          echo "Building Windows ARM64 with canonical version ${VERSION}..."
+          CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -ldflags "$LDFLAGS" -o dist/toron-windows-arm64.exe ./cmd/toron
+
+      - name: Generate Checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create GitHub Release & Upload Assets
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: Toron ${{ steps.meta.outputs.tag }}
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+          files: |
+            dist/*

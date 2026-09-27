@@ -1,7 +1,7 @@
 {
   "schema_version": "1.0",
-  "updated_at": "2026-09-17T00:57:09+05:30",
-  "total_runs": 12,
+  "updated_at": "2026-09-27T12:29:16+05:30",
+  "total_runs": 13,
   "runs": [
     {
       "run_id": "run_2026-09-12_12-41-19",
@@ -365,6 +365,17 @@
         "docker_compare_report.json",
         "docker_compare_report.md"
       ]
+    },
+    {
+      "run_id": "run_2026-09-27_12-28-42",
+      "timestamp": "2026-09-27T12:29:16+05:30",
+      "directory": "benchmarks/results/history/2026-09-27_12-28-42",
+      "suite": "k8s_compare",
+      "git_commit": "1d95fcd615959a6b14d8c3218e2f48019bb84093",
+      "git_branch": "master",
+      "go_version": "go1.27.1",
+      "status": "success",
+      "duration_seconds": 34
     }
   ]
 }

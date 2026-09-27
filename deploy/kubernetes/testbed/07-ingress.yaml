@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: toron-ingress
+  namespace: toron-test
+  annotations:
+    toron.io/health-check: "/health"
+    toron.io/health-check-interval: "5s"
+spec:
+  ingressClassName: toron
+  rules:
+    - http:
+        paths:
+          - path: /dummy
+            pathType: Prefix
+            backend:
+              service:
+                name: dummy-backend
+                port:
+                  number: 9001
+          - path: /sidecar
+            pathType: Prefix
+            backend:
+              service:
+                name: sidecar-service
+                port:
+                  number: 80

@@ -1,0 +1,137 @@
+name: Publish Container Images
+
+on:
+  push:
+    branches:
+      - master
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      push:
+        description: 'Push images to container registries (true/false)'
+        required: false
+        default: 'true'
+        type: string
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    name: Build & Publish Container Images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read Canonical Version & Metadata
+        id: meta-info
+        run: |
+          if [ ! -f VERSION ]; then
+            echo "::error::Canonical VERSION file not found!"
+            exit 1
+          fi
+          CANONICAL_VERSION=$(cat VERSION | tr -d '[:space:]')
+          GIT_COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          BUILD_DATE=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+
+          echo "version=${CANONICAL_VERSION}" >> $GITHUB_OUTPUT
+          echo "commit=${GIT_COMMIT}" >> $GITHUB_OUTPUT
+          echo "date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+          echo "Canonical version: ${CANONICAL_VERSION} (${GIT_COMMIT})"
+
+      - name: Determine Target Registries & Images
+        id: registries
+        env:
+          DOCKERHUB_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          # 1. GHCR is always enabled via GITHUB_TOKEN
+          GHCR_REPO="ghcr.io/${{ github.repository }}"
+          GHCR_REPO=$(echo "$GHCR_REPO" | tr '[:upper:]' '[:lower:]')
+
+          HAS_DOCKERHUB="false"
+          {
+            echo "images<<EOF"
+            echo "${GHCR_REPO}"
+            # 2. Check if Docker Hub credentials are configured
+            if [ -n "$DOCKERHUB_USER" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+              DH_REPO=$(echo "$DOCKERHUB_USER/toron" | tr '[:upper:]' '[:lower:]')
+              echo "${DH_REPO}"
+              HAS_DOCKERHUB="true"
+              echo "Configured Docker Hub repository: ${DH_REPO}" >&2
+            else
+              echo "::notice::Docker Hub credentials (DOCKERHUB_USERNAME / DOCKERHUB_TOKEN) not set. Container will be published to GitHub Packages (${GHCR_REPO})." >&2
+            fi
+            echo "EOF"
+          } >> $GITHUB_OUTPUT
+
+          echo "has_dockerhub=${HAS_DOCKERHUB}" >> $GITHUB_OUTPUT
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry (GHCR)
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to Docker Hub
+        if: steps.registries.outputs.has_dockerhub == 'true'
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker metadata & tags
+        id: docker-meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.registries.outputs.images }}
+          flavor: |
+            latest=auto
+          tags: |
+            type=raw,value=${{ steps.meta-info.outputs.version }}
+            type=raw,value=v${{ steps.meta-info.outputs.version }}
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v') }}
+            type=sha,format=short,prefix=sha-
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+          labels: |
+            org.opencontainers.image.title=Toron
+            org.opencontainers.image.description=High-Performance Reverse Proxy & Edge Gateway in Go
+            org.opencontainers.image.url=https://github.com/SayantanSaha/toron
+            org.opencontainers.image.source=https://github.com/SayantanSaha/toron
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.version=${{ steps.meta-info.outputs.version }}
+
+      - name: Build and Push Multi-Platform Container Images
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.push != 'false' }}
+          tags: ${{ steps.docker-meta.outputs.tags }}
+          labels: ${{ steps.docker-meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.meta-info.outputs.version }}
+            GIT_COMMIT=${{ steps.meta-info.outputs.commit }}
+            BUILD_DATE=${{ steps.meta-info.outputs.date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

@@ -66,4 +66,10 @@ jobs:
             exit 1
           fi
 
+          # 8. Check Dockerfile ARG VERSION
+          if ! grep -q "ARG VERSION=$CANONICAL_VERSION" Dockerfile; then
+            echo "::error::Dockerfile ARG VERSION does not match canonical VERSION ($CANONICAL_VERSION)"
+            exit 1
+          fi
+
           echo "All components successfully aligned with canonical VERSION: ${CANONICAL_VERSION}"

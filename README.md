@@ -76,8 +76,10 @@ make build-windows-amd64  # Windows x86_64
 #### Option C: Docker & Containerization
 
 ```bash
-# Build lightweight scratch-based container image
-docker build -t toron:latest .
+# Pull official pre-built multi-arch container (linux/amd64, linux/arm64)
+docker pull ghcr.io/sayantansaha/toron:latest
+# Or from Docker Hub:
+# docker pull sayantansaha/toron:latest
 
 # Run Toron container publishing HTTP (8080) and HTTP/3 QUIC (8443/udp)
 docker run -d \
@@ -86,7 +88,10 @@ docker run -d \
   -p 8443:8443/udp \
   -v $(pwd)/config.yaml:/etc/toron/config.yaml:ro \
   -v $(pwd)/routes.yaml:/etc/toron/routes.yaml:ro \
-  toron:latest
+  ghcr.io/sayantansaha/toron:latest
+
+# Or build locally:
+docker build -t toron:latest .
 
 # Or launch with docker-compose:
 docker-compose up -d

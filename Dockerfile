@@ -4,10 +4,18 @@
 # Stage 2: Minimal, secure production execution appliance (~15 MB)
 # ==============================================================================
 
+ARG VERSION=1.6
+ARG GIT_COMMIT=unknown
+ARG BUILD_DATE=unknown
+
 # ------------------------------------------------------------------------------
 # Stage 1: Builder
 # ------------------------------------------------------------------------------
 FROM golang:alpine AS builder
+
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_DATE
 
 WORKDIR /src
 
@@ -17,13 +25,19 @@ COPY go.mod ./
 # Copy full source tree
 COPY . .
 
-# Build static Linux binary (CGO_ENABLED=0)
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /src/bin/toron ./cmd/toron
+# Build static Linux binary (CGO_ENABLED=0) with injected version metadata
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X toron/pkg/version.Version=${VERSION} -X toron/pkg/version.GitCommit=${GIT_COMMIT} -X toron/pkg/version.BuildDate=${BUILD_DATE}" \
+    -o /src/bin/toron ./cmd/toron
 
 # ------------------------------------------------------------------------------
 # Stage 2: Production Appliance
 # ------------------------------------------------------------------------------
 FROM alpine:latest AS runner
+
+ARG VERSION
+ARG GIT_COMMIT
+ARG BUILD_DATE
 
 # Install TLS CA certificates and timezone data
 RUN apk --no-cache add ca-certificates tzdata
@@ -38,6 +52,16 @@ COPY --from=builder /src/bin/toron /usr/local/bin/toron
 COPY config.yaml /etc/toron/config.yaml
 COPY routes.yaml /etc/toron/routes.yaml
 COPY public/ /etc/toron/public/
+
+# Standard OCI Image Labels
+LABEL org.opencontainers.image.title="Toron" \
+      org.opencontainers.image.description="High-Performance Reverse Proxy & Edge Gateway in Go" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.revision="${GIT_COMMIT}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.url="https://github.com/SayantanSaha/toron" \
+      org.opencontainers.image.source="https://github.com/SayantanSaha/toron" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
 # Expose standard Toron Edge Gateway ports
 # 8080: HTTP Gateway & Web Control Center Dashboard

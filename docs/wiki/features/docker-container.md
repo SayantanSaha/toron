@@ -6,29 +6,50 @@ Toron Edge Gateway is packaged as a multi-stage, ultra-lightweight Docker applia
 
 ## ⚡ Quickstart Container Commands
 
+### Pulling Pre-Built Multi-Arch Images (`linux/amd64`, `linux/arm64`)
+
+Official multi-architecture images are published to both GitHub Packages Container Registry (GHCR) and Docker Hub on every release:
+
 ```bash
-# Build the Toron Docker image using Makefile
-make docker-build
+# Pull from GitHub Packages (GHCR)
+docker pull ghcr.io/sayantansaha/toron:latest
+docker pull ghcr.io/sayantansaha/toron:1.6
 
-# Or build directly with Docker CLI
-docker build -t toron:latest .
+# Or pull from Docker Hub
+docker pull sayantansaha/toron:latest
+docker pull sayantansaha/toron:1.6
+```
 
+### Running the Container
+
+```bash
 # Run Toron container with Docker socket auto-discovery
 docker run -d \
   --name toron-gateway \
   -p 8080:8080 \
   -p 8443:8443 \
   -v /var/run/docker.sock:/var/run/docker.sock \
-  -v /etc/toron/config.yaml:/etc/toron/config.yaml \
-  toron:latest
+  -v $(pwd)/config.yaml:/etc/toron/config.yaml:ro \
+  -v $(pwd)/routes.yaml:/etc/toron/routes.yaml:ro \
+  ghcr.io/sayantansaha/toron:latest
+```
+
+### Building Locally
+
+```bash
+# Build the Toron Docker image using Makefile
+make docker-build
+
+# Or build directly with Docker CLI
+docker build -t toron:latest .
 ```
 
 ---
 
 ## 🏗️ Multi-Stage Docker Architecture
 
-1. **Stage 1 (`builder`)**: Uses `golang:alpine` to statically compile `cmd/toron/main.go` with `CGO_ENABLED=0 GOOS=linux`.
-2. **Stage 2 (`runner`)**: Uses `alpine:latest` with CA certificates (`ca-certificates`), timezone data (`tzdata`), `/etc/toron` default configuration, and static Web Control Center UI files (`/etc/toron/public/`).
+1. **Stage 1 (`builder`)**: Uses `golang:alpine` to statically compile `cmd/toron/main.go` with `CGO_ENABLED=0 GOOS=linux`, embedding canonical version metadata via linker flags (`-ldflags`).
+2. **Stage 2 (`runner`)**: Uses `alpine:latest` with CA certificates (`ca-certificates`), timezone data (`tzdata`), `/etc/toron` default configuration, and static Web Control Center UI files (`/etc/toron/public/`). Includes OCI image labels.
 
 ---
 
@@ -52,8 +73,7 @@ version: '3.8'
 
 services:
   toron:
-    image: toron:latest
-    build: .
+    image: ghcr.io/sayantansaha/toron:latest
     container_name: toron-edge-gateway
     ports:
       - "8080:8080"

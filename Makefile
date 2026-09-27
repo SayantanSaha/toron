@@ -114,8 +114,13 @@ clean:
 
 ## docker-build: Builds the Toron Docker image using multi-stage Dockerfile
 docker-build:
-	@echo "==> Building Toron Docker image (toron:latest)..."
-	docker build -t toron:latest .
+	@echo "==> Building Toron Docker image (toron:latest & toron:$(VERSION))..."
+	docker build \
+		--build-arg VERSION=$(VERSION) \
+		--build-arg GIT_COMMIT=$(GIT_COMMIT) \
+		--build-arg BUILD_DATE=$(BUILD_DATE) \
+		-t toron:latest \
+		-t toron:$(VERSION) .
 
 ## docker-run: Runs Toron inside a Docker container
 docker-run: docker-build

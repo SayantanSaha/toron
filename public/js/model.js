@@ -306,16 +306,10 @@ export function buildDataModel() {
   certs.forEach(c => {
     if (c.state === 'failing') alerts.push({ id: `cert_${c.id}`, sev: 'critical', title: `Certificate Renewal Failed: ${c.domain}`, timestamp: now - 300000, ip: '', go: 'certs', detail: () => `Automated Let's Encrypt renewal failed for domain ${c.domain}.` });
   });
-  (rawApiIncidents || []).forEach((inc, i) => {
-    alerts.push({ id: `inc_${i}`, sev: 'warning', title: `WAF Security Anomaly: ${inc.category || inc.rule_id || 'Threat'} on ${inc.path}`, timestamp: inc.timestamp ? new Date(inc.timestamp).getTime() : now, ip: inc.client_ip || '', go: 'alerts', detail: () => `Blocked malicious threat from client IP ${inc.client_ip || 'unknown'}` });
-  });
-  (rawApiBannedIps || []).forEach((ban, i) => {
-    alerts.push({ id: `ban_${i}`, sev: ban.type === 'permanent' ? 'critical' : 'warning', title: `Banned Threat Actor: ${ban.ip} (${ban.type})`, timestamp: ban.created_at ? new Date(ban.created_at).getTime() : now, ip: ban.ip || '', go: 'alerts', detail: () => ban.reason || 'IP address has been banned due to repeated security violations' });
-  });
 
   alerts.sort((a, b) => {
     const dt = (b.timestamp || 0) - (a.timestamp || 0);
-    return dt !== 0 ? dt : (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true });
+    return dt !== 0 ? dt : (a.ip || a.id || '').localeCompare(b.ip || b.id || '', undefined, { numeric: true });
   });
 
   const computed = {
@@ -330,7 +324,8 @@ export function buildDataModel() {
     certs,
     modules,
     alerts,
-    bannedIps: rawApiBannedIps
+    incidents: rawApiIncidents || [],
+    bannedIps: rawApiBannedIps || []
   };
 
   setCache(computed);

@@ -12,7 +12,7 @@ import { upShell, upUpdate } from './views/upstreams.js';
 import { lgShell, lgInit, lgUpdate, lgSync } from './views/logs.js';
 import { ceShell, ceUpdate } from './views/certs.js';
 import { mdShell, mdUpdate } from './views/modules.js';
-import { alShell, alUpdate } from './views/alerts.js';
+import { alShell, alInit, alUpdate } from './views/alerts.js';
 import { consoleShell, consoleInit, consoleUpdate } from './views/console.js';
 
 export const NAV = [
@@ -44,7 +44,7 @@ export const VIEWS = {
   logs: { shell: lgShell, init: lgInit, update: lgUpdate },
   certs: { shell: ceShell, update: ceUpdate },
   modules: { shell: mdShell, update: mdUpdate },
-  alerts: { shell: alShell, update: alUpdate },
+  alerts: { shell: alShell, init: alInit, update: alUpdate },
   console: { shell: consoleShell, init: consoleInit, update: consoleUpdate }
 };
 

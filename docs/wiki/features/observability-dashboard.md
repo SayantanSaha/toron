@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-09-21
-updated: 2026-09-23
+updated: 2026-09-28
 
 documents:
   - OBSERVABILITY-DASHBOARD
@@ -13,6 +13,8 @@ related_to:
   - ../reference/api.md
   - ../configuration.md
   - ../release-notes.md
+  - ./waf.md
+  - ./os-level-ip-blocking.md
 ---
 
 # High-Density Gateway Observability Dashboard
@@ -54,6 +56,12 @@ The dashboard client engine (`public/js/app.js`) polls Toron's internal manageme
 
 ### 6. API Console
 - Interactive diagnostic probe tool calling `POST /internal/api/proxy-test` to test endpoints and inspect response headers and bodies.
+
+### 7. Alerts & Threat Defense Control Center
+- **4-Card Security KPI Strip**: Top-level executive metric cards displaying active alerts and unmitigated incidents, recent WAF-blocked attacks, Stage 1 temporary bans, and Stage 2 permanent firewall bans.
+- **Decoupled Threat Actor Quarantine**: Dedicated manual IP blocking toolbar with client-side IPv4/IPv6 syntax validation, duration presets (`15m`, `1h`, `6h`, `24h`, `7d`, `Permanent`), custom interval inputs, and incident context reasons.
+- **Active Incidents & Forensic Investigation**: Real-time searchable and faceted security incident feed with slide-out forensic drawer detailing OWASP rule IDs, anomaly scores, parameter locations, raw attack payloads, and instant remediation actions.
+- **Dynamic 2-Stage Auto-Ban Table**: Sortable, paginated IP firewall table featuring deterministic IP tie-breaking, non-blocking in-app confirmation modal, and floating toast feedback for unban operations.
 
 ---
 
@@ -248,6 +256,189 @@ Opening a request row renders execution spans across listener, router, WAF, and 
 
 ---
 
+## Alerts & Threat Defense Control Center
+
+The **Alerts & Threat Defense Control Center** (`#/alerts`) is Toron's operational cockpit for edge security monitoring, threat analysis, and firewall policy management. Serving as the primary interface for the native [Web Application Firewall (WAF)](./waf.md) and dynamic 2-stage auto-ban engine (see [OS-Level IP Blocking](./os-level-ip-blocking.md)), this view combines high-density forensic analysis with zero-dependency native browser ECMAScript Modules (`public/js/views/alerts.js`).
+
+The interface provides an executive security KPI strip, an ergonomically decoupled threat quarantine panel, multi-attribute real-time searching and faceted filtering, client-side pagination, interactive table sorting with deterministic tie-breaking, non-blocking modal workflows, and a slide-out forensic incident investigation drawer.
+
+```text
++---------------------------------------------------------------------------------------------------------+
+|                                  SECURITY KPI METRICS STRIP                                             |
+|  [ Active Incidents: 2 ]   [ Recent WAF Blocks: 18 ]   [ Stage 1 Temp Bans: 7 ]   [ Stage 2 Perm: 3 ]   |
++---------------------------------------------------------------------------------------------------------+
+|                                MANUAL THREAT ACTOR QUARANTINE                                           |
+|  [ IP Address ]  [ Tier: 1h Temp v ]  [ Context / Reason ]  [ Ban Threat Actor ]                        |
++---------------------------------------------------------------------------------------------------------+
+|  ACTIVE ALERTS & WAF INCIDENTS                                                                          |
+|  [ Search incidents... ] [ All | Critical | Warning ]                                                    |
+|  - SQL Injection [Blocked] POST /v1/auth/login · Rule 942100 · IP 198.51.100.99 · Score: 15              |
+|  - Cross-Site Scripting [Blocked] GET /search · Rule 941100 · IP 203.0.113.42 · Score: 12              |
+|  Showing 1–10 of 18 incidents  |  << < Page 1 / 2 > >>  |  [ 10 / page v ]                              |
++---------------------------------------------------------------------------------------------------------+
+|  DYNAMIC 2-STAGE AUTO-BAN & BLOCKED IPS                                                                 |
+|  [ Search bans... ] [ All | Stage 1 (1h Temp) | Stage 2 (Permanent) ]                                   |
+|  Table: Client IP ▲ | Ban Tier | Created At | Temp Bans | Reason / Category | TTL / Expiry | Action      |
+|  Showing 1–10 of 10 banned IPs  |  << < Page 1 / 1 > >>  |  [ 25 / page v ]                             |
++---------------------------------------------------------------------------------------------------------+
+```
+
+### 1. Executive 4-Card Security KPI Metrics Strip
+
+The top of the view renders a responsive 4-column metric grid (`.al-kpi-grid`) presenting immediate high-level situational awareness across edge threat activity:
+
+| KPI Metric Card | Target Element | Derived Data Source | Tone Escalation | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Active Incidents / Alerts** | `#alKpiActive` | `D.alerts.length` + unmitigated `D.incidents.length` | `var(--err)` if $> 0$, `var(--ok)` if 0 | Total unresolved operational degradations and active Layer 7 security alerts requiring operator attention. |
+| **Recent WAF Blocks** | `#alKpiBlocks` | Count of `D.incidents` where `action === 'blocked'` | `var(--c5)` (Indigo) | Total malicious request payloads intercepted and rejected by OWASP inspection rules within the telemetry buffer. |
+| **Stage 1 Temp Bans** | `#alKpiTemp` | Count of `D.bannedIps` where `type === 'temporary'` | `var(--warn)` (Amber) | Malicious client IP addresses currently undergoing automated or manual temporary quarantine (default 1 hour). |
+| **Stage 2 Permanent Bans** | `#alKpiPerm` | Count of `D.bannedIps` where `type === 'permanent'` | `var(--err)` (Red) | Repeat offending IP addresses permanently dropped at the socket layer by the firewall. |
+
+The KPI cards adapt responsively (`repeat(auto-fit, minmax(200px, 1fr))`) to varying screen widths, ensuring readability across tablet and multi-monitor operations screens.
+
+---
+
+### 2. Decoupled Manual Threat Actor Quarantine Toolbar
+
+Rather than nesting input forms inside table headers, manual quarantine is decoupled into an independent action panel (`.al-ban-box` within `.al-ban-card`). Operators can manually isolate suspicious actors, automated vulnerability scanners, or abusive bots:
+
+- **Client-Side IP Syntax Validation (`isValidIP`)**:
+  - The client engine validates both IPv4 (`255.255.255.255` dotted decimal format) and IPv6 (hexadecimal colon notation) before network transmission.
+  - If an invalid address format is entered, an inline feedback warning (`#alBanError`) immediately renders without dispatching invalid API traffic over the network.
+- **Duration Presets & Custom Interval Selection**:
+  - **Presets**: `15m` (15 Minutes), `1h` (Stage 1: 1h Temp - default), `6h` (6 Hours), `24h` (24 Hours), `7d` (7 Days), and `Permanent` (Stage 2: Permanent).
+  - **Custom Duration**: Selecting `custom` dynamically displays a duration text input (`#alBanCustomDuration`) accepting standard duration strings (e.g. `30m`, `48h`, `72h`).
+- **Context & Reason Attribution**:
+  - An optional context input (`#alBanReason`) captures audit justification (e.g. `Credential stuffing against /v1/auth`). If omitted, defaults to `Manually banned via dashboard`.
+- **API Dispatch & State Sync**:
+  - Clicking **Ban Threat Actor** submits `POST /internal/api/security/ban` with JSON payload `{ ip, type, duration, reason }`.
+  - On HTTP `200 OK`, input fields clear, a floating toast confirms success, and `fetchBackendData()` immediately refreshes the dashboard data model.
+
+---
+
+### 3. Real-Time Multi-Attribute Search & Faceted Filtering
+
+Both the Active Incidents feed and the Banned IPs table feature real-time search inputs and categorical faceted filter chips:
+
+#### A. Active Incidents Filtering
+- **Multi-Attribute Search (`#alIncSearch`)**:
+  - Executes instant case-insensitive substring matching against `client_ip`, `rule_id`, `path`, `category`, and `payload_snippet`.
+  - Includes heuristic aliases: typing `sqli` matches SQL injection (rule 942100), `xss` matches cross-site scripting (rule 941100), and `lfi` or `traversal` matches directory traversal (rule 930100).
+- **Severity Faceted Chips (`#alSevChips`)**:
+  - **All**: All detected anomalies and alerts.
+  - **Critical**: Intercepted attacks where `action === 'blocked'`, anomaly score $\ge 10$, or severity is marked critical.
+  - **Warning**: Monitored anomalies where `action === 'logged'`, anomaly score $< 10$, or severity is warning.
+
+#### B. Banned IPs Filtering
+- **Multi-Attribute Search (`#alBanSearch`)**:
+  - Matches across client IP address (`ip`), justification reason (`reason`), and last violation category (`last_category`).
+- **Ban Tier Faceted Chips (`#alTierChips`)**:
+  - **All**: All banned actors.
+  - **Stage 1 (1h Temp)**: Temporary bans (`type === 'temporary'`).
+  - **Stage 2 (Permanent)**: Permanent firewall bans (`type === 'permanent'`).
+
+Typing into either search bar or toggling any filter chip automatically resets the respective table's active page index to 1 (`state.alIncPage = 1` or `state.alBanPage = 1`), preventing empty slice views.
+
+---
+
+### 4. Client-Side Non-Blocking Pagination
+
+To prevent unbounded DOM growth, memory bloat, and excessive vertical scrolling when inspecting hundreds of security incidents or thousands of banned IP records, the view implements client-side pagination (`.al-foot-bar`):
+
+- **Configurable Page Sizes**: Dropdown controls support `10`, `25`, and `50` rows per page (defaulting to 10 for incidents and 25 for banned IPs).
+- **Navigation Controls**: First (`«`), Previous (`‹`), Next (`›`), and Last (`»`) buttons with boundary disabling (First and Previous are disabled on Page 1; Next and Last are disabled on the final page).
+- **Status Indicators**:
+  - Summary display: `Showing start–end of total` (e.g. `Showing 1–10 of 45`).
+  - Page indicator: `Page X / Y` (e.g. `Page 1 / 5`).
+- **Zero Server Overhead**: Slicing occurs entirely in browser memory (`Array.prototype.slice`) in $< 1\text{ ms}$, preserving high interactivity without server queries.
+
+---
+
+### 5. Deterministic Multi-Level Interactive Column Sorting
+
+The Banned IPs table provides interactive sorting across 6 telemetry columns:
+
+| Column Header | Field Key | Default Sorting Rule | Secondary Tie-Breaker |
+| :--- | :--- | :--- | :--- |
+| **Client IP** | `ip` | Natural IP address collation | Collation direction |
+| **Ban Tier** | `type` | String comparison (`permanent` vs `temporary`) | Deterministic IP ascending |
+| **Created At** | `created_at` | Epoch millisecond timestamp comparison | Deterministic IP ascending |
+| **Temp Bans** | `temp_ban_count` | Numeric strike count comparison | Deterministic IP ascending |
+| **Reason / Category** | `reason` | Lexicographical string comparison | Deterministic IP ascending |
+| **TTL / Expiry** | `remaining_seconds` | Numeric countdown seconds comparison | Deterministic IP ascending |
+
+#### Deterministic Secondary IP Tie-Breaker
+Clicking any column header toggles sort direction between ascending (`▲`) and descending (`▼`). When two records have identical values in the primary sort column (e.g. multiple IPs banned at the same second or sharing identical strike counts), the table breaks ties deterministically on client IP using numeric natural collation:
+
+```javascript
+diff !== 0 ? diff * mult : (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true });
+```
+
+This mathematical tie-breaker ensures stable ordering across 2-second background telemetry polling refreshes, eliminating visual row jitter and preventing items from shifting between pagination pages.
+
+---
+
+### 6. Non-Blocking In-App Confirmation Modal & Toast Feedback
+
+Earlier synchronous browser dialogs (`window.confirm()`, `window.alert()`) caused browser thread blocking, halting background telemetry polling, freezing animations, and breaking headless testing suites.
+
+The redesigned control center replaces all native dialogs with an in-app confirmation workflow:
+
+1. **In-App Modal Trigger (`#alConfirmModal`)**:
+   - Clicking the **Unban** button on any table row opens an in-app confirmation card overlay (`.modal-card` over `.modal-scrim`).
+   - The modal explicitly displays the target client IP (`#alConfirmIp`) and informs the operator that traffic filtering will be revoked.
+   - The modal can be dismissed safely via the Cancel button, the top-right close icon (`#alConfirmClose`), or by pressing Escape.
+2. **Asynchronous Execution & Background Continuity**:
+   - Confirming the unban initiates an asynchronous call (`POST /internal/api/security/unban`) via `authenticatedFetch`.
+   - The main browser event loop and 2-second telemetry polling cycles continue without interruption.
+3. **Floating Toast Notifications (`#alToast`)**:
+   - Operation outcomes are surfaced via a non-blocking floating toast card positioned at `bottom: 20px; right: 20px` (`z-index: 100`).
+   - Success operations display green tone badges (`var(--ok)`); server errors or network rejections display red tone badges (`var(--err)`).
+   - Toasts automatically dismiss after 4,000 milliseconds without requiring manual user interaction.
+
+---
+
+### 7. Slide-Out Forensic Incident Investigation Drawer
+
+Clicking any incident row in the **Active Alerts & WAF Incidents** feed activates Toron's slide-out inspector drawer (`openDrawer('incident', id)`), rendering in-depth Layer 7 forensic audit telemetry:
+
+#### Forensic Display Elements
+- **Header**: Incident category, action tone pill (`Blocked` vs `Logged`), and full calendar timestamp (`YYYY-MM-DD HH:MM:SS`) with relative elapsed time (e.g. `2m ago`).
+- **Forensic Attributes Table**:
+  - **OWASP Rule ID**: The matched Core Rule Set or custom security rule identifier (e.g. `942100` for SQL Injection, `941100` for XSS, `930100` for Path Traversal).
+  - **Anomaly Score**: Numerical severity score computed during rule evaluation.
+  - **Action Taken**: Visual status pill indicating whether the transaction was dropped (`Blocked`) or recorded (`Logged`).
+  - **Parameter Location**: Request segment where the malicious payload was identified (`query`, `header`, `body`, or `cookie`).
+  - **HTTP Method & Path**: Incoming verb and full URI endpoint (e.g. `POST /v1/auth/login?redirect=true`).
+  - **Client IP**: Offending client network address, paired with a 1-click **Copy** button (`#alDrawerCopyIp`) for rapid external firewall or threat intelligence lookup.
+  - **Timestamp**: High-precision calendar timestamp.
+- **Attack Payload Snippet**:
+  - Rendered inside a horizontally scrollable code block (`<pre class="cs-pre">`).
+  - The raw attack vector (e.g. `' OR '1'='1' --`, `<script>alert(1)</script>`, `../../../../etc/passwd`) is safely sanitized via `esc()` to prevent DOM XSS execution while preserving exact byte sequences for forensic review.
+
+#### Integrated 1-Click Remediation Actions
+The drawer footer provides two immediate operational shortcuts:
+1. **"Ban Client IP" (`#alDrawerBanBtn`)**:
+   - Closes the drawer and automatically pre-populates the **Manual Threat Actor Quarantine** toolbar with the offending client IP and context-derived reason (e.g. `SQL Injection (Rule 942100)`).
+   - Places browser focus directly into the quarantine input form for single-keystroke ban enforcement.
+2. **"Filter Logs for IP" (`#alDrawerLogBtn`)**:
+   - Closes the drawer, sets the log query filter state (`state.lq = client_ip`), and navigates browser routing to the Live Requests view (`#/logs`).
+   - Immediately displays all historical and streaming request traces associated with the malicious IP address across the gateway.
+
+---
+
+### 8. Telemetry Data Model Deduplication & Badge Accuracy
+
+In high-throughput environments, data model integrity is critical to avoid operator alarm fatigue. In `public/js/model.js`, telemetry collections are cleanly separated:
+
+- `D.alerts`: Strictly contains unresolved operational system issues, including upstream health check failures, route 5xx error spikes exceeding 2%, and failing ACME SSL certificate renewals.
+- `D.incidents`: Dedicated collection of Layer 7 WAF security events and injection attempts.
+- `D.bannedIps`: Dedicated collection of active Stage 1 temporary bans and Stage 2 permanent firewall bans.
+
+By isolating `bannedIps` from `alerts`, quarantined threat actors no longer inflate the navigation alert badge (`#nav button[data-nav="alerts"] .badge`) or trigger misleading degraded health banners on the Overview screen. Mitigated threats remain visible in their designated threat table without obscuring actionable operational gateway incidents.
+
+---
+
 ## Native ECMAScript Modules Architecture
 
 The dashboard is structured into a clean hierarchy of native browser ECMAScript Modules (`ESM`) under `public/js/`, delivering zero-build modularity, instantaneous development updates, and zero supply-chain vulnerabilities:
@@ -272,7 +463,7 @@ public/js/
     ├── logs.js               # View 4: Live request stream & tail pause controls
     ├── certs.js              # View 5: ACME zero-touch TLS certificates & expiration
     ├── modules.js            # View 6: Compiled engine reactors & Go runtime internals
-    ├── alerts.js             # View 7: WAF security incidents & dynamic auto-ban table
+    ├── alerts.js             # View 7: Alerts & Threat Defense control center, ban management & search
     └── console.js            # View 8: Interactive API endpoint probe debugger
 ```
 

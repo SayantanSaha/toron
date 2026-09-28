@@ -33,6 +33,18 @@ export const state = {
   lpage: 1,
   lpageSize: 25,
   lhover: false,
+  // Alerts & Threat Defense State (REQ-146 / TASK-174)
+  alIncQ: '',
+  alBanQ: '',
+  alSev: 'all',
+  alTier: 'all',
+  alBanSort: 'created_at',
+  alBanSortDir: 'desc',
+  alIncPage: 1,
+  alIncPageSize: 10,
+  alBanPage: 1,
+  alBanPageSize: 25,
+  alConfirmBan: null,
   auth: {
     token: null,
     authenticated: false,

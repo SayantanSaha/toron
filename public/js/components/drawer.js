@@ -1,8 +1,9 @@
-import { $, esc, fmt, dtFmt, stCls } from '../utils.js';
+import { $, esc, fmt, dtFmt, ago, stCls } from '../utils.js';
 import { ICON, pill, toneErr } from './icons.js';
 import { chart, histo } from './charts.js';
 import { buildDataModel } from '../model.js';
-import { rawApiLogs } from '../api.js';
+import { state } from '../state.js';
+import { rawApiLogs, rawApiIncidents } from '../api.js';
 
 export const dw = { el: null, kind: null, id: null, last: null };
 
@@ -24,6 +25,75 @@ export function openDrawer(kind, id) {
       <h3 class="dh">Latency Distribution</h3><div class="hist" id="dwHist"></div>
       <h3 class="dh">Configuration</h3><dl class="kv"><dt>Match</dt><dd><code>${esc(r.host + r.path)}</code></dd><dt>Upstream</dt><dd><button class="linkbtn" data-go="upstreams:${r.pool}">${esc(r.pool)}</button></dd><dt>Timeout</dt><dd>${esc(r.timeout)}</dd><dt>SLO Target</dt><dd>p95 under ${r.slo} ms</dd><dt>Middlewares</dt><dd><div class="chips">${r.mw.map(m => `<span class="chipx">${esc(m)}</span>`).join('')}</div></dd></dl>`;
     renderDrawer();
+  } else if (kind === 'incident') {
+    const D = buildDataModel();
+    const incs = (D.incidents && D.incidents.length > 0) ? D.incidents : (rawApiIncidents || []);
+    const inc = incs.find((x, idx) => x.id === id || String(x.id) === String(id) || String(idx) === String(id) || `inc-${idx}` === String(id)) || incs[0] || {};
+
+    const category = inc.category || 'WAF Security Incident';
+    $('#dwTitle').textContent = category;
+    const isBlocked = inc.action === 'blocked';
+    const actionTone = isBlocked ? 'err' : 'warn';
+    const actionLabel = isBlocked ? 'Blocked' : 'Logged';
+    const fullTime = dtFmt(inc.timestamp);
+    const elapsed = inc.timestamp ? ago(Math.max(0, (Date.now() - new Date(inc.timestamp).getTime()) / 1000)) + ' ago' : '';
+
+    $('#dwSub').innerHTML = `${pill(actionTone, actionLabel)}<span class="mut num">${esc(fullTime)}${elapsed ? ' · ' + esc(elapsed) : ''}</span>`;
+
+    $('#dwBody').innerHTML = `
+      <div class="stats" id="dwStats">
+        <div><dt>Method</dt><dd class="num">${esc(inc.method || 'GET')}</dd></div>
+        <div><dt>Anomaly Score</dt><dd class="num">${esc(inc.anomaly_score != null ? String(inc.anomaly_score) : '-')}</dd></div>
+        <div><dt>Action</dt><dd class="num">${esc(actionLabel)}</dd></div>
+      </div>
+      <h3 class="dh">Forensic Investigation</h3>
+      <dl class="kv">
+        <dt>OWASP Rule ID</dt><dd><code>${esc(inc.rule_id || '942100')}</code></dd>
+        <dt>Anomaly Score</dt><dd class="num">${esc(inc.anomaly_score != null ? String(inc.anomaly_score) : '-')}</dd>
+        <dt>Action Taken</dt><dd><span class="st ${isBlocked ? 's5' : 's4'}">${esc(actionLabel)}</span></dd>
+        <dt>Parameter Location</dt><dd><code>${esc(inc.location || 'body')}</code></dd>
+        <dt>HTTP Method</dt><dd><code>${esc(inc.method || 'GET')}</code></dd>
+        <dt>Target Path</dt><dd><code>${esc(inc.path || '/')}</code></dd>
+        <dt>Client IP</dt><dd><code>${esc(inc.client_ip || 'unknown')}</code><button class="btn sm" id="alDrawerCopyIp" style="margin-left:6px;padding:1px 6px;font-size:11px" title="Copy Client IP">Copy</button></dd>
+        <dt>Timestamp</dt><dd class="num">${esc(fullTime)}</dd>
+      </dl>
+      <h3 class="dh">Attack Payload Snippet</h3>
+      <pre class="cs-pre" style="overflow-x:auto;white-space:pre-wrap;word-break:break-all;">${esc(inc.payload_snippet || '')}</pre>
+      <div style="display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
+        <button class="btn primary" id="alDrawerBanBtn">Ban Client IP</button>
+        <button class="btn" id="alDrawerLogBtn">Filter Logs for IP</button>
+      </div>`;
+
+    const copyBtn = $('#alDrawerCopyIp');
+    if (copyBtn) {
+      copyBtn.onclick = () => {
+        if (typeof navigator !== 'undefined' && navigator.clipboard && inc.client_ip) {
+          navigator.clipboard.writeText(inc.client_ip).catch(() => {});
+          copyBtn.textContent = 'Copied!';
+          setTimeout(() => { if (copyBtn) copyBtn.textContent = 'Copy'; }, 1500);
+        }
+      };
+    }
+
+    const banBtn = $('#alDrawerBanBtn');
+    if (banBtn) {
+      banBtn.onclick = () => {
+        closeDrawer();
+        const ipIn = $('#alBanIp') || $('#manualBanIP');
+        const reasonIn = $('#alBanReason') || $('#manualBanReason');
+        if (ipIn) { ipIn.value = inc.client_ip || ''; ipIn.focus(); }
+        if (reasonIn) { reasonIn.value = `${inc.category || 'Security Anomaly'} (Rule ${inc.rule_id || '942100'})`; }
+      };
+    }
+
+    const logBtn = $('#alDrawerLogBtn');
+    if (logBtn) {
+      logBtn.onclick = () => {
+        closeDrawer();
+        state.lq = inc.client_ip || '';
+        if (typeof window !== 'undefined') window.location.hash = '#/logs';
+      };
+    }
   } else {
     const logs = (rawApiLogs && rawApiLogs.length > 0) ? rawApiLogs : [
       { id: 101, ts: Date.now(), method: 'GET', path: '/v1/orders/8f2a91', route: 'orders', short: 'api /v1/orders', status: 200, ms: 14.2, up: '10.0.1.11:8080', trace: 'a4b1c8f0', ip: '127.0.0.1', bytes: 1240 }

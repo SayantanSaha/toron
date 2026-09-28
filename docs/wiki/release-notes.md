@@ -1,5 +1,38 @@
 # Release Notes
 
+## 2026-09-28 - Alerts & Threat Defense Control Center Redesign (KPI Strip, Incident Investigation Drawer, Search, Pagination & Non-Blocking Modals)
+
+### Milestone Summary
+- **Alerts & Threat Defense Control Center Redesign**:
+  - Completely redesigned the Toron Control Center (`#/alerts`) into a high-density, forensic-grade edge security cockpit with zero external runtime dependencies.
+  - Implemented an executive 4-card security KPI metrics strip displaying active operational incidents/alerts, recent WAF blocks, Stage 1 temporary bans, and Stage 2 permanent firewall bans.
+  - Decoupled the manual threat actor quarantine toolbar into a dedicated management panel with client-side IPv4/IPv6 syntax validation and duration presets (`15m`, `1h`, `6h`, `24h`, `7d`, `Permanent`, custom).
+  - Delivered real-time multi-attribute search and faceted filter chips across both security incidents (severity: `All`, `Critical`, `Warning`) and banned IPs (tier: `All`, `Stage 1`, `Stage 2`).
+  - Added non-blocking client-side pagination (`10`, `25`, `50` rows per page) with page boundary navigation and item summaries for both incidents and banned IPs feeds.
+  - Implemented deterministic multi-level interactive column sorting on the banned IPs table, using secondary client IP numeric natural collation to break ties and prevent visual row jitter during live telemetry polling.
+  - Replaced thread-blocking synchronous `window.confirm()` and `window.alert()` dialogs with non-blocking in-app confirmation modals and auto-dismissing toast notifications.
+  - Integrated a slide-out forensic incident investigation drawer displaying OWASP rule ID, anomaly score, HTTP method, target path, client IP with a 1-click clipboard copy button, parameter location, calendar datetime formatting, and raw attack payload snippets, with 1-click quick actions to ban offending client IPs or filter request traces in the live logs view.
+  - Normalized the telemetry data model in `public/js/model.js`, completely separating operational alerts, WAF incidents, and active IP bans to eliminate data duplication and prevent false alert badge inflation.
+
+### Added
+- **`public/js/views/alerts.js`**: Rebuilt the alerts view controller with executive 4-card KPI strip (`alKpiActive`, `alKpiBlocks`, `alKpiTemp`, `alKpiPerm`), decoupled manual ban toolbar with `isValidIP` validation and duration presets, real-time search filtering, severity and ban tier chips, client-side pagination, interactive table sorting with deterministic IP tie-breaking, in-app unban confirmation modal (`#alConfirmModal`), and floating toast notifications (`#alToast`).
+- **`public/js/components/drawer.js`**: Added forensic incident investigation support (`kind === 'incident'`), rendering OWASP rule ID, anomaly score, HTTP method, target path, client IP with clipboard copy button, parameter location, calendar datetime, attack payload snippet in `<pre class="cs-pre">`, and 1-click actions to "Ban Client IP" and "Filter Logs for IP".
+- **`public/style.css`**: Added responsive styling for `.al-kpi-grid`, `.al-kpi-card`, `.al-ban-box`, `.al-toolbar`, `.al-foot-bar`, `.modal-scrim`, `.modal-card`, and `.al-toast`.
+
+### Changed
+- **`public/js/model.js`**: Normalized computed data model `D` to isolate operational alerts (`D.alerts`), security incidents (`D.incidents`), and banned IP addresses (`D.bannedIps`). Eliminated the loop injecting banned IPs into operational alerts, preventing artificial inflation of navigation alert badges and overview health banners.
+- **`public/js/state.js`**: Added alerts view state properties for incident query (`alIncQ`), ban query (`alBanQ`), severity filter (`alSev`), ban tier filter (`alTier`), sort column (`alBanSort`), sort direction (`alBanSortDir`), active pages (`alIncPage`, `alBanPage`), and page sizes (`alIncPageSize`, `alBanPageSize`).
+- **`docs/wiki/features/observability-dashboard.md`**: Updated user documentation with detailed architectural and operational guides for the Alerts & Threat Defense Control Center, security KPI strip, manual quarantine toolbar, incident drawer, search/pagination, and non-blocking modals.
+
+### Fixed
+- **UI Freezing via Synchronous Dialogs**: Eliminated all blocking calls to `window.confirm()` and `window.alert()`, preventing browser thread lockup, background telemetry pauses, and automation stalls.
+- **Data Model Duplication & Badge Inflation**: Stopped banned IPs from being duplicated into `D.alerts`, ensuring the top navigation badge accurately reflects only true unresolved operational alerts.
+- **Manual Ban Toolbar Overflow**: Resolved responsive header collisions on screens narrower than 1200px by decoupling the manual ban form into a dedicated action toolbar.
+- **Inaccessible WAF Forensics**: Resolved dropped WAF audit metadata by extending the slide-out drawer to render attack rule IDs, scores, locations, and raw payload snippets.
+- **Unbounded DOM Growth**: Resolved excessive vertical scrolling and memory consumption by introducing client-side pagination for incidents and banned IP records.
+
+---
+
 ## 2026-09-27 - Toron v1.6 Milestone (Universal Kubernetes Ingress, Service Mesh Sidecars & Multi-Platform Distribution)
 
 ### Milestone Summary

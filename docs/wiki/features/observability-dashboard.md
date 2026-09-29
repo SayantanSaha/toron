@@ -4,7 +4,7 @@ type: user-documentation
 project: PROJECT-001
 owner: document-writer
 created: 2026-09-21
-updated: 2026-09-28
+updated: 2026-09-29
 
 documents:
   - OBSERVABILITY-DASHBOARD
@@ -58,9 +58,13 @@ The dashboard client engine (`public/js/app.js`) polls Toron's internal manageme
 - Interactive diagnostic probe tool calling `POST /internal/api/proxy-test` to test endpoints and inspect response headers and bodies.
 
 ### 7. Alerts & Threat Defense Control Center
+- **Dual-Card UI Architecture**: Structural bifurcation separating infrastructural Operational System Alerts (with 1-click resource jump links and zero-alert health checkmark banner) from the Security Incidents & Threat Defense Feed.
 - **4-Card Security KPI Strip**: Top-level executive metric cards displaying active alerts and unmitigated incidents, recent WAF-blocked attacks, Stage 1 temporary bans, and Stage 2 permanent firewall bans.
+- **Multi-Action Badging Taxonomy**: 4 defense states (`Blocked`, `Banned`, `Throttled`, `Logged`) with color-coded severity pills, status icons, and slide-out forensic drawer integration.
+- **Real-Time Severity Facet Filtering**: Interactive severity chips (`All`, `Critical`, `Warning`) with dynamic categorization of dropped vs monitored/throttled events and automatic pagination reset.
+- **Rate-Limiting Telemetry**: Seamless capture of volumetric HTTP 429 rate drops as 'Throttled' security incidents with retry-after metadata and 1-click quarantine pre-fill.
 - **Decoupled Threat Actor Quarantine**: Dedicated manual IP blocking toolbar with client-side IPv4/IPv6 syntax validation, duration presets (`15m`, `1h`, `6h`, `24h`, `7d`, `Permanent`), custom interval inputs, and incident context reasons.
-- **Active Incidents & Forensic Investigation**: Real-time searchable and faceted security incident feed with slide-out forensic drawer detailing OWASP rule IDs, anomaly scores, parameter locations, raw attack payloads, and instant remediation actions.
+- **Slide-Out Forensic Incident Drawer**: In-depth Layer 7 forensic audit telemetry with 9 structured attributes, raw payload inspection, and 1-click remediation shortcuts ("Ban Client IP", "Filter Logs for IP").
 - **Dynamic 2-Stage Auto-Ban Table**: Sortable, paginated IP firewall table featuring deterministic IP tie-breaking, non-blocking in-app confirmation modal, and floating toast feedback for unban operations.
 
 ---
@@ -260,21 +264,29 @@ Opening a request row renders execution spans across listener, router, WAF, and 
 
 The **Alerts & Threat Defense Control Center** (`#/alerts`) is Toron's operational cockpit for edge security monitoring, threat analysis, and firewall policy management. Serving as the primary interface for the native [Web Application Firewall (WAF)](./waf.md) and dynamic 2-stage auto-ban engine (see [OS-Level IP Blocking](./os-level-ip-blocking.md)), this view combines high-density forensic analysis with zero-dependency native browser ECMAScript Modules (`public/js/views/alerts.js`).
 
-The interface provides an executive security KPI strip, an ergonomically decoupled threat quarantine panel, multi-attribute real-time searching and faceted filtering, client-side pagination, interactive table sorting with deterministic tie-breaking, non-blocking modal workflows, and a slide-out forensic incident investigation drawer.
+The interface provides an executive security KPI strip, an ergonomically decoupled threat quarantine panel, a dual-card UI architecture separating infrastructural operational alerts from security incidents, a 4-state defense action badging taxonomy, real-time multi-attribute searching and severity facet filtering, client-side pagination, interactive table sorting with deterministic tie-breaking, non-blocking modal workflows, and a slide-out forensic incident investigation drawer.
 
 ```text
 +---------------------------------------------------------------------------------------------------------+
 |                                  SECURITY KPI METRICS STRIP                                             |
-|  [ Active Incidents: 2 ]   [ Recent WAF Blocks: 18 ]   [ Stage 1 Temp Bans: 7 ]   [ Stage 2 Perm: 3 ]   |
+|  [ Active Alerts: 2 ]      [ Recent WAF Blocks: 18 ]   [ Stage 1 Temp Bans: 7 ]   [ Stage 2 Perm: 3 ]   |
 +---------------------------------------------------------------------------------------------------------+
 |                                MANUAL THREAT ACTOR QUARANTINE                                           |
 |  [ IP Address ]  [ Tier: 1h Temp v ]  [ Context / Reason ]  [ Ban Threat Actor ]                        |
 +---------------------------------------------------------------------------------------------------------+
-|  ACTIVE ALERTS & WAF INCIDENTS                                                                          |
+|  CARD 1: OPERATIONAL SYSTEM ALERTS (#alOpsCard)                                                         |
+|  - [!] Upstream Degradation: api-pool · 2/3 instances unreachable               [ Investigate -> upstreams ] |
+|  - [!] High 5xx Error Rate: /v1/auth · 5xx rate 4.2% > 2.0% SLO                 [ Investigate -> routes ]    |
+|  - [!] Certificate Renewal Failed: example.com · ACME renewal failed            [ Investigate -> certs ]     |
+|  (Or Zero-Alert State: [✓] All upstream services, routes, and certificates operating normally.)         |
++---------------------------------------------------------------------------------------------------------+
+|  CARD 2: SECURITY INCIDENTS & THREAT DEFENSE FEED (.al-inc-card)                                        |
 |  [ Search incidents... ] [ All | Critical | Warning ]                                                    |
 |  - SQL Injection [Blocked] POST /v1/auth/login · Rule 942100 · IP 198.51.100.99 · Score: 15              |
-|  - Cross-Site Scripting [Blocked] GET /search · Rule 941100 · IP 203.0.113.42 · Score: 12              |
-|  Showing 1–10 of 18 incidents  |  << < Page 1 / 2 > >>  |  [ 10 / page v ]                              |
+|  - Firewall Quarantine [Banned] CONNECT /admin · Rule auto_ban · IP 198.51.100.20 · Score: 25           |
+|  - Rate Limit Ingress [Throttled] POST /api/v1/orders · Rule rate_limit · IP 203.0.113.30 · Score: 0    |
+|  - Protocol Violation [Logged] GET /wp-login.php · Rule 920100 · IP 203.0.113.40 · Score: 3             |
+|  Showing 1–10 of 24 incidents  |  << < Page 1 / 3 > >>  |  [ 10 / page v ]                              |
 +---------------------------------------------------------------------------------------------------------+
 |  DYNAMIC 2-STAGE AUTO-BAN & BLOCKED IPS                                                                 |
 |  [ Search bans... ] [ All | Stage 1 (1h Temp) | Stage 2 (Permanent) ]                                   |
@@ -316,32 +328,148 @@ Rather than nesting input forms inside table headers, manual quarantine is decou
 
 ---
 
-### 3. Real-Time Multi-Attribute Search & Faceted Filtering
+### 3. Dual-Card UI Architecture & Operational Alert Non-Suppression
 
-Both the Active Incidents feed and the Banned IPs table feature real-time search inputs and categorical faceted filter chips:
+To prevent operational alarms from being drowned out by high-frequency security attack chatter, the Alerts view implements a dual-card separation architecture dividing system health degradations from threat activity:
 
-#### A. Active Incidents Filtering
+```
+[ Telemetry Model D ]
+  |
+  +---> D.alerts (Operational Issues)  ------> Card 1: Operational System Alerts (#alOpsCard)
+  |                                            - Upstream pool degradation (unreachable nodes)
+  |                                            - Route 5xx error rate spikes (> 2.0% threshold)
+  |                                            - ACME SSL certificate renewal failures
+  |                                            - 1-click resource jump links (data-go)
+  |                                            - Zero-alert reassuring checkmark state
+  |
+  +---> D.incidents (Threat Audit Feed) -----> Card 2: Security Incidents & Threat Defense (.al-inc-card)
+                                               - WAF rule violations (SQLi, XSS, traversal)
+                                               - Volumetric rate drops (HTTP 429 Throttled)
+                                               - Dynamic auto-ban triggers (Banned)
+                                               - Passive inspection logs (Logged)
+                                               - Dedicated search & severity faceting
+```
+
+#### A. Dedicated Operational System Alerts Card (`#alOpsCard`)
+Positioned prominently above the security feeds, the **Operational System Alerts** card renders unresolved infrastructure anomalies derived from `D.alerts`:
+
+1. **Upstream Degradation (`upstream_<id>`)**:
+   - Triggers when active or passive health checks detect one or more failed backend instances in an upstream pool (`p.down > 0`).
+   - Title: `Upstream Degradation: <pool-name>`.
+   - Description: Displays the exact count of failing instances (e.g. `2 of 3 instances are failing health checks.`).
+   - Severity: `critical` (rendered with red error tone `t-err` and `i-x` icon).
+   - Resource Jump Link: Tagged with `data-go="upstreams"`. Clicking the row or the **Investigate** button navigates directly to `#/upstreams` focused on the affected pool.
+2. **High 5xx Error Rate (`route_<id>`)**:
+   - Triggers when a route's 5xx error percentage reaches or exceeds the 2.0% SLO threshold (`r.cur.err5 >= 0.02`).
+   - Title: `High 5xx Error Rate: <route-path>`.
+   - Description: Formats the exact error percentage (e.g. `5xx error rate (4.2%) exceeds 2% threshold.`).
+   - Severity: `critical` (`t-err`, `i-x`).
+   - Resource Jump Link: Tagged with `data-go="routes"`. Clicking navigates directly to `#/routes`.
+3. **Certificate Renewal Failure (`cert_<id>`)**:
+   - Triggers when an automated Let's Encrypt ACME renewal attempt fails (`c.state === 'failing'`).
+   - Title: `Certificate Renewal Failed: <domain>`.
+   - Description: Details the failing domain and protocol challenge.
+   - Severity: `critical` (`t-err`, `i-x`).
+   - Resource Jump Link: Tagged with `data-go="certs"`. Clicking navigates directly to `#/certs`.
+4. **Zero-Alert Positive Health Summary**:
+   - When all upstream pools, routes, and certificates operate normally (`D.alerts.length === 0`), the list displays a reassuring positive health summary:
+     ```html
+     <li class="empty">
+       <span class="t-ok">[ICON: i-check]</span>
+       <span>All upstream services, routes, and certificates operating normally.</span>
+     </li>
+     ```
+5. **Guaranteed Non-Suppression Invariant**:
+   - Operational alerts reside in `#alOpsList` completely decoupled from `#alIncList`.
+   - Filtering security incidents via `#alIncSearch` or changing severity facets (`#alSevChips`) has **zero effect** on operational alert rendering.
+   - High volumes of Layer 7 security attacks (e.g. 50,000 WAF blocks during a DDoS attack) never displace, hide, or paginate operational system failures off-screen.
+
+---
+
+### 4. Incidents Feed Multi-Action Badging Taxonomy
+
+Toron classifies all defensive edge interventions and audit recordings into a standardized 4-state action taxonomy:
+
+| Action State | Status Badge | Class | Color Tone | Status Icon | HTTP Response | Trigger Condition |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **`blocked`** | `Blocked` | `st s5` | `t-err` (Red) | `i-x` | `403 Forbidden` | Malicious payload intercepted by active OWASP WAF inspection rules (e.g. SQLi, XSS, Path Traversal). |
+| **`banned`** | `Banned` | `st s5` | `t-err` (Red) | `i-x` | Connection Drop | Traffic originating from a client IP address subject to Stage 1 temporary quarantine or Stage 2 permanent firewall ban. |
+| **`throttled`** | `Throttled` | `st s4` | `t-warn` (Amber) | `i-alert` | `429 Too Many Requests` | Request volume exceeded configured route-level or global token bucket limits (`rate_limit_drop`). |
+| **`logged`** | `Logged` | `st s4` | `t-warn` (Amber) | `i-alert` | Forwarded / Allowed | Passive WAF detection mode, anomaly score threshold warnings, or protocol violation audits. |
+
+#### Visual Hierarchy & Tone Mapping
+In `public/js/views/alerts.js`, the helper `getActionMeta(action)` maps each action state to deterministic visual styles:
+- **Critical Red Tones (`s5`, `t-err`, `i-x`)**: Assigned to active request terminations (`blocked`, `banned`) representing hostile intrusion attempts or established threat actors.
+- **Warning Amber Tones (`s4`, `t-warn`, `i-alert`)**: Assigned to volumetric throttle drops (`throttled`) and non-blocking audit events (`logged`), highlighting anomalous behavior without implying an unmitigated compromise.
+
+---
+
+### 5. Rate-Limiting Telemetry & Audit Ingress Integration
+
+Volumetric abuse protection enforced by Toron's token-bucket rate limiter (`pkg/router/rate_limiter.go`) is integrated directly into the security audit pipeline:
+
+1. **Telemetry Event Generation**:
+   - When a client exhausts its token bucket quota, `rate_limiter.go` issues an HTTP `429 Too Many Requests` response with a `Retry-After: <secs>` header.
+   - Concurrently, the rate limiter dispatches a structured audit event to the security audit buffer (`waf.AuditLogger`):
+     ```go
+     al.LogEvent(waf.SecurityEvent{
+         Event:          "rate_limit_drop",
+         Action:         "throttled",
+         Category:       "rate_limit",
+         ClientIP:       clientIP,
+         Method:         method,
+         Path:           reqPath,
+         AnomalyScore:   0,
+         RuleID:         "rate_limit",
+         PayloadSnippet: fmt.Sprintf("Rate limit exceeded: retry after %d seconds", retrySecs),
+     })
+     ```
+2. **Feed Representation**:
+   - Captured rate limit drops surface in the **Security Incidents & Threat Defense Feed** tagged with the amber `Throttled` status pill (`st s4`, `t-warn`).
+   - The category defaults to `Rate Limit Ingress`, displaying the target route path and client IP.
+3. **Forensic Correlation & Escalation**:
+   - Clicking a throttled incident opens the slide-out investigation drawer, detailing the offending IP, request rate violation, and retry-after payload snippet.
+   - Clicking **Ban Client IP** inside the drawer automatically pre-populates the quarantine toolbar with the client's IP and contextual justification (`Rate Limit Throttling: <path>`), enabling rapid operator escalation from rate throttling to full firewall banishment.
+
+---
+
+### 6. Real-Time Multi-Attribute Search & Faceted Severity Filtering
+
+Both the Security Incidents feed and the Banned IPs table feature real-time search inputs and categorical faceted filter chips:
+
+#### A. Security Incidents Search & Severity Faceting
 - **Multi-Attribute Search (`#alIncSearch`)**:
   - Executes instant case-insensitive substring matching against `client_ip`, `rule_id`, `path`, `category`, and `payload_snippet`.
-  - Includes heuristic aliases: typing `sqli` matches SQL injection (rule 942100), `xss` matches cross-site scripting (rule 941100), and `lfi` or `traversal` matches directory traversal (rule 930100).
+  - Heuristic aliases support shorthand queries:
+    - `sqli` matches SQL injection (rule 942100).
+    - `xss` matches cross-site scripting (rule 941100).
+    - `lfi` or `traversal` matches directory traversal (rule 930100).
+    - `throttle`, `rate`, or `429` matches rate-limiting ingress drops.
 - **Severity Faceted Chips (`#alSevChips`)**:
-  - **All**: All detected anomalies and alerts.
-  - **Critical**: Intercepted attacks where `action === 'blocked'`, anomaly score $\ge 10$, or severity is marked critical.
-  - **Warning**: Monitored anomalies where `action === 'logged'`, anomaly score $< 10$, or severity is warning.
+  - **All**: Renders all security incidents within the telemetry buffer.
+  - **Critical**: Intercepted high-severity threats where `action === 'blocked'`, `action === 'banned'`, `anomaly_score >= 10`, or `sev === 'critical'`.
+  - **Warning**: Monitored warnings and rate throttles where `action === 'throttled'`, `action === 'logged'`, `sev === 'warning'`, or `anomaly_score < 10` (strictly excluding blocked and banned actions). This ensures that throttled rate-limit events and passive audit logs are reliably surfaceable without returning empty sets.
+- **Pagination Index Reset**:
+  - Typing into `#alIncSearch` or selecting any severity chip automatically resets `state.alIncPage = 1`, preventing invalid out-of-bounds pagination slices.
+- **Empty State Feedback**:
+  - When no records match active query or severity filters, `#alIncList` displays:
+    ```html
+    <li class="empty">[ICON: i-check] Zero security incidents match active filters.</li>
+    ```
 
-#### B. Banned IPs Filtering
+#### B. Banned IPs Filtering & Ban Tier Faceting
 - **Multi-Attribute Search (`#alBanSearch`)**:
   - Matches across client IP address (`ip`), justification reason (`reason`), and last violation category (`last_category`).
 - **Ban Tier Faceted Chips (`#alTierChips`)**:
   - **All**: All banned actors.
   - **Stage 1 (1h Temp)**: Temporary bans (`type === 'temporary'`).
   - **Stage 2 (Permanent)**: Permanent firewall bans (`type === 'permanent'`).
-
-Typing into either search bar or toggling any filter chip automatically resets the respective table's active page index to 1 (`state.alIncPage = 1` or `state.alBanPage = 1`), preventing empty slice views.
+- **Pagination Index Reset**:
+  - Modifying `#alBanSearch` or toggling tier chips resets `state.alBanPage = 1`.
 
 ---
 
-### 4. Client-Side Non-Blocking Pagination
+### 7. Client-Side Non-Blocking Pagination
 
 To prevent unbounded DOM growth, memory bloat, and excessive vertical scrolling when inspecting hundreds of security incidents or thousands of banned IP records, the view implements client-side pagination (`.al-foot-bar`):
 
@@ -354,7 +482,7 @@ To prevent unbounded DOM growth, memory bloat, and excessive vertical scrolling 
 
 ---
 
-### 5. Deterministic Multi-Level Interactive Column Sorting
+### 8. Deterministic Multi-Level Interactive Column Sorting
 
 The Banned IPs table provides interactive sorting across 6 telemetry columns:
 
@@ -378,7 +506,7 @@ This mathematical tie-breaker ensures stable ordering across 2-second background
 
 ---
 
-### 6. Non-Blocking In-App Confirmation Modal & Toast Feedback
+### 9. Non-Blocking In-App Confirmation Modal & Toast Feedback
 
 Earlier synchronous browser dialogs (`window.confirm()`, `window.alert()`) caused browser thread blocking, halting background telemetry polling, freezing animations, and breaking headless testing suites.
 
@@ -398,28 +526,30 @@ The redesigned control center replaces all native dialogs with an in-app confirm
 
 ---
 
-### 7. Slide-Out Forensic Incident Investigation Drawer
+### 10. Slide-Out Forensic Incident Investigation Drawer
 
-Clicking any incident row in the **Active Alerts & WAF Incidents** feed activates Toron's slide-out inspector drawer (`openDrawer('incident', id)`), rendering in-depth Layer 7 forensic audit telemetry:
+Clicking any incident row in the **Security Incidents & Threat Defense Feed** activates Toron's slide-out inspector drawer (`openDrawer('incident', id)`), rendering in-depth Layer 7 forensic audit telemetry:
 
 #### Forensic Display Elements
-- **Header**: Incident category, action tone pill (`Blocked` vs `Logged`), and full calendar timestamp (`YYYY-MM-DD HH:MM:SS`) with relative elapsed time (e.g. `2m ago`).
+- **Header**: Incident category, action tone pill (`Blocked`, `Banned`, `Throttled`, or `Logged`), and full calendar timestamp (`YYYY-MM-DD HH:MM:SS`) with relative elapsed time (e.g. `2m ago`).
 - **Forensic Attributes Table**:
-  - **OWASP Rule ID**: The matched Core Rule Set or custom security rule identifier (e.g. `942100` for SQL Injection, `941100` for XSS, `930100` for Path Traversal).
-  - **Anomaly Score**: Numerical severity score computed during rule evaluation.
-  - **Action Taken**: Visual status pill indicating whether the transaction was dropped (`Blocked`) or recorded (`Logged`).
+  - **OWASP Rule ID**: The matched Core Rule Set or custom security rule identifier (e.g. `942100` for SQL Injection, `941100` for XSS, `930100` for Path Traversal, or `rate_limit` for rate drops).
+  - **Anomaly Score**: Numerical severity score computed during rule evaluation (`0` for volumetric rate drops).
+  - **Action Taken**: Visual status pill indicating whether the transaction was dropped (`Blocked`, `Banned`), throttled (`Throttled`), or recorded (`Logged`).
   - **Parameter Location**: Request segment where the malicious payload was identified (`query`, `header`, `body`, or `cookie`).
   - **HTTP Method & Path**: Incoming verb and full URI endpoint (e.g. `POST /v1/auth/login?redirect=true`).
   - **Client IP**: Offending client network address, paired with a 1-click **Copy** button (`#alDrawerCopyIp`) for rapid external firewall or threat intelligence lookup.
   - **Timestamp**: High-precision calendar timestamp.
 - **Attack Payload Snippet**:
   - Rendered inside a horizontally scrollable code block (`<pre class="cs-pre">`).
-  - The raw attack vector (e.g. `' OR '1'='1' --`, `<script>alert(1)</script>`, `../../../../etc/passwd`) is safely sanitized via `esc()` to prevent DOM XSS execution while preserving exact byte sequences for forensic review.
+  - Raw attack vectors (e.g. `' OR '1'='1' --`, `<script>alert(1)</script>`, `../../../../etc/passwd`) and rate limit drop notifications (e.g. `Rate limit exceeded: retry after 2 seconds`) are safely sanitized via `esc()` to prevent DOM XSS execution while preserving exact byte sequences for forensic review.
 
 #### Integrated 1-Click Remediation Actions
 The drawer footer provides two immediate operational shortcuts:
 1. **"Ban Client IP" (`#alDrawerBanBtn`)**:
-   - Closes the drawer and automatically pre-populates the **Manual Threat Actor Quarantine** toolbar with the offending client IP and context-derived reason (e.g. `SQL Injection (Rule 942100)`).
+   - Closes the drawer and automatically pre-populates the **Manual Threat Actor Quarantine** toolbar with the offending client IP and context-derived reason:
+     - For rate limit drops: `Rate Limit Throttling: <path>`
+     - For WAF rule violations: `<category> (Rule <rule_id>)`
    - Places browser focus directly into the quarantine input form for single-keystroke ban enforcement.
 2. **"Filter Logs for IP" (`#alDrawerLogBtn`)**:
    - Closes the drawer, sets the log query filter state (`state.lq = client_ip`), and navigates browser routing to the Live Requests view (`#/logs`).
@@ -427,7 +557,7 @@ The drawer footer provides two immediate operational shortcuts:
 
 ---
 
-### 8. Telemetry Data Model Deduplication & Badge Accuracy
+### 11. Telemetry Data Model Deduplication & Badge Accuracy
 
 In high-throughput environments, data model integrity is critical to avoid operator alarm fatigue. In `public/js/model.js`, telemetry collections are cleanly separated:
 

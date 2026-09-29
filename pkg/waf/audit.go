@@ -34,7 +34,7 @@ type SecurityEvent struct {
 	Category       string `json:"category"`
 	RuleID         string `json:"rule_id,omitempty"`
 	AnomalyScore   int    `json:"anomaly_score"`
-	Action         string `json:"action"` // "blocked" or "logged"
+	Action         string `json:"action"` // "blocked", "banned", "throttled", or "logged"
 	Location       string `json:"location,omitempty"`
 	PayloadSnippet string `json:"payload_snippet,omitempty"`
 }
@@ -154,6 +154,11 @@ func (l *AuditLogger) GetRecentEvents(limit int) []SecurityEvent {
 		out[i], out[j] = out[j], out[i]
 	}
 	return out
+}
+
+// RecentEvents returns all security events in the recent events buffer, sorted newest first.
+func (l *AuditLogger) RecentEvents() []SecurityEvent {
+	return l.GetRecentEvents(0)
 }
 
 // Close closes any underlying open file handles.

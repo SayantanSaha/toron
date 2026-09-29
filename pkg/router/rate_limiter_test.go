@@ -4,11 +4,14 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/proxy"
 	"toron/pkg/router"
+	"toron/pkg/waf"
 )
 
 func TestRateLimiter_TokenBucket(t *testing.T) {
@@ -371,4 +374,229 @@ func TestServer_H2_RateLimiter_AntiSpoofing(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestRateLimiter_AuditLogger_TelemetryDispatch(t *testing.T) {
+	auditLogger, err := waf.NewAuditLogger(waf.AuditLogConfig{
+		Enabled: true,
+		Output:  "stdout",
+		Format:  "json",
+	})
+	if err != nil {
+		t.Fatalf("failed to create audit logger: %v", err)
+	}
+
+	opts := router.RateLimiterOptions{
+		AuditLogger: auditLogger,
+	}
+	mw, err := router.NewRateLimitMiddleware("2/sec", opts)
+	if err != nil {
+		t.Fatalf("failed to create rate limit middleware: %v", err)
+	}
+
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+		_, _ = res.WriteString("ok")
+	})
+
+	// Request 1: 200 OK
+	req1, _ := httpparser.NewRequest("POST", "/api/v1/checkout", "HTTP/1.1")
+	req1.Header.Set("X-Forwarded-For", "198.51.100.99")
+	res1 := httpparser.NewResponse()
+	handler(req1, res1)
+	if res1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for req1, got %d", res1.StatusCode)
+	}
+
+	// Request 2: 200 OK
+	req2, _ := httpparser.NewRequest("POST", "/api/v1/checkout", "HTTP/1.1")
+	req2.Header.Set("X-Forwarded-For", "198.51.100.99")
+	res2 := httpparser.NewResponse()
+	handler(req2, res2)
+	if res2.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 OK for req2, got %d", res2.StatusCode)
+	}
+
+	// Assert no drops logged before limit exceeded
+	if len(auditLogger.RecentEvents()) != 0 {
+		t.Fatalf("expected 0 events logged before limit exceeded, got %d", len(auditLogger.RecentEvents()))
+	}
+
+	// Request 3: 429 Too Many Requests (burst exceeded)
+	req3, _ := httpparser.NewRequest("POST", "/api/v1/checkout", "HTTP/1.1")
+	req3.Header.Set("X-Forwarded-For", "198.51.100.99")
+	res3 := httpparser.NewResponse()
+	handler(req3, res3)
+
+	// Assert HTTP 429 response attributes
+	if res3.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 Too Many Requests for req3, got %d", res3.StatusCode)
+	}
+	retryAfter := res3.Header.Get("Retry-After")
+	if retryAfter == "" {
+		t.Fatalf("expected Retry-After header on 429 response")
+	}
+	if !strings.Contains(res3.Body.String(), `"error":"429 Too Many Requests"`) {
+		t.Fatalf("expected JSON 429 body, got: %s", res3.Body.String())
+	}
+
+	// Assert Telemetry Emission to AuditLogger
+	recent := auditLogger.RecentEvents()
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 recent audit event, got %d", len(recent))
+	}
+
+	ev := recent[0]
+	if ev.Event != "rate_limit_drop" {
+		t.Errorf("expected Event 'rate_limit_drop', got %q", ev.Event)
+	}
+	if ev.Action != "throttled" {
+		t.Errorf("expected Action 'throttled', got %q", ev.Action)
+	}
+	if ev.Category != "rate_limit" {
+		t.Errorf("expected Category 'rate_limit', got %q", ev.Category)
+	}
+	if ev.RuleID != "rate_limit" {
+		t.Errorf("expected RuleID 'rate_limit', got %q", ev.RuleID)
+	}
+	if ev.AnomalyScore != 0 {
+		t.Errorf("expected AnomalyScore 0, got %d", ev.AnomalyScore)
+	}
+	if ev.ClientIP != "198.51.100.99" {
+		t.Errorf("expected ClientIP '198.51.100.99', got %q", ev.ClientIP)
+	}
+	if ev.Method != "POST" {
+		t.Errorf("expected Method 'POST', got %q", ev.Method)
+	}
+	if ev.Path != "/api/v1/checkout" {
+		t.Errorf("expected Path '/api/v1/checkout', got %q", ev.Path)
+	}
+	if !strings.Contains(ev.PayloadSnippet, "Rate limit exceeded: retry after") {
+		t.Errorf("expected PayloadSnippet to contain 'Rate limit exceeded: retry after', got %q", ev.PayloadSnippet)
+	}
+}
+
+func TestRateLimiter_AuditLogger_NilSafety(t *testing.T) {
+	mw, err := router.NewRateLimitMiddleware("1/sec", router.RateLimiterOptions{
+		AuditLogger: nil,
+	})
+	if err != nil {
+		t.Fatalf("failed to create middleware: %v", err)
+	}
+
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+	})
+
+	req1, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+	req1.Header.Set("X-API-Key", "k1")
+	res1 := httpparser.NewResponse()
+	handler(req1, res1)
+	if res1.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res1.StatusCode)
+	}
+
+	req2, _ := httpparser.NewRequest("GET", "/test", "HTTP/1.1")
+	req2.Header.Set("X-API-Key", "k1")
+	res2 := httpparser.NewResponse()
+	handler(req2, res2)
+	if res2.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429, got %d", res2.StatusCode)
+	}
+}
+
+func TestRateLimiter_AuditLogger_MemoryBounding(t *testing.T) {
+	auditLogger, err := waf.NewAuditLogger(waf.AuditLogConfig{
+		Enabled: true,
+		Output:  "stdout",
+		Format:  "json",
+	})
+	if err != nil {
+		t.Fatalf("failed to create audit logger: %v", err)
+	}
+
+	mw, err := router.NewRateLimitMiddleware("1/sec", router.RateLimiterOptions{
+		AuditLogger: auditLogger,
+	})
+	if err != nil {
+		t.Fatalf("failed to create middleware: %v", err)
+	}
+
+	handler := mw(func(req *httpparser.Request, res *httpparser.Response) {
+		res.SetStatus(http.StatusOK)
+	})
+
+	req0, _ := httpparser.NewRequest("GET", "/drop", "HTTP/1.1")
+	req0.Header.Set("X-API-Key", "same-client")
+	res0 := httpparser.NewResponse()
+	handler(req0, res0)
+
+	for i := 0; i < 60; i++ {
+		req, _ := httpparser.NewRequest("GET", "/drop", "HTTP/1.1")
+		req.Header.Set("X-API-Key", "same-client")
+		res := httpparser.NewResponse()
+		handler(req, res)
+		if res.StatusCode != http.StatusTooManyRequests {
+			t.Fatalf("expected 429 on drop %d, got %d", i+1, res.StatusCode)
+		}
+	}
+
+	recent := auditLogger.RecentEvents()
+	if len(recent) != 50 {
+		t.Fatalf("expected ring buffer capped at 50 events, got %d", len(recent))
+	}
+}
+
+func TestRouter_AuditLogger_RouteRateLimitWiring(t *testing.T) {
+	r := router.New()
+	auditLogger, err := waf.NewAuditLogger(waf.AuditLogConfig{
+		Enabled: true,
+		Output:  "stdout",
+		Format:  "json",
+	})
+	if err != nil {
+		t.Fatalf("failed to create audit logger: %v", err)
+	}
+	r.SetAuditLogger(auditLogger)
+
+	if r.AuditLogger() != auditLogger {
+		t.Fatalf("expected router AuditLogger to match set logger")
+	}
+
+	err = r.AddRoute(router.PrefixRouteSpec{
+		TargetType: router.RouteTypeStatic,
+		Prefix:     "/limited",
+		DirPath:    ".",
+		Opts: proxy.ProxyOptions{
+			RateLimit: "1/sec",
+		},
+	})
+	if err != nil {
+		t.Fatalf("failed to add route: %v", err)
+	}
+
+	req1, _ := httpparser.NewRequest("GET", "/limited/go.mod", "HTTP/1.1")
+	req1.Header.Set("X-Forwarded-For", "203.0.113.88")
+	res1 := httpparser.NewResponse()
+	r.ServeHTTP(req1, res1)
+
+	req2, _ := httpparser.NewRequest("GET", "/limited/go.mod", "HTTP/1.1")
+	req2.Header.Set("X-Forwarded-For", "203.0.113.88")
+	res2 := httpparser.NewResponse()
+	r.ServeHTTP(req2, res2)
+
+	if res2.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 Too Many Requests, got %d", res2.StatusCode)
+	}
+
+	recent := auditLogger.RecentEvents()
+	if len(recent) != 1 {
+		t.Fatalf("expected 1 audit event emitted via router rate limit, got %d", len(recent))
+	}
+	if recent[0].Action != "throttled" || recent[0].Event != "rate_limit_drop" {
+		t.Fatalf("unexpected event: %+v", recent[0])
+	}
+	if recent[0].ClientIP != "203.0.113.88" {
+		t.Fatalf("expected client IP 203.0.113.88, got %s", recent[0].ClientIP)
+	}
 }

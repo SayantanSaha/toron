@@ -17,21 +17,22 @@ export function isValidIP(ip) {
   return false;
 }
 
+export const getActionMeta = a => (a === 'blocked' || a === 'banned')
+  ? { cls: 's5', tone: 't-err', pTone: 'err', icon: 'i-x', lbl: a === 'banned' ? 'Banned' : 'Blocked' }
+  : { cls: 's4', tone: 't-warn', pTone: 'warn', icon: 'i-alert', lbl: a === 'throttled' ? 'Throttled' : 'Logged' };
+
 let toastTimer = null;
 export function showToast(msg, tone = 'ok') {
-  const toast = $('#alToast');
-  if (!toast) return;
+  const t = $('#alToast');
+  if (!t) return;
   if (toastTimer) clearTimeout(toastTimer);
-  toast.textContent = msg;
-  toast.className = `al-toast ${tone === 'err' ? 'al-toast-err' : 'al-toast-ok'}`;
-  toast.style.display = 'block';
-  toast.style.position = 'fixed';
-  toast.style.bottom = '20px';
-  toast.style.right = '20px';
-  toast.style.zIndex = '100';
-  toast.style.color = tone === 'err' ? 'var(--err)' : 'var(--ok)';
-  toast.style.borderColor = tone === 'err' ? 'var(--err)' : 'var(--ok)';
-  toastTimer = setTimeout(() => { if (toast) toast.style.display = 'none'; toastTimer = null; }, 4000);
+  t.textContent = msg;
+  t.className = `al-toast ${tone === 'err' ? 'al-toast-err' : 'al-toast-ok'}`;
+  t.style.display = 'block';
+  t.style.position = 'fixed';
+  t.style.bottom = '20px';
+  t.style.right = '20px';
+  toastTimer = setTimeout(() => { if (t) t.style.display = 'none'; toastTimer = null; }, 4000);
 }
 
 export function openUnbanModal(ip) {
@@ -77,42 +78,37 @@ export function alShell() {
   const arr = col => state.alBanSort === col ? (state.alBanSortDir === 'asc' ? ' ▲' : ' ▼') : '';
   const th = (col, label, cls = '') => `<th class="sortable click ${cls}" data-sort="${col}" tabindex="0">${label}<span class="s-arr" id="alArr-${col}">${arr(col)}</span></th>`;
   const kpi = (id, cid, title, sub, icon, col = '') => `<div class="al-kpi-card" id="${cid}"><div class="al-kpi-h"><span class="mut">${title}</span><span class="al-kpi-badge">${ICON(icon)}</span></div><div class="al-kpi-val" id="${id}"${col ? ` style="color:${col}"` : ''}>0</div><div class="al-kpi-sub">${sub}</div></div>`;
-  const pgn = (pfx, sz, opts) => `<div class="al-foot-bar" id="${pfx}Pagination"><div class="tsum" id="${pfx}Summary"><span id="${pfx}Sum"></span></div><div class="pagination"><button class="btn icon sm" id="${pfx}First" title="First" aria-label="First">&laquo;</button><button class="btn icon sm" id="${pfx}Prev" title="Previous" aria-label="Previous">&lsaquo;</button><span class="page-ind" id="${pfx}PageInd">Page 1 / 1</span><button class="btn icon sm" id="${pfx}Next" title="Next" aria-label="Next">&rsaquo;</button><button class="btn icon sm" id="${pfx}Last" title="Last" aria-label="Last">&raquo;</button><select class="field sm lg-pg-sz" id="${pfx}PageSize" aria-label="Page Size">${opts.map(o => `<option value="${o}"${sz === o ? ' selected' : ''}>${o} / page</option>`).join('')}</select></div></div>`;
+  const pgn = (pfx, sz, opts) => `<div class="al-foot-bar" id="${pfx}Pagination"><div class="tsum" id="${pfx}Summary"><span id="${pfx}Sum"></span></div><div class="pagination"><button class="btn icon sm" id="${pfx}First">&laquo;</button><button class="btn icon sm" id="${pfx}Prev">&lsaquo;</button><span class="page-ind" id="${pfx}PageInd">Page 1 / 1</span><button class="btn icon sm" id="${pfx}Next">&rsaquo;</button><button class="btn icon sm" id="${pfx}Last">&raquo;</button><select class="field sm lg-pg-sz" id="${pfx}PageSize" aria-label="Page Size">${opts.map(o => `<option value="${o}"${sz === o ? ' selected' : ''}>${o} / page</option>`).join('')}</select></div></div>`;
+  const tiers = [['1h','Stage 1: 1h Temp',' selected'],['15m','15 Minutes'],['6h','6 Hours'],['24h','24 Hours'],['7d','7 Days'],['Permanent','Stage 2: Permanent'],['custom','Custom Duration...']].map(([v,l,s=''])=>`<option value="${v}"${s}>${l}</option>`).join('');
 
   return `<div class="stack">
     <div class="al-kpi-grid">
-      ${kpi('alKpiActive', 'alCardActive', 'Active Incidents / Alerts', 'Unresolved operational degradations', 'i-alert')}
-      ${kpi('alKpiBlocks', 'alCardBlocks', 'Recent WAF Blocks', 'Threats intercepted in telemetry window', 'i-shield', 'var(--c5)')}
-      ${kpi('alKpiTemp', 'alCardTemp', 'Stage 1 Temp Bans', 'Actors under temporary 1-hour quarantine', 'i-dash', 'var(--warn)')}
-      ${kpi('alKpiPerm', 'alCardPerm', 'Stage 2 Permanent Bans', 'Repeat offenders permanently firewalled', 'i-x', 'var(--err)')}
+      ${kpi('alKpiActive', 'alCardActive', 'Active Incidents / Alerts', 'Operational issues', 'i-alert')}
+      ${kpi('alKpiBlocks', 'alCardBlocks', 'Recent WAF Blocks', 'Recent blocks', 'i-shield', 'var(--c5)')}
+      ${kpi('alKpiTemp', 'alCardTemp', 'Stage 1 Temp Bans', 'Temporary quarantine', 'i-dash', 'var(--warn)')}
+      ${kpi('alKpiPerm', 'alCardPerm', 'Stage 2 Permanent Bans', 'Permanently blocked', 'i-x', 'var(--err)')}
     </div>
-
     <section class="card al-ban-card">
-      <div class="card-h"><div><h2>Manual Threat Actor Quarantine</h2><p class="sub">Manually blacklist malicious IPs, automated scanners, or abusive bots</p></div></div>
+      <div class="card-h"><div><h2>Manual Threat Actor Quarantine</h2><p class="sub">Manual threat blacklist</p></div></div>
       <div class="al-ban-box">
         <div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center;width:100%">
           <input type="text" id="alBanIp" class="field ban-fld" placeholder="IPv4 or IPv6 address" aria-label="IP Address">
-          <select id="alBanTier" class="field ban-sel" aria-label="Ban Duration Preset">
-            <option value="1h" selected>Stage 1: 1h Temp</option>
-            <option value="15m">15 Minutes</option>
-            <option value="6h">6 Hours</option>
-            <option value="24h">24 Hours</option>
-            <option value="7d">7 Days</option>
-            <option value="Permanent">Stage 2: Permanent</option>
-            <option value="custom">Custom Duration...</option>
-          </select>
-          <input type="text" id="alBanCustomDuration" class="field ban-fld" placeholder="Duration (e.g. 30m, 48h)" style="display:none;width:140px" aria-label="Custom Duration">
-          <input type="text" id="alBanReason" class="field" style="flex:1;min-width:180px" placeholder="Context / Reason (e.g. Scanning probe on /v1/auth)" aria-label="Ban Reason">
+          <select id="alBanTier" class="field ban-sel" aria-label="Ban Duration Preset">${tiers}</select>
+          <input type="text" id="alBanCustomDuration" class="field ban-fld" placeholder="Duration" style="display:none;width:140px" aria-label="Custom Duration">
+          <input type="text" id="alBanReason" class="field" style="flex:1;min-width:180px" placeholder="Context / Reason" aria-label="Ban Reason">
           <button class="btn primary ban-btn" id="alBanBtn">Ban Threat Actor</button>
         </div>
         <div id="alBanError" class="al-ban-err" style="display:none"></div>
       </div>
     </section>
-
-    <section class="card" style="margin-top:16px">
-      <div class="card-h"><div><h2>Active Alerts &amp; WAF Incidents</h2><p class="sub">Security events, anomalies, and operational alerts requiring attention</p></div></div>
+    <section class="card al-ops-card" id="alOpsCard" style="margin-top:16px">
+      <div class="card-h"><div><h2>Operational System Alerts</h2><p class="sub">Active degradations</p></div></div>
+      <div class="card-b" style="padding:0"><ul class="rows al" id="alOpsList" style="margin-top:0"></ul></div>
+    </section>
+    <section class="card al-inc-card" style="margin-top:16px">
+      <div class="card-h"><div><h2>Security Incidents &amp; Threat Defense Feed</h2><p class="sub">Security events</p></div></div>
       <div class="al-toolbar">
-        <div class="search">${ICON('i-search')}<input class="field" id="alIncSearch" type="search" placeholder="Search incidents (IP, rule, path, payload)..." aria-label="Search Incidents" value="${esc(state.alIncQ)}"></div>
+        <div class="search">${ICON('i-search')}<input class="field" id="alIncSearch" type="search" placeholder="Search incidents..." aria-label="Search Incidents" value="${esc(state.alIncQ)}"></div>
         <div class="chips" id="alSevChips">
           <button class="chip al-sev-chip" data-sev="all" aria-pressed="${state.alSev === 'all'}">All</button>
           <button class="chip al-sev-chip" data-sev="critical" aria-pressed="${state.alSev === 'critical'}">Critical</button>
@@ -122,11 +118,10 @@ export function alShell() {
       <div id="alActive"><ul class="rows al" id="alIncList" style="margin-top:0"></ul></div>
       ${pgn('alInc', state.alIncPageSize, [10, 25, 50])}
     </section>
-
     <section class="card" style="margin-top:16px">
-      <div class="card-h"><div><h2>Dynamic 2-Stage Auto-Ban &amp; Blocked IPs</h2><p class="sub">Automated threat defense reactor and persistent IP firewall entries</p></div></div>
+      <div class="card-h"><div><h2>Dynamic 2-Stage Auto-Ban &amp; Blocked IPs</h2><p class="sub">Firewall entries</p></div></div>
       <div class="al-toolbar">
-        <div class="search">${ICON('i-search')}<input class="field" id="alBanSearch" type="search" placeholder="Search bans (IP, reason, category)..." aria-label="Search Banned IPs" value="${esc(state.alBanQ)}"></div>
+        <div class="search">${ICON('i-search')}<input class="field" id="alBanSearch" type="search" placeholder="Search bans..." aria-label="Search Banned IPs" value="${esc(state.alBanQ)}"></div>
         <div class="chips" id="alTierChips">
           <button class="chip al-tier-chip" data-tier="all" aria-pressed="${state.alTier === 'all'}">All</button>
           <button class="chip al-tier-chip" data-tier="temporary" aria-pressed="${state.alTier === 'temporary'}">Stage 1 (1h Temp)</button>
@@ -141,13 +136,12 @@ export function alShell() {
       </div>
       ${pgn('alBan', state.alBanPageSize, [10, 25, 50])}
     </section>
-
     <div id="alConfirmModal" class="modal-scrim" hidden style="display:none">
       <div class="modal-card">
         <div class="modal-h"><h2>Confirm Threat Actor Unban</h2><button class="btn icon sm" id="alConfirmClose" aria-label="Close modal">${ICON('i-x')}</button></div>
         <div class="modal-b">
           <p style="margin-bottom:12px">Are you sure you want to remove the firewall ban for client IP <b id="alConfirmIp" class="td-mono"></b>?</p>
-          <p class="sub" style="font-size:12px;color:var(--ink-2)">Traffic from this address will no longer be dropped by automated edge filters.</p>
+          <p class="sub" style="font-size:12px;color:var(--ink-2)">Traffic will no longer be dropped.</p>
           <div class="modal-foot"><button class="btn" id="alConfirmCancel">Cancel</button><button class="btn primary" id="alConfirmOk">Confirm Unban</button></div>
         </div>
       </div>
@@ -161,107 +155,91 @@ export function alInit() { alUpdate(); }
 export function alUpdate(D) {
   const model = D || buildDataModel();
 
-  // 1. KPI Strip
   const activeCount = (model.alerts || []).length;
   const blockedCount = (model.incidents || []).filter(x => x.action === 'blocked').length;
   const tempCount = (model.bannedIps || []).filter(x => x.type === 'temporary').length;
   const permCount = (model.bannedIps || []).filter(x => x.type === 'permanent').length;
 
-  const kpiActive = $('#alKpiActive');
-  if (kpiActive) {
-    kpiActive.textContent = String(activeCount);
-    kpiActive.style.color = activeCount > 0 ? 'var(--err)' : 'var(--ok)';
+  const kActive = $('#alKpiActive');
+  if (kActive) {
+    kActive.textContent = String(activeCount);
+    kActive.style.color = activeCount > 0 ? 'var(--err)' : 'var(--ok)';
   }
-  const kpiBlocks = $('#alKpiBlocks'); if (kpiBlocks) kpiBlocks.textContent = String(blockedCount);
-  const kpiTemp = $('#alKpiTemp'); if (kpiTemp) kpiTemp.textContent = String(tempCount);
-  const kpiPerm = $('#alKpiPerm'); if (kpiPerm) kpiPerm.textContent = String(permCount);
+  const setTxt = (sel, val) => { const el = $(sel); if (el) el.textContent = String(val); };
+  setTxt('#alKpiBlocks', blockedCount);
+  setTxt('#alKpiTemp', tempCount);
+  setTxt('#alKpiPerm', permCount);
 
-  const setPgn = (pfx, cur, tot, len, start, end) => {
-    const sum = $(`#${pfx}Summary`) || $(`#${pfx}Sum`);
-    if (sum) sum.textContent = `Showing ${len ? start + 1 : 0}–${end} of ${len}`;
-    const ind = $(`#${pfx}PageInd`);
+  const pgnCalc = (len, p, sz) => {
+    const tot = Math.max(1, Math.ceil(len / sz)), cur = Math.min(tot, Math.max(1, p)), s = (cur - 1) * sz;
+    return { cur, tot, s, e: Math.min(len, s + sz) };
+  };
+  const setPgn = (pfx, cur, tot, len, s, e) => {
+    const sum = $(`#${pfx}Summary`) || $(`#${pfx}Sum`), ind = $(`#${pfx}PageInd`);
+    if (sum) sum.textContent = `Showing ${len ? s + 1 : 0}–${e} of ${len}`;
     if (ind) ind.textContent = `Page ${cur} / ${tot}`;
-    const f = $(`#${pfx}First`), p = $(`#${pfx}Prev`), n = $(`#${pfx}Next`), l = $(`#${pfx}Last`);
-    if (f) f.disabled = cur <= 1;
-    if (p) p.disabled = cur <= 1;
-    if (n) n.disabled = cur >= tot;
-    if (l) l.disabled = cur >= tot;
+    const btn = (id, dis) => { const b = $(`#${pfx}${id}`); if (b) b.disabled = dis; };
+    btn('First', cur <= 1); btn('Prev', cur <= 1);
+    btn('Next', cur >= tot); btn('Last', cur >= tot);
   };
 
-  // 2. Incidents Filtering
-  const incs = (model.incidents && model.incidents.length > 0) ? model.incidents : (model.alerts || []);
+  const opsList = $('#alOpsList') || $('#alOpList');
+  if (opsList) {
+    const alerts = model.alerts || [];
+    if (!alerts.length) {
+      opsList.innerHTML = `<li class="empty" style="text-align:center;padding:16px 12px;color:var(--ink-2);display:flex;align-items:center;justify-content:center;gap:8px"><span class="t-ok">${ICON('i-check')}</span><span>All upstream services, routes, and certificates operating normally.</span></li>`;
+    } else {
+      opsList.innerHTML = alerts.map(a => {
+        const isCrit = a.sev === 'critical', target = a.go || 'overview';
+        return `<li class="al-op-item click" data-go="${esc(target)}" tabindex="0" role="link"><span class="${isCrit ? 't-err' : 't-warn'}">${ICON(isCrit ? 'i-x' : 'i-alert')}</span><div style="min-width:0;flex:1"><div class="al-t"><b>${esc(a.title || 'Operational Alert')}</b></div><div class="al-d" style="color:var(--ink-2);font-size:12px;margin-top:2px">${esc(a.desc || '')}</div></div><button class="btn sm" data-go="${esc(target)}" style="margin-right:8px;font-size:11px">Investigate</button><span class="mut num" style="white-space:nowrap;font-size:12px">${esc(dtFmt(a.timestamp))}</span></li>`;
+      }).join('');
+    }
+  }
+
+  const incs = model.incidents || [];
   const filteredIncidents = incs.filter(inc => {
     if (state.alSev === 'critical') {
-      const isCrit = inc.action === 'blocked' || (inc.anomaly_score != null && Number(inc.anomaly_score) >= 10) || inc.sev === 'critical';
-      if (!isCrit) return false;
+      if (inc.action !== 'blocked' && inc.action !== 'banned' && (!inc.anomaly_score || Number(inc.anomaly_score) < 10) && inc.sev !== 'critical') return false;
     } else if (state.alSev === 'warning') {
-      const isWarn = inc.action === 'logged' || (inc.anomaly_score != null && Number(inc.anomaly_score) < 10) || inc.sev === 'warning';
-      if (!isWarn) return false;
+      if (inc.action === 'blocked' || inc.action === 'banned') return false;
+      if (inc.action !== 'throttled' && inc.action !== 'logged' && inc.sev !== 'warning' && (inc.anomaly_score == null || Number(inc.anomaly_score) >= 10)) return false;
     }
-
     if (state.alIncQ) {
-      const q = state.alIncQ.toLowerCase();
-      const cat = (inc.category || inc.title || '').toLowerCase();
-      let aliases = '';
-      if (cat.includes('sql') || inc.rule_id === '942100') aliases += ' sqli';
-      if (cat.includes('cross-site') || inc.rule_id === '941100') aliases += ' xss';
-      if (cat.includes('traversal') || inc.rule_id === '930100') aliases += ' traversal lfi';
-      const targetStr = `${inc.client_ip || inc.ip || ''} ${inc.rule_id || ''} ${inc.path || ''} ${cat} ${inc.payload_snippet || ''} ${aliases}`.toLowerCase();
-      if (!targetStr.includes(q)) return false;
+      const q = state.alIncQ.toLowerCase(), cat = (inc.category || inc.title || '').toLowerCase();
+      let al = '';
+      if (cat.includes('sql') || inc.rule_id === '942100') al += ' sqli';
+      if (cat.includes('cross-site') || inc.rule_id === '941100') al += ' xss';
+      if (cat.includes('traversal') || inc.rule_id === '930100') al += ' traversal lfi';
+      if (cat.includes('rate') || inc.rule_id === 'rate_limit') al += ' 429 throttle';
+      if (!`${inc.client_ip || inc.ip || ''} ${inc.rule_id || ''} ${inc.path || ''} ${cat} ${inc.payload_snippet || ''} ${al}`.toLowerCase().includes(q)) return false;
     }
     return true;
   });
 
-  const totalIncPages = Math.max(1, Math.ceil(filteredIncidents.length / state.alIncPageSize));
-  if (state.alIncPage > totalIncPages) state.alIncPage = totalIncPages;
-  if (state.alIncPage < 1) state.alIncPage = 1;
-  const incStart = (state.alIncPage - 1) * state.alIncPageSize;
-  const incEnd = Math.min(filteredIncidents.length, incStart + state.alIncPageSize);
-  const incPageItems = filteredIncidents.slice(incStart, incEnd);
+  const ipg = pgnCalc(filteredIncidents.length, state.alIncPage, state.alIncPageSize);
+  state.alIncPage = ipg.cur;
+  const incPageItems = filteredIncidents.slice(ipg.s, ipg.e);
 
   const incList = $('#alIncList') || $('#alActive');
   if (incList) {
-    if (incPageItems.length === 0) {
+    if (!incPageItems.length) {
       incList.innerHTML = `<li class="empty" style="text-align:center;padding:24px 12px;color:var(--ink-2)">${ICON('i-check')}<span style="margin-left:6px">Zero security incidents match active filters.</span></li>`;
     } else {
       incList.innerHTML = incPageItems.map((inc, i) => {
-        const idStr = inc.id || `inc-${incStart + i + 1}`;
-        const isBlocked = inc.action === 'blocked';
-        const fullTime = dtFmt(inc.timestamp);
-        const scoreBadge = (inc.anomaly_score != null) ? `<span class="chipx" style="font-size:11px">Score: ${inc.anomaly_score}</span>` : '';
-        const locationBadge = inc.location ? `<span class="chipx" style="font-size:11px">${esc(inc.location)}</span>` : '';
-
-        return `<li id="${esc(idStr)}" class="al-inc-item click" data-inc-id="${esc(idStr)}" tabindex="0" role="link">
-          <span class="${isBlocked ? 't-err' : 't-warn'}">${ICON(isBlocked ? 'i-x' : 'i-alert')}</span>
-          <div style="min-width:0;flex:1">
-            <div class="al-t" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-              <b>${esc(inc.category || inc.title || 'Security Anomaly')}</b>
-              <span class="st ${isBlocked ? 's5' : 's4'}" style="font-size:11px;padding:1px 6px">${isBlocked ? 'Blocked' : 'Logged'}</span>
-              <code style="font-size:11.5px">${esc(inc.method || 'GET')} ${esc(inc.path || '/')}</code>
-            </div>
-            <div class="al-d" style="display:flex;align-items:center;gap:8px;margin-top:2px;flex-wrap:wrap">
-              <span>Rule: <code>${esc(inc.rule_id || 'unknown')}</code></span>
-              <span>IP: <code>${esc(inc.client_ip || inc.ip || 'unknown')}</code></span>
-              ${scoreBadge}${locationBadge}
-            </div>
-          </div>
-          <span class="mut num" style="white-space:nowrap;font-size:12px">${esc(fullTime)}</span>
-        </li>`;
+        const idStr = inc.id || `inc-${ipg.s + i + 1}`, meta = getActionMeta(inc.action);
+        const score = (inc.anomaly_score != null) ? `<span class="chipx" style="font-size:11px">Score: ${inc.anomaly_score}</span>` : '';
+        const loc = inc.location ? `<span class="chipx" style="font-size:11px">${esc(inc.location)}</span>` : '';
+        return `<li id="${esc(idStr)}" class="al-inc-item click" data-inc-id="${esc(idStr)}" tabindex="0" role="link"><span class="${meta.tone}">${ICON(meta.icon)}</span><div style="min-width:0;flex:1"><div class="al-t" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><b>${esc(inc.category || inc.title || (inc.action === 'throttled' ? 'Rate Limit Ingress' : 'Security Anomaly'))}</b><span class="st ${meta.cls}" style="font-size:11px;padding:1px 6px">${meta.lbl}</span><code style="font-size:11.5px">${esc(inc.method || 'GET')} ${esc(inc.path || '/')}</code></div><div class="al-d" style="display:flex;align-items:center;gap:8px;margin-top:2px;flex-wrap:wrap"><span>Rule: <code>${esc(inc.rule_id || 'unknown')}</code></span><span>IP: <code>${esc(inc.client_ip || inc.ip || 'unknown')}</code></span>${score}${loc}</div></div><span class="mut num" style="white-space:nowrap;font-size:12px">${esc(dtFmt(inc.timestamp))}</span></li>`;
       }).join('');
     }
   }
-  setPgn('alInc', state.alIncPage, totalIncPages, filteredIncidents.length, incStart, incEnd);
+  setPgn('alInc', ipg.cur, ipg.tot, filteredIncidents.length, ipg.s, ipg.e);
 
-  // 3. Bans Filtering & Sorting
   const rawBans = model.bannedIps || [];
   const filteredBans = rawBans.filter(b => {
     if (state.alTier === 'temporary' && b.type !== 'temporary') return false;
     if (state.alTier === 'permanent' && b.type !== 'permanent') return false;
-    if (state.alBanQ) {
-      const q = state.alBanQ.toLowerCase();
-      const targetStr = `${b.ip || ''} ${b.reason || ''} ${b.last_category || ''}`.toLowerCase();
-      if (!targetStr.includes(q)) return false;
-    }
+    if (state.alBanQ && !`${b.ip || ''} ${b.reason || ''} ${b.last_category || ''}`.toLowerCase().includes(state.alBanQ.toLowerCase())) return false;
     return true;
   });
 
@@ -278,58 +256,39 @@ export function alUpdate(D) {
     return diff !== 0 ? diff * mult : (a.ip || '').localeCompare(b.ip || '', undefined, { numeric: true });
   });
 
-  const totalBanPages = Math.max(1, Math.ceil(filteredBans.length / state.alBanPageSize));
-  if (state.alBanPage > totalBanPages) state.alBanPage = totalBanPages;
-  if (state.alBanPage < 1) state.alBanPage = 1;
-  const banStart = (state.alBanPage - 1) * state.alBanPageSize;
-  const banEnd = Math.min(filteredBans.length, banStart + state.alBanPageSize);
-  const banPageItems = filteredBans.slice(banStart, banEnd);
+  const bpg = pgnCalc(filteredBans.length, state.alBanPage, state.alBanPageSize);
+  state.alBanPage = bpg.cur;
+  const banPageItems = filteredBans.slice(bpg.s, bpg.e);
 
   const tb = $('#alBanBody') || $('#bannedIpsTable');
   if (tb) {
-    if (banPageItems.length === 0) {
+    if (!banPageItems.length) {
       tb.innerHTML = `<tr><td colspan="7" style="padding:20px;text-align:center;color:var(--ink-2)">${ICON('i-check')} Zero active IP bans in effect.</td></tr>`;
     } else {
       tb.innerHTML = banPageItems.map(b => {
         const isPerm = b.type === 'permanent';
-        const tierBadge = isPerm 
-          ? '<span class="st s4 tier-perm">Stage 2: Permanent</span>'
-          : '<span class="st s3 tier-temp">Stage 1: Temporary</span>';
+        const tierBadge = isPerm ? '<span class="st s4 tier-perm">Stage 2: Permanent</span>' : '<span class="st s3 tier-temp">Stage 1: Temporary</span>';
         let ttlStr = 'Never (Permanent)';
         if (!isPerm && b.remaining_seconds != null && b.remaining_seconds >= 0) {
           ttlStr = `${Math.floor(b.remaining_seconds / 60)}m ${b.remaining_seconds % 60}s remaining`;
         }
-        return `<tr>
-          <td class="td-mono" style="font-weight:600">${esc(b.ip)}</td>
-          <td>${tierBadge}</td>
-          <td class="td-mono" style="font-size:12px;white-space:nowrap">${dtFmt(b.created_at)}</td>
-          <td class="td-mono num">${b.temp_ban_count || 0}</td>
-          <td class="td-reason" title="${esc(b.reason || '')}">${esc(b.reason || b.last_category || 'WAF violation')}</td>
-          <td style="font-size:12px;color:var(--ink-2)">${esc(ttlStr)}</td>
-          <td style="text-align:right">
-            <button class="btn al-unban-btn" style="padding:2px 8px;font-size:11px" data-ip="${esc(b.ip)}">Unban</button>
-          </td>
-        </tr>`;
+        return `<tr><td class="td-mono" style="font-weight:600">${esc(b.ip)}</td><td>${tierBadge}</td><td class="td-mono" style="font-size:12px;white-space:nowrap">${dtFmt(b.created_at)}</td><td class="td-mono num">${b.temp_ban_count || 0}</td><td class="td-reason" title="${esc(b.reason || '')}">${esc(b.reason || b.last_category || 'WAF violation')}</td><td style="font-size:12px;color:var(--ink-2)">${esc(ttlStr)}</td><td style="text-align:right"><button class="btn al-unban-btn" style="padding:2px 8px;font-size:11px" data-ip="${esc(b.ip)}">Unban</button></td></tr>`;
       }).join('');
     }
   }
 
   ['ip', 'type', 'created_at', 'temp_ban_count', 'reason', 'remaining_seconds'].forEach(c => {
-    const sa = $(`#alArr-${c}`);
-    if (sa) sa.textContent = state.alBanSort === c ? (state.alBanSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    const arr = state.alBanSort === c ? (state.alBanSortDir === 'asc' ? ' ▲' : ' ▼') : '';
+    const sa = $(`#alArr-${c}`); if (sa) sa.textContent = arr;
     const thEl = $(`#alBanHead th[data-sort="${c}"]`);
-    if (thEl && typeof thEl.querySelector === 'function' && !thEl.querySelector('.s-arr')) {
-      const arrow = state.alBanSort === c ? (state.alBanSortDir === 'asc' ? ' ▲' : ' ▼') : '';
-      thEl.textContent = thEl.textContent.replace(/[▲▼]/g, '').trim() + (arrow ? ' ' + arrow.trim() : '');
+    if (thEl && thEl.querySelector && !thEl.querySelector('.s-arr')) {
+      thEl.textContent = thEl.textContent.replace(/[▲▼]/g, '').trim() + (arr ? ' ' + arr.trim() : '');
     }
   });
 
-  setPgn('alBan', state.alBanPage, totalBanPages, filteredBans.length, banStart, banEnd);
+  setPgn('alBan', bpg.cur, bpg.tot, filteredBans.length, bpg.s, bpg.e);
 
-  // Event handlers
-  $$('.al-unban-btn').forEach(btn => {
-    btn.onclick = () => openUnbanModal(btn.dataset.ip);
-  });
+  $$('.al-unban-btn').forEach(btn => { btn.onclick = () => openUnbanModal(btn.dataset.ip); });
 
   const banBtn = $('#alBanBtn') || $('#manualBanBtn');
   if (banBtn) {
@@ -342,10 +301,7 @@ export function alUpdate(D) {
 
       const ip = ipIn?.value ? ipIn.value.trim() : '';
       if (!isValidIP(ip)) {
-        if (errEl) {
-          errEl.textContent = 'Invalid IPv4 or IPv6 address';
-          errEl.style.display = 'block';
-        }
+        if (errEl) { errEl.textContent = 'Invalid IPv4 or IPv6 address'; errEl.style.display = 'block'; }
         return;
       }
       if (errEl) errEl.style.display = 'none';
@@ -419,6 +375,13 @@ export function alUpdate(D) {
 
   $$('.al-inc-item').forEach(item => {
     item.onclick = () => openDrawer('incident', item.dataset.incId);
+  });
+
+  $$('.al-op-item').forEach(item => {
+    item.onclick = () => {
+      const target = item.dataset.go || 'overview';
+      if (typeof window !== 'undefined' && window.location) window.location.hash = '#/' + target;
+    };
   });
 
   const banSearch = $('#alBanSearch');

@@ -137,6 +137,7 @@ type Router struct {
 	prefixRoutes     []prefixRoute
 	middlewares      []MiddlewareFunc
 	workerPoolSize   int
+	auditLogger      *waf.AuditLogger
 	NotFound         HandlerFunc
 	MethodNotAllowed HandlerFunc
 }
@@ -263,6 +264,20 @@ func (r *Router) WorkerPoolSize() int {
 		return 128
 	}
 	return r.workerPoolSize
+}
+
+// SetAuditLogger configures the security audit logger for route rate limiting and security telemetry.
+func (r *Router) SetAuditLogger(al *waf.AuditLogger) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.auditLogger = al
+}
+
+// AuditLogger returns the configured security audit logger.
+func (r *Router) AuditLogger() *waf.AuditLogger {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.auditLogger
 }
 
 // PrefixRouteSpec defines a declarative configuration for registering or replacing a prefix route.
@@ -543,8 +558,36 @@ func (r *Router) compilePrefixRoute(source string, spec PrefixRouteSpec) (prefix
 		return prefixRoute{}, fmt.Errorf("router: invalid route type %q (must be 'static' or 'upstream')", spec.TargetType)
 	}
 
+	var routeWafEngine *waf.WAFEngine
+	if spec.Opts.WAF != nil {
+		if wafCfg, ok := spec.Opts.WAF.(waf.WAFConfig); ok && (wafCfg.Enabled || len(wafCfg.AllowedIPs) > 0 || len(wafCfg.DeniedIPs) > 0 || len(wafCfg.DisabledRules) > 0 || wafCfg.Mode != "") {
+			if len(spec.Opts.TrustedProxies) > 0 && len(wafCfg.TrustedProxies) == 0 {
+				wafCfg.TrustedProxies = spec.Opts.TrustedProxies
+			}
+			if strings.TrimSpace(spec.Opts.SecurityLog) != "" {
+				secLog := strings.ToLower(strings.TrimSpace(spec.Opts.SecurityLog))
+				if secLog == "off" || secLog == "none" {
+					wafCfg.AuditLog.Enabled = false
+				} else {
+					wafCfg.AuditLog.Enabled = true
+					wafCfg.AuditLog.Output = spec.Opts.SecurityLog
+				}
+			}
+			if engine, err := waf.NewEngine(wafCfg); err == nil {
+				routeWafEngine = engine
+			}
+		}
+	}
+
 	if strings.TrimSpace(spec.Opts.RateLimit) != "" {
-		rlMw, err := NewRateLimitMiddleware(spec.Opts.RateLimit)
+		rlOpts := RateLimiterOptions{
+			TrustedProxies: spec.Opts.TrustedProxies,
+			AuditLogger:    r.AuditLogger(),
+		}
+		if routeWafEngine != nil && routeWafEngine.AuditLogger() != nil {
+			rlOpts.AuditLogger = routeWafEngine.AuditLogger()
+		}
+		rlMw, err := NewRateLimitMiddleware(spec.Opts.RateLimit, rlOpts)
 		if err != nil {
 			if px != nil {
 				px.Close()
@@ -560,27 +603,11 @@ func (r *Router) compilePrefixRoute(source string, spec PrefixRouteSpec) (prefix
 		}
 	}
 
-	if spec.Opts.WAF != nil {
-		if wafCfg, ok := spec.Opts.WAF.(waf.WAFConfig); ok && (wafCfg.Enabled || len(wafCfg.AllowedIPs) > 0 || len(wafCfg.DeniedIPs) > 0 || len(wafCfg.DisabledRules) > 0 || wafCfg.Mode != "") {
-			if len(spec.Opts.TrustedProxies) > 0 && len(wafCfg.TrustedProxies) == 0 {
-				wafCfg.TrustedProxies = spec.Opts.TrustedProxies
-			}
-			if strings.TrimSpace(spec.Opts.SecurityLog) != "" {
-				secLog := strings.ToLower(strings.TrimSpace(spec.Opts.SecurityLog))
-				if secLog == "off" || secLog == "none" {
-					wafCfg.AuditLog.Enabled = false
-				} else {
-					wafCfg.AuditLog.Enabled = true
-					wafCfg.AuditLog.Output = spec.Opts.SecurityLog
-				}
-			}
-			if routeWafEngine, err := waf.NewEngine(wafCfg); err == nil {
-				nextHandler := handler
-				wafMw := waf.NewWAFMiddleware(routeWafEngine)
-				handler = func(req *httpparser.Request, res *httpparser.Response) {
-					wafMw(waf.HandlerFunc(nextHandler))(req, res)
-				}
-			}
+	if routeWafEngine != nil {
+		nextHandler := handler
+		wafMw := waf.NewWAFMiddleware(routeWafEngine)
+		handler = func(req *httpparser.Request, res *httpparser.Response) {
+			wafMw(waf.HandlerFunc(nextHandler))(req, res)
 		}
 	}
 

@@ -1,5 +1,41 @@
 # Release Notes
 
+## 2026-09-29 - Gateway Observability & Threat Defense Enhancements (Dual-Card UI Architecture, Multi-Action Badging Taxonomy, Rate-Limiting Telemetry & Severity Facet Filtering)
+
+### Milestone Summary
+- **Dual-Card UI Architecture on `#/alerts`**:
+  - Bifurcated the Alerts & Threat Defense Control Center into two distinct functional cards: a dedicated **Operational System Alerts** card and a separate **Security Incidents & Threat Defense Feed**.
+  - Operational System Alerts surfaces active infrastructure anomalies—including upstream pool node degradation, route 5xx error rate spikes exceeding 2.0%, and failing ACME SSL certificate renewals—with interactive 1-click resource jump links (`Investigate` navigating to `#/upstreams`, `#/routes`, or `#/certs`).
+  - Added a positive zero-alert health reassurance banner (`All upstream services, routes, and certificates operating normally.`) when no operational degradations are detected.
+  - Guaranteed non-suppression: High volumes of security attacks or active incident searching never displace, hide, or paginate operational system alerts off-screen.
+- **Multi-Action Badging Taxonomy**:
+  - Standardized edge defense and audit actions across feeds and the forensic drawer into a 4-state taxonomy: `Blocked` (red `st s5`, `t-err`, `i-x`), `Banned` (red `st s5`, `t-err`, `i-x`), `Throttled` (amber `st s4`, `t-warn`, `i-alert`), and `Logged` (amber `st s4`, `t-warn`, `i-alert`).
+  - Integrated full taxonomy support into the slide-out forensic incident investigation drawer (`kind === 'incident'`), rendering action pills, severity tones, 9 structured attributes, and sanitized payload/rate-drop snippets.
+- **Rate-Limiting Telemetry Ingress**:
+  - Connected Toron's token-bucket rate limiter (`pkg/router/rate_limiter.go`) to the security audit pipeline, recording volumetric HTTP 429 drops as first-class `Throttled` security incidents.
+  - Surfaced retry-after countdowns in the forensic drawer payload snippet and supported 1-click escalation to manual threat quarantine with pre-populated justification (`Rate Limit Throttling: <path>`).
+  - Enabled heuristic search matching for rate-limiting events via `#alIncSearch` (`throttle`, `rate`, `429`).
+- **Real-Time Severity Facet Filtering**:
+  - Enhanced real-time severity facet chips (`All`, `Critical`, `Warning`) with deterministic classification: `Critical` filters for active rejections (`blocked`, `banned`), while `Warning` filters for non-blocking anomalies and volumetric throttles (`throttled`, `logged`), resolving the empty warning filter defect.
+  - Maintained automatic pagination index reset to Page 1 on any facet toggle or query input.
+
+### Added
+- **`public/js/views/alerts.js`**: Added the dual-card UI architecture (`#alOpsCard`, `#alOpsList`), 1-click resource jump links (`data-go`), zero-alert positive health checkmark banner, and the 4-action taxonomy helper `getActionMeta()`.
+- **`public/js/components/drawer.js`**: Added drawer badging and forensic attribute support for `throttled` and `banned` incident states, rate-limiting retry payload formatting, and context-aware ban reason pre-filling.
+- **`pkg/router/rate_limiter.go`**: Integrated audit event dispatching on HTTP 429 rate drops (`Event: "rate_limit_drop"`, `Action: "throttled"`, `Category: "rate_limit"`, `RuleID: "rate_limit"`).
+- **`docs/wiki/features/observability-dashboard.md`**: Added comprehensive user documentation for the dual-card UI architecture, multi-action badging taxonomy, rate-limiting telemetry, and severity facet filtering.
+
+### Changed
+- **`public/js/views/alerts.js`**: Updated severity filtering logic to include `throttled` and `logged` actions in the `warning` facet, ensuring non-blocking events are visible and searchable.
+- **`public/js/views/alerts.js`**: Extended incident search filter with heuristic keywords for volumetric rate drops (`throttle`, `rate`, `429`).
+
+### Fixed
+- **Operational Alert Suppression Defect**: Resolved vulnerability where high-volume Layer 7 security incident bursts or active incident search filters pushed critical infrastructure degradations out of sight.
+- **Empty Warning Filter Defect**: Resolved defect where selecting the Warning severity facet yielded an empty feed when rate-limiting drops or logged audit events were present.
+- **Missing Rate-Limit Audit Telemetry**: Closed the observability gap between rate-limiting middleware drops and edge security auditing by surfacing HTTP 429 events in the security feed.
+
+---
+
 ## 2026-09-28 - Alerts & Threat Defense Control Center Redesign (KPI Strip, Incident Investigation Drawer, Search, Pagination & Non-Blocking Modals)
 
 ### Milestone Summary

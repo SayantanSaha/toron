@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"toron/pkg/httpparser"
+	"toron/pkg/waf"
 )
 
 const (
@@ -96,11 +97,12 @@ func (tb *TokenBucket) Allow() (bool, time.Duration) {
 	return false, time.Duration(retrySeconds) * time.Second
 }
 
-// RateLimiterOptions defines configuration parameters for rate limiter memory bounds and proxy trust.
+// RateLimiterOptions defines configuration parameters for rate limiter memory bounds, proxy trust, and security telemetry.
 type RateLimiterOptions struct {
 	MaxBuckets     int
 	IdleTTL        time.Duration
 	TrustedProxies []string
+	AuditLogger    *waf.AuditLogger
 }
 
 type bucketNode struct {
@@ -119,6 +121,7 @@ type RateLimiter struct {
 	buckets        map[string]*list.Element
 	lruList        *list.List
 	trustedProxies []*net.IPNet
+	auditLogger    *waf.AuditLogger
 	stopCh         chan struct{}
 	stopped        bool
 }
@@ -128,6 +131,7 @@ func NewRateLimiter(ratePerSec float64, burst int, opts ...RateLimiterOptions) *
 	maxBuckets := DefaultMaxBuckets
 	idleTTL := DefaultIdleTTL
 	var trustedProxies []*net.IPNet
+	var auditLogger *waf.AuditLogger
 
 	if len(opts) > 0 {
 		if opts[0].MaxBuckets > 0 {
@@ -136,6 +140,7 @@ func NewRateLimiter(ratePerSec float64, burst int, opts ...RateLimiterOptions) *
 		if opts[0].IdleTTL > 0 {
 			idleTTL = opts[0].IdleTTL
 		}
+		auditLogger = opts[0].AuditLogger
 		for _, tp := range opts[0].TrustedProxies {
 			tp = strings.TrimSpace(tp)
 			if tp == "" {
@@ -165,12 +170,27 @@ func NewRateLimiter(ratePerSec float64, burst int, opts ...RateLimiterOptions) *
 		buckets:        make(map[string]*list.Element),
 		lruList:        list.New(),
 		trustedProxies: trustedProxies,
+		auditLogger:    auditLogger,
 		stopCh:         make(chan struct{}),
 	}
 
 	go rl.cleanupLoop()
 
 	return rl
+}
+
+// AuditLogger returns the configured security audit logger.
+func (rl *RateLimiter) AuditLogger() *waf.AuditLogger {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	return rl.auditLogger
+}
+
+// SetAuditLogger sets or updates the security audit logger.
+func (rl *RateLimiter) SetAuditLogger(al *waf.AuditLogger) {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	rl.auditLogger = al
 }
 
 // Stop terminates the background TTL cleanup goroutine.
@@ -365,6 +385,30 @@ func NewRateLimitMiddleware(rateLimitStr string, opts ...RateLimiterOptions) (Mi
 				if retrySecs < 1 {
 					retrySecs = 1
 				}
+
+				if al := limiter.AuditLogger(); al != nil {
+					clientIP := clientKey
+					if strings.HasPrefix(clientIP, "ip:") {
+						clientIP = strings.TrimPrefix(clientIP, "ip:")
+					}
+					var method, reqPath string
+					if req != nil {
+						method = req.Method
+						reqPath = req.Path
+					}
+					al.LogEvent(waf.SecurityEvent{
+						Event:          "rate_limit_drop",
+						Action:         "throttled",
+						Category:       "rate_limit",
+						ClientIP:       clientIP,
+						Method:         method,
+						Path:           reqPath,
+						AnomalyScore:   0,
+						RuleID:         "rate_limit",
+						PayloadSnippet: fmt.Sprintf("Rate limit exceeded: retry after %d seconds", retrySecs),
+					})
+				}
+
 				res.SetStatus(http.StatusTooManyRequests)
 				res.Header.Set("Content-Type", "application/json")
 				res.Header.Set("Retry-After", fmt.Sprintf("%d", retrySecs))

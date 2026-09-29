@@ -19,38 +19,31 @@ export function openDrawer(kind, id) {
     const D = buildDataModel();
     const r = D.routes.find(x => x.id === id) || D.routes[0];
     $('#dwTitle').textContent = r.short;
-    $('#dwBody').innerHTML = `<div class="stats" id="dwStats"></div>
-      <h3 class="dh">Latency (p95 against SLO)</h3><div class="chart" id="dwLat"></div>
-      <h3 class="dh">Errors</h3><div class="chart" id="dwErr"></div>
-      <h3 class="dh">Latency Distribution</h3><div class="hist" id="dwHist"></div>
-      <h3 class="dh">Configuration</h3><dl class="kv"><dt>Match</dt><dd><code>${esc(r.host + r.path)}</code></dd><dt>Upstream</dt><dd><button class="linkbtn" data-go="upstreams:${r.pool}">${esc(r.pool)}</button></dd><dt>Timeout</dt><dd>${esc(r.timeout)}</dd><dt>SLO Target</dt><dd>p95 under ${r.slo} ms</dd><dt>Middlewares</dt><dd><div class="chips">${r.mw.map(m => `<span class="chipx">${esc(m)}</span>`).join('')}</div></dd></dl>`;
+    $('#dwBody').innerHTML = `<div class="stats" id="dwStats"></div><h3 class="dh">Latency (p95 against SLO)</h3><div class="chart" id="dwLat"></div><h3 class="dh">Errors</h3><div class="chart" id="dwErr"></div><h3 class="dh">Latency Distribution</h3><div class="hist" id="dwHist"></div><h3 class="dh">Configuration</h3><dl class="kv"><dt>Match</dt><dd><code>${esc(r.host + r.path)}</code></dd><dt>Upstream</dt><dd><button class="linkbtn" data-go="upstreams:${r.pool}">${esc(r.pool)}</button></dd><dt>Timeout</dt><dd>${esc(r.timeout)}</dd><dt>SLO Target</dt><dd>p95 under ${r.slo} ms</dd><dt>Middlewares</dt><dd><div class="chips">${r.mw.map(m => `<span class="chipx">${esc(m)}</span>`).join('')}</div></dd></dl>`;
     renderDrawer();
   } else if (kind === 'incident') {
     const D = buildDataModel();
     const incs = (D.incidents && D.incidents.length > 0) ? D.incidents : (rawApiIncidents || []);
     const inc = incs.find((x, idx) => x.id === id || String(x.id) === String(id) || String(idx) === String(id) || `inc-${idx}` === String(id)) || incs[0] || {};
 
-    const category = inc.category || 'WAF Security Incident';
+    const category = inc.category || (inc.action === 'throttled' ? 'Rate Limit Ingress' : 'WAF Security Incident');
     $('#dwTitle').textContent = category;
-    const isBlocked = inc.action === 'blocked';
-    const actionTone = isBlocked ? 'err' : 'warn';
-    const actionLabel = isBlocked ? 'Blocked' : 'Logged';
+    const isErr = inc.action === 'blocked' || inc.action === 'banned';
+    const actionTone = isErr ? 'err' : 'warn';
+    const actionClass = isErr ? 's5' : 's4';
+    const actionLabel = inc.action === 'banned' ? 'Banned' : (inc.action === 'throttled' ? 'Throttled' : (inc.action === 'blocked' ? 'Blocked' : 'Logged'));
     const fullTime = dtFmt(inc.timestamp);
     const elapsed = inc.timestamp ? ago(Math.max(0, (Date.now() - new Date(inc.timestamp).getTime()) / 1000)) + ' ago' : '';
 
     $('#dwSub').innerHTML = `${pill(actionTone, actionLabel)}<span class="mut num">${esc(fullTime)}${elapsed ? ' · ' + esc(elapsed) : ''}</span>`;
 
-    $('#dwBody').innerHTML = `
-      <div class="stats" id="dwStats">
-        <div><dt>Method</dt><dd class="num">${esc(inc.method || 'GET')}</dd></div>
-        <div><dt>Anomaly Score</dt><dd class="num">${esc(inc.anomaly_score != null ? String(inc.anomaly_score) : '-')}</dd></div>
-        <div><dt>Action</dt><dd class="num">${esc(actionLabel)}</dd></div>
-      </div>
+    const statsHtml = `<div><dt>Method</dt><dd class="num">${esc(inc.method || 'GET')}</dd></div><div><dt>Anomaly Score</dt><dd class="num">${esc(inc.anomaly_score != null ? String(inc.anomaly_score) : '-')}</dd></div><div><dt>Action</dt><dd class="num">${esc(actionLabel)}</dd></div>`;
+    $('#dwBody').innerHTML = `<div class="stats" id="dwStats">${statsHtml}</div>
       <h3 class="dh">Forensic Investigation</h3>
       <dl class="kv">
         <dt>OWASP Rule ID</dt><dd><code>${esc(inc.rule_id || '942100')}</code></dd>
         <dt>Anomaly Score</dt><dd class="num">${esc(inc.anomaly_score != null ? String(inc.anomaly_score) : '-')}</dd>
-        <dt>Action Taken</dt><dd><span class="st ${isBlocked ? 's5' : 's4'}">${esc(actionLabel)}</span></dd>
+        <dt>Action Taken</dt><dd><span class="st ${actionClass}">${esc(actionLabel)}</span></dd>
         <dt>Parameter Location</dt><dd><code>${esc(inc.location || 'body')}</code></dd>
         <dt>HTTP Method</dt><dd><code>${esc(inc.method || 'GET')}</code></dd>
         <dt>Target Path</dt><dd><code>${esc(inc.path || '/')}</code></dd>
@@ -58,11 +51,12 @@ export function openDrawer(kind, id) {
         <dt>Timestamp</dt><dd class="num">${esc(fullTime)}</dd>
       </dl>
       <h3 class="dh">Attack Payload Snippet</h3>
-      <pre class="cs-pre" style="overflow-x:auto;white-space:pre-wrap;word-break:break-all;">${esc(inc.payload_snippet || '')}</pre>
+      <pre class="cs-pre">${esc(inc.payload_snippet || '')}</pre>
       <div style="display:flex;gap:10px;margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">
         <button class="btn primary" id="alDrawerBanBtn">Ban Client IP</button>
         <button class="btn" id="alDrawerLogBtn">Filter Logs for IP</button>
       </div>`;
+    const stEl = $('#dwStats'); if (stEl) stEl.innerHTML = statsHtml;
 
     const copyBtn = $('#alDrawerCopyIp');
     if (copyBtn) {
@@ -82,7 +76,10 @@ export function openDrawer(kind, id) {
         const ipIn = $('#alBanIp') || $('#manualBanIP');
         const reasonIn = $('#alBanReason') || $('#manualBanReason');
         if (ipIn) { ipIn.value = inc.client_ip || ''; ipIn.focus(); }
-        if (reasonIn) { reasonIn.value = `${inc.category || 'Security Anomaly'} (Rule ${inc.rule_id || '942100'})`; }
+        const defaultReason = (inc.action === 'throttled' || inc.rule_id === 'rate_limit')
+          ? `Rate Limit Throttling: ${inc.path || '/'}`
+          : `${inc.category || 'Security Anomaly'} (Rule ${inc.rule_id || '942100'})`;
+        if (reasonIn) { reasonIn.value = defaultReason; }
       };
     }
 

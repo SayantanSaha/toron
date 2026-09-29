@@ -307,6 +307,9 @@ func main() {
 	if globalWafEngine != nil {
 		auditLogger = globalWafEngine.AuditLogger()
 	}
+	if auditLogger != nil {
+		r.SetAuditLogger(auditLogger)
+	}
 
 	// Initialize OCI Container Auto-Discovery Engine if enabled
 	var discMgr *discovery.Manager
